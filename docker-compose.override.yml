@@ -1,0 +1,64 @@
+# Local dev override (auto-loaded by `docker compose`).
+# Host port 8000 is occupied by an unrelated project (ems-backend),
+# so the gateway is exposed on 8002 here instead. Inter-container
+# traffic is unaffected — frontends still reach it at http://gateway:8000.
+# ── Local-dev cookie/CORS overrides ───────────────────────────────────
+# The root .env carries PRODUCTION values (COOKIE_DOMAIN=.powertradefx.com,
+# COOKIE_SECURE=true, prod CORS origins). A browser on http://localhost
+# silently DROPS a cookie scoped to Domain=.powertradefx.com, so no trader
+# session (login OR admin "login as user") can ever persist locally.
+# These overrides scope cookies to the request host and allow localhost
+# origins — dev only; the override file is never loaded in prod.
+x-dev-cookie-env: &dev-cookie-env
+  COOKIE_DOMAIN: ""
+  COOKIE_SECURE: "false"
+  COOKIE_SAMESITE: "lax"
+  CORS_ORIGINS: "http://localhost:3010,http://localhost:3011,http://localhost:3000,http://localhost:3001"
+
+services:
+  gateway:
+    ports: !override
+      - "8002:8000"
+    environment:
+      <<: *dev-cookie-env
+      # The trader app is published on host port 3010 locally (not 3000), so
+      # IB referral links must point there. The root .env carries the prod
+      # value (https://trade.powertradefx.com); override it for local dev.
+      TRADER_APP_URL: "http://localhost:3010"
+
+  admin-api:
+    environment:
+      <<: *dev-cookie-env
+      # Keep the base-compose admin overrides intact (anchor only adds keys).
+      REDIS_URL: redis://redis:6379/1
+
+  # The trader app is published on host port 3010 here (not 3000), so the
+  # admin "login as user" redirect must point there. NEXT_PUBLIC_* is baked
+  # at build time, hence a build arg rather than a runtime env var.
+  admin-frontend:
+    build:
+      args:
+        NEXT_PUBLIC_TRADER_URL: "http://localhost:3010"
+
+  # Use the production INFOWAY_API_KEY from the root .env (paid feed). If Infoway
+  # ever stalls, the service now falls back to LIVE crypto only (Binance) without
+  # crashing — no simulated/mock prices. (The old override that blanked the key
+  # forced the simulator and is removed.)
+  market-data:
+    restart: unless-stopped
+
+  # Long-running trade workers — auto-recover instead of silently dying.
+  b-book-engine:
+    restart: unless-stopped
+  risk-engine:
+    restart: unless-stopped
+
+  # The gateway is published on host port 8002 here (8000 is taken). The
+  # browser can't proxy WebSockets through Next.js, so it connects to the
+  # gateway directly — but the trader's fallback hardcodes ws://localhost:8000.
+  # Bake the correct WS origin (build-time NEXT_PUBLIC_*). REST stays on the
+  # same-origin /api/v1 proxy so the auth-cookie fix is unaffected.
+  trader-frontend:
+    build:
+      args:
+        NEXT_PUBLIC_WS_URL: "ws://localhost:8002"

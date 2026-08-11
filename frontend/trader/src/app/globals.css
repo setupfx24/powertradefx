@@ -1,0 +1,1365 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ================================================================
+ * BRAND PRIMITIVES - the ONLY place brand hues exist as numbers.
+ * Every theme block below derives its semantic --accent* tokens
+ * from these; tailwind.config.ts maps the `accent` utilities onto
+ * the semantic tokens; components use ONLY utilities / var()s.
+ * Re-theming the platform = editing this block, nothing else.
+ * Values are RGB triplets so Tailwind can compose alpha:
+ *   text-accent/60 -> rgb(var(--accent-rgb) / 0.6)
+ * ================================================================ */
+:root {
+  --brand-gold-500: 245 158 11; /* #F59E0B highlight / dark-theme pop */
+  --brand-gold-600: 217 119 6;  /* #D97706 dark-theme accent */
+  --brand-gold-700: 180 83 9;   /* #B45309 light-theme accent (AA on white) */
+  --brand-gold-800: 146 64 14;  /* #92400E hover / pressed */
+
+  /* Semantic accent - light default; the dark block overrides the
+   * triplets, and everything downstream follows automatically. */
+  --accent-rgb: var(--brand-gold-700);
+  --accent-hover-rgb: var(--brand-gold-800);
+  --accent-bright-rgb: var(--brand-gold-500);
+  --accent-bright: rgb(var(--accent-bright-rgb));
+}
+
+/* ================================================================
+ * BRAND PRIMITIVES - the ONLY place brand hues exist as numbers.
+ * Every theme block below derives its semantic --accent* tokens
+ * from these; tailwind.config.ts maps the `accent` utilities onto
+ * the semantic tokens; components use ONLY utilities / var()s.
+ * Re-theming the platform = editing this block, nothing else.
+ * Values are RGB triplets so Tailwind can compose alpha:
+ *   text-accent/60 -> rgb(var(--accent-rgb) / 0.6)
+ * ================================================================ */
+:root {
+  --brand-gold-500: 245 158 11; /* #F59E0B highlight / dark-theme pop */
+  --brand-gold-600: 217 119 6;  /* #D97706 dark-theme accent */
+  --brand-gold-700: 180 83 9;   /* #B45309 light-theme accent (AA on white) */
+  --brand-gold-800: 146 64 14;  /* #92400E hover / pressed */
+
+  /* Semantic accent - light default; the dark block overrides the
+   * triplets, and everything downstream follows automatically. */
+  --accent-rgb: var(--brand-gold-700);
+  --accent-hover-rgb: var(--brand-gold-800);
+  --accent-bright-rgb: var(--brand-gold-500);
+  --accent-bright: rgb(var(--accent-bright-rgb));
+}
+
+/* ================================================================
+ * BRAND PRIMITIVES (electric blue) - the ONLY place brand hues exist as numbers.
+ * Every theme block below derives its semantic --accent* tokens
+ * from these; tailwind.config.ts maps the `accent` utilities onto
+ * the semantic tokens; components use ONLY utilities / var()s.
+ * Re-theming the platform = editing this block, nothing else.
+ * Values are RGB triplets so Tailwind can compose alpha:
+ *   text-accent/60 -> rgb(var(--accent-rgb) / 0.6)
+ * ================================================================ */
+:root {
+  --brand-500: 59 130 246;  /* #3B82F6 highlight / dark-theme accent */
+  --brand-600: 37 99 235;   /* #2563EB light-theme accent (AA on white) */
+  --brand-700: 29 78 216;   /* #1D4ED8 hover / pressed */
+
+  /* Semantic accent - light default; the dark block overrides the
+   * triplets, and everything downstream follows automatically. */
+  --accent-rgb: var(--brand-600);
+  --accent-hover-rgb: var(--brand-700);
+  --accent-bright-rgb: var(--brand-500);
+  --accent-bright: rgb(var(--accent-bright-rgb));
+
+  /* Liquid-metal hero shader colors (read by components/ui/liquid-metal-hero) */
+  --hero-metal-back: #0A0D14;  /* deep ink behind the metal flow */
+  --hero-metal-tint: #D6E4FF;  /* icy blue-white metal bands */
+
+  /* Trade-side semantics as RGB triplets so Tailwind buy/sell utilities
+   * can compose alpha (bg-buy/10). App default: blue buy / red sell.
+   * The trading terminal (.term-theme) overrides these to green/red. */
+  --buy-rgb: 30 102 245;        /* #1E66F5 */
+  --buy-light-rgb: 91 140 255;  /* #5B8CFF */
+  --buy-dark-rgb: 13 63 163;    /* #0D3FA3 */
+  --sell-rgb: 220 38 38;        /* #DC2626 */
+  --sell-light-rgb: 248 113 113;/* #F87171 */
+  --sell-dark-rgb: 185 28 28;   /* #B91C1C */
+}
+
+/* Default :root tokens — LIGHT (Vantage-style white surface).
+ * The trader app is light by default; the trading terminal opts INTO
+ * dark via [data-theme="dark"] / .theme-dark on its wrapper. */
+:root {
+  color-scheme: light;
+
+  --bg-page: #FFFFFF;
+  --bg-base: #FFFFFF;
+  --bg-primary: #FFFFFF;
+  --bg-secondary: #FAFAFA;
+  --bg-tertiary: #F5F5F5;
+  --bg-hover: #F5F5F5;
+  --bg-active: #EDEDED;
+  --bg-input: #FFFFFF;
+  --bg-card: #FFFFFF;
+  --bg-card-nested: #F9F9F9;
+  --bg-glass: rgba(255, 255, 255, 0.7);
+  --bg-glass-light: rgba(255, 255, 255, 0.55);
+  --bg-glass-heavy: rgba(255, 255, 255, 0.92);
+
+  --border-primary: #E5E5E5;
+  --border-secondary: #EDEDED;
+  --border-accent: rgb(var(--accent-rgb));
+  --border-glass: rgba(0, 0, 0, 0.06);
+  --border-glass-bright: rgba(0, 0, 0, 0.10);
+
+  --text-primary: #0A0A0A;
+  --text-secondary: #5B5B5B;
+  --text-tertiary: #9A9A9A;
+  --text-inverse: #FFFFFF;
+
+  --accent: rgb(var(--accent-rgb));
+  --accent-hover: rgb(var(--accent-hover-rgb));
+  --accent-soft: rgb(var(--accent-rgb) / 0.12);
+
+  --scrollbar-track: #F5F5F5;
+  --scrollbar-thumb: #D4D4D4;
+  --scrollbar-hover: #9CA3AF;
+
+  --input-bg: #FFFFFF;
+  --input-border: #E5E5E5;
+  --input-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  --input-focus-border: rgb(var(--accent-rgb));
+  --input-focus-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.12);
+  --input-placeholder: #9A9A9A;
+
+  --selection-bg: rgb(var(--accent-rgb) / 0.14);
+
+  --noise-opacity: 0;
+  --emboss-bg: rgba(0, 0, 0, 0.03);
+  --emboss-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+
+  --toast-bg: #FFFFFF;
+  --toast-fg: #0A0A0A;
+  --toast-border: rgba(0, 0, 0, 0.1);
+}
+
+/* Landing effects live in components/landing/landing-fx.css. */
+
+/* ======================================= */
+/* CSS VARIABLES — DARK (Vantablack) THEME */
+/* Opt-in only — used by the trading terminal and any code that      */
+/* explicitly sets data-theme="dark" or .theme-dark.                  */
+/* ======================================= */
+
+[data-theme="dark"], .theme-dark {
+  /* Dark surfaces take the brighter gold so accents keep their pop. */
+  --accent-rgb: var(--brand-gold-600);
+  --accent-hover-rgb: var(--brand-gold-700);
+  /* Dark surfaces take the brighter gold so accents keep their pop. */
+  --accent-rgb: var(--brand-gold-600);
+  --accent-hover-rgb: var(--brand-gold-700);
+  /* Dark surfaces take the brighter blue so accents keep their pop. */
+  --accent-rgb: var(--brand-500);
+  --accent-hover-rgb: var(--brand-600);
+  --bg-page: #050707;
+  --bg-base: #0a0a0a;
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #111111;
+  --bg-tertiary: #0d0d0d;
+  --bg-hover: #161616;
+  --bg-active: #1f1f1f;
+  --bg-input: #111111;
+  --bg-card: #111111;
+  --bg-card-nested: #0d0d0d;
+  --bg-glass: rgba(17, 17, 17, 0.72);
+  --bg-glass-light: rgba(13, 13, 13, 0.55);
+  --bg-glass-heavy: rgba(10, 10, 10, 0.92);
+
+  --border-primary: #2a2a2a;
+  --border-secondary: #1f1f1f;
+  --border-accent: #2a2a2a;
+  --border-glass: rgba(255, 255, 255, 0.06);
+  --border-glass-bright: rgba(255, 255, 255, 0.08);
+
+  --text-primary: #ffffff;
+  --text-secondary: #b4b4b4;
+  --text-tertiary: #8a8a8a;
+  --text-inverse: #000000;
+
+  --scrollbar-track: #0a0a0a;
+  --scrollbar-thumb: #2a2a2a;
+  --scrollbar-hover: #3a3a3a;
+
+  --input-bg: #111111;
+  --input-border: #1f1f1f;
+  --input-shadow: inset 0 2px 6px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(0,0,0,0.2), 0 1px 0 rgba(255,255,255,0.02);
+  --input-focus-border: rgba(99, 102, 241, 0.55);
+  --input-focus-shadow: inset 0 2px 6px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(99, 102, 241, 0.12), 0 0 0 3px rgba(99, 102, 241, 0.12);
+  --input-placeholder: #555555;
+
+  --selection-bg: rgba(99, 102, 241, 0.22);
+
+  --noise-opacity: 0.012;
+  --emboss-bg: rgba(0, 0, 0, 0.5);
+  --emboss-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
+
+  /* react-hot-toast — always dark surface (readable on charts + light UI) */
+  --toast-bg: #111111;
+  --toast-fg: #f0f0f0;
+  --toast-border: rgba(99, 102, 241, 0.28);
+
+  /* Colored stat-card surfaces. The trader/admin UIs lean heavily on
+   * gradient stat cards (Total Balance, Bonus, Trade Now, etc.).
+   * Defining them as CSS variables lets the dark / light themes pick
+   * their own gradient stops without every component having to ship
+   * `dark:` Tailwind variants. The `*-text-*` companions are the on-
+   * card foreground colors. */
+  --card-blue-bg: linear-gradient(135deg, #0e2a55 0%, #143a72 50%, #0b1d3d 100%);
+  --card-blue-border: rgba(59, 130, 246, 0.25);
+  --card-blue-icon-bg: rgba(59, 130, 246, 0.25);
+  --card-blue-icon-border: rgba(96, 165, 250, 0.30);
+  --card-blue-icon: #93c5fd;
+  --card-blue-text-strong: #ffffff;
+  --card-blue-text-muted: rgba(191, 219, 254, 0.85);
+  --card-blue-text-faint: rgba(191, 219, 254, 0.60);
+
+  --card-green-bg: linear-gradient(135deg, #0d3f2a 0%, #0f5535 50%, #082921 100%);
+  --card-green-border: rgba(16, 185, 129, 0.25);
+  --card-green-icon-bg: rgba(16, 185, 129, 0.25);
+  --card-green-icon-border: rgba(52, 211, 153, 0.30);
+  --card-green-icon: #6ee7b7;
+  --card-green-text-strong: #ffffff;
+  --card-green-text-muted: rgba(167, 243, 208, 0.85);
+  --card-green-text-faint: rgba(167, 243, 208, 0.60);
+
+  --card-purple-bg: linear-gradient(135deg, #3a1c5e 0%, #4a2470 50%, #2a1442 100%);
+  --card-purple-border: rgba(168, 85, 247, 0.25);
+  --card-purple-icon-bg: rgba(168, 85, 247, 0.25);
+  --card-purple-icon-border: rgba(192, 132, 252, 0.30);
+  --card-purple-icon: #c4b5fd;
+  --card-purple-text-strong: #ffffff;
+  --card-purple-text-muted: rgba(221, 214, 254, 0.85);
+  --card-purple-text-faint: rgba(221, 214, 254, 0.60);
+
+  --card-amber-bg: linear-gradient(135deg, #78350f 0%, #92400e 50%, #5b2a07 100%);
+  --card-amber-border: rgba(245, 158, 11, 0.25);
+  --card-amber-icon-bg: rgba(245, 158, 11, 0.25);
+  --card-amber-icon-border: rgba(251, 191, 36, 0.30);
+  --card-amber-icon: #fcd34d;
+  --card-amber-text-strong: #ffffff;
+  --card-amber-text-muted: rgba(254, 215, 170, 0.85);
+  --card-amber-text-faint: rgba(254, 215, 170, 0.60);
+
+  --card-red-bg: linear-gradient(135deg, #3c0d0d 0%, #5b1a1a 50%, #2a0808 100%);
+  --card-red-border: rgba(239, 68, 68, 0.25);
+  --card-red-icon-bg: rgba(239, 68, 68, 0.25);
+  --card-red-icon-border: rgba(248, 113, 113, 0.30);
+  --card-red-icon: #fca5a5;
+  --card-red-text-strong: #ffffff;
+  --card-red-text-muted: rgba(254, 202, 202, 0.85);
+  --card-red-text-faint: rgba(254, 202, 202, 0.60);
+
+  color-scheme: dark;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+ * TRADING TERMINAL THEME (.term-theme) — layered ON TOP of the dark
+ * block on the /trading/terminal wrapper. Spec: Binance-style desk —
+ * near-black surfaces, #00c087 buy green / #f84960 sell red, Plus
+ * Jakarta Sans body, JetBrains Mono numerals. This block is the ONLY
+ * place the terminal palette exists; components keep using the same
+ * var-backed utilities (bg-card, border-primary, buy/sell, accent).
+ * ════════════════════════════════════════════════════════════════════ */
+.term-theme {
+  font-family: var(--font-body), 'Plus Jakarta Sans', Inter, system-ui, sans-serif;
+  /* font-mono utilities resolve var(--font-numeric) first — point it at
+   * JetBrains Mono inside the terminal so every price/qty is true mono. */
+  --font-numeric: var(--font-mono);
+
+  --bg-page: #0a0b0d;
+  --bg-base: #0a0b0d;
+  --bg-primary: #0a0b0d;
+  --bg-secondary: #14161a;
+  --bg-tertiary: #14161a;
+  --bg-hover: #1e2126;
+  --bg-active: #2b2f36;
+  --bg-input: #1e2126;
+  --bg-card: #1e2126;
+  --bg-card-nested: #14161a;
+  --bg-glass: rgba(20, 22, 26, 0.72);
+  --bg-glass-light: rgba(20, 22, 26, 0.55);
+  --bg-glass-heavy: rgba(10, 11, 13, 0.92);
+
+  --border-primary: #2b2f36;
+  --border-secondary: #2b2f36;
+  --border-accent: #2b2f36;
+  --border-glass: #2b2f36;
+  --border-glass-bright: #383d46;
+
+  --text-primary: #eaecef;
+  --text-secondary: #848e9c;
+  --text-tertiary: #5c6470;
+
+  --scrollbar-track: #0a0b0d;
+  --scrollbar-thumb: #2b2f36;
+  --scrollbar-hover: #383d46;
+
+  --input-bg: #1e2126;
+  --input-border: #2b2f36;
+  --input-focus-border: rgb(0 192 135 / 0.55);
+  --input-focus-shadow: inset 0 2px 6px rgba(0,0,0,0.5), 0 0 0 3px rgb(0 192 135 / 0.12);
+  --input-placeholder: #5c6470;
+
+  --selection-bg: rgb(0 192 135 / 0.22);
+  --toast-border: rgb(0 192 135 / 0.28);
+
+  /* Trade semantics — the green/red pair the whole spec hangs on. */
+  --buy-rgb: 0 192 135;         /* #00c087 */
+  --buy-light-rgb: 54 214 166;
+  --buy-dark-rgb: 0 148 103;    /* #009467 — pressed / bottom bevel */
+  --sell-rgb: 248 73 96;        /* #f84960 */
+  --sell-light-rgb: 255 112 130;
+  --sell-dark-rgb: 200 46 68;
+
+  /* Inside the terminal the accent IS the buy green: focus borders,
+   * active tabs, hover text all follow the spec automatically. */
+  --accent-rgb: 0 192 135;
+  --accent-hover-rgb: 0 148 103;
+  --accent-bright-rgb: 54 214 166;
+  --accent-bright: rgb(var(--accent-bright-rgb));
+}
+
+/* Terminal buy/sell CTAs — flat spec look (green fill/black text,
+ * red fill/white text, soft glow, bottom bevel) instead of the app's
+ * blue skeu gradients. */
+.trading-page.term-theme .skeu-btn-buy {
+  background: rgb(var(--buy-rgb));
+  color: #0a0b0d;
+  box-shadow: 0 8px 24px rgb(var(--buy-rgb) / 0.2), inset 0 -3px 0 rgb(var(--buy-dark-rgb));
+}
+.trading-page.term-theme .skeu-btn-buy:hover {
+  background: rgb(var(--buy-light-rgb));
+  box-shadow: 0 10px 28px rgb(var(--buy-rgb) / 0.3), inset 0 -3px 0 rgb(var(--buy-dark-rgb));
+}
+.trading-page.term-theme .skeu-btn-buy:active {
+  transform: translateY(1px);
+  box-shadow: 0 4px 12px rgb(var(--buy-rgb) / 0.2), inset 0 -1px 0 rgb(var(--buy-dark-rgb));
+}
+.trading-page.term-theme .skeu-btn-sell {
+  background: rgb(var(--sell-rgb));
+  color: #ffffff;
+  box-shadow: 0 8px 24px rgb(var(--sell-rgb) / 0.2), inset 0 -3px 0 rgb(var(--sell-dark-rgb));
+}
+.trading-page.term-theme .skeu-btn-sell:hover {
+  background: rgb(var(--sell-light-rgb));
+  box-shadow: 0 10px 28px rgb(var(--sell-rgb) / 0.3), inset 0 -3px 0 rgb(var(--sell-dark-rgb));
+}
+.trading-page.term-theme .skeu-btn-sell:active {
+  transform: translateY(1px);
+  box-shadow: 0 4px 12px rgb(var(--sell-rgb) / 0.2), inset 0 -1px 0 rgb(var(--sell-dark-rgb));
+}
+
+/* ======================================= */
+/* CSS VARIABLES — LIGHT (White-Black)     */
+/* Clean white bg, gray borders, black txt */
+/* ======================================= */
+
+[data-theme="light"] {
+  --bg-base: #FFFFFF;
+  --bg-primary: #FFFFFF;
+  --bg-secondary: #FAFAFA;
+  --bg-tertiary: #F5F5F5;
+  --bg-hover: #F5F5F5;
+  --bg-active: #EDEDED;
+  --bg-input: #FFFFFF;
+  --bg-card: #FFFFFF;
+  --bg-card-nested: #F9F9F9;
+  --bg-glass: rgba(255, 255, 255, 0.7);
+  --bg-glass-light: rgba(255, 255, 255, 0.55);
+  --bg-glass-heavy: rgba(255, 255, 255, 0.92);
+
+  --border-primary: #E5E5E5;
+  --border-secondary: #EDEDED;
+  --border-accent: rgb(var(--accent-rgb));
+  --border-glass: rgba(0, 0, 0, 0.06);
+  --border-glass-bright: rgba(0, 0, 0, 0.10);
+
+  --text-primary: #0A0A0A;
+  --text-secondary: #5B5B5B;
+  --text-tertiary: #9A9A9A;
+  --text-inverse: #FFFFFF;
+
+  --accent: rgb(var(--accent-rgb));
+  --accent-hover: rgb(var(--accent-hover-rgb));
+  --accent-soft: rgb(var(--accent-rgb) / 0.12);
+
+  --scrollbar-track: #F5F5F5;
+  --scrollbar-thumb: #D4D4D4;
+  --scrollbar-hover: #9CA3AF;
+
+  --input-bg: #FFFFFF;
+  --input-border: #E5E5E5;
+  --input-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  --input-focus-border: rgb(var(--accent-rgb));
+  --input-focus-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.12);
+  --input-placeholder: #9A9A9A;
+
+  --selection-bg: rgb(var(--accent-rgb) / 0.14);
+
+  --noise-opacity: 0;
+  --emboss-bg: rgba(0, 0, 0, 0.03);
+  --emboss-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+
+  --toast-bg: #FFFFFF;
+  --toast-fg: #0A0A0A;
+  --toast-border: rgba(0, 0, 0, 0.1);
+
+  /* Stat-card surfaces — light mode. Soft tinted gradients so the
+   * cards keep their visual identity (blue = balance, green = bonus,
+   * etc.) but read cleanly on a white page. Text colors flip from
+   * white to dark-mid so they stay legible on the lighter surfaces. */
+  --card-blue-bg: linear-gradient(135deg, #eff6ff 0%, #dbeafe 50%, #bfdbfe 100%);
+  --card-blue-border: rgba(59, 130, 246, 0.40);
+  --card-blue-icon-bg: rgba(59, 130, 246, 0.12);
+  --card-blue-icon-border: rgba(59, 130, 246, 0.30);
+  --card-blue-icon: #2563eb;
+  --card-blue-text-strong: #1e3a8a;
+  --card-blue-text-muted: #1d4ed8;
+  --card-blue-text-faint: #3b82f6;
+
+  --card-green-bg: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 50%, #a7f3d0 100%);
+  --card-green-border: rgba(16, 185, 129, 0.40);
+  --card-green-icon-bg: rgba(16, 185, 129, 0.12);
+  --card-green-icon-border: rgba(16, 185, 129, 0.30);
+  --card-green-icon: #059669;
+  --card-green-text-strong: #064e3b;
+  --card-green-text-muted: #047857;
+  --card-green-text-faint: #10b981;
+
+  --card-purple-bg: linear-gradient(135deg, #faf5ff 0%, #f3e8ff 50%, #e9d5ff 100%);
+  --card-purple-border: rgba(168, 85, 247, 0.40);
+  --card-purple-icon-bg: rgba(168, 85, 247, 0.12);
+  --card-purple-icon-border: rgba(168, 85, 247, 0.30);
+  --card-purple-icon: #7c3aed;
+  --card-purple-text-strong: #4c1d95;
+  --card-purple-text-muted: #6d28d9;
+  --card-purple-text-faint: #8b5cf6;
+
+  --card-amber-bg: linear-gradient(135deg, #fffbeb 0%, #fef3c7 50%, #fde68a 100%);
+  --card-amber-border: rgba(245, 158, 11, 0.40);
+  --card-amber-icon-bg: rgba(245, 158, 11, 0.12);
+  --card-amber-icon-border: rgba(245, 158, 11, 0.30);
+  --card-amber-icon: #d97706;
+  --card-amber-text-strong: #78350f;
+  --card-amber-text-muted: #b45309;
+  --card-amber-text-faint: #d97706;
+
+  --card-red-bg: linear-gradient(135deg, #fef2f2 0%, #fee2e2 50%, #fecaca 100%);
+  --card-red-border: rgba(239, 68, 68, 0.40);
+  --card-red-icon-bg: rgba(239, 68, 68, 0.12);
+  --card-red-icon-border: rgba(239, 68, 68, 0.30);
+  --card-red-icon: #dc2626;
+  --card-red-text-strong: #7f1d1d;
+  --card-red-text-muted: #b91c1c;
+  --card-red-text-faint: #ef4444;
+
+  color-scheme: light;
+}
+
+/* ======================================= */
+/* THEME WRAPPER CLASSES — applied by      */
+/* ThemeProvider so ALL descendants get   */
+/* correct vars (header, sidebars, panels) */
+/* ======================================= */
+
+.theme-dark {
+  --bg-base: #0a0a0a;
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #111111;
+  --bg-tertiary: #0d0d0d;
+  --bg-hover: #161616;
+  --bg-active: #1f1f1f;
+  --bg-input: #111111;
+  --bg-card: #111111;
+  --bg-card-nested: #0d0d0d;
+  --bg-glass: rgba(17, 17, 17, 0.72);
+  --bg-glass-light: rgba(13, 13, 13, 0.55);
+  --bg-glass-heavy: rgba(10, 10, 10, 0.92);
+  --border-primary: #2a2a2a;
+  --border-secondary: #1f1f1f;
+  --border-accent: #2a2a2a;
+  --border-glass: rgba(255, 255, 255, 0.06);
+  --border-glass-bright: rgba(255, 255, 255, 0.08);
+  --text-primary: #ffffff;
+  --text-secondary: #b4b4b4;
+  --text-tertiary: #8a8a8a;
+  --text-inverse: #000000;
+  --scrollbar-track: #0a0a0a;
+  --scrollbar-thumb: #2a2a2a;
+  --scrollbar-hover: #3a3a3a;
+  --input-bg: #111111;
+  --input-border: #1f1f1f;
+  --input-focus-border: rgba(99, 102, 241, 0.55);
+  --input-focus-shadow: inset 0 2px 6px rgba(0,0,0,0.5), 0 0 0 3px rgba(99, 102, 241, 0.12);
+  --selection-bg: rgba(99, 102, 241, 0.22);
+  --toast-bg: #111111;
+  --toast-fg: #f0f0f0;
+  --toast-border: rgba(99, 102, 241, 0.28);
+  color-scheme: dark;
+}
+
+.theme-light {
+  --bg-base: #FFFFFF;
+  --bg-primary: #FFFFFF;
+  --bg-secondary: #FAFAFA;
+  --bg-tertiary: #F5F5F5;
+  --bg-hover: #F5F5F5;
+  --bg-active: #EDEDED;
+  --bg-input: #FFFFFF;
+  --bg-card: #FFFFFF;
+  --bg-card-nested: #F9F9F9;
+  --bg-glass: rgba(255, 255, 255, 0.7);
+  --bg-glass-light: rgba(255, 255, 255, 0.55);
+  --bg-glass-heavy: rgba(255, 255, 255, 0.92);
+  --border-primary: #E5E5E5;
+  --border-secondary: #EDEDED;
+  --border-accent: rgb(var(--accent-rgb));
+  --border-glass: rgba(0, 0, 0, 0.06);
+  --border-glass-bright: rgba(0, 0, 0, 0.10);
+  --text-primary: #0A0A0A;
+  --text-secondary: #5B5B5B;
+  --text-tertiary: #9A9A9A;
+  --text-inverse: #FFFFFF;
+  --accent: rgb(var(--accent-rgb));
+  --accent-hover: rgb(var(--accent-hover-rgb));
+  --accent-soft: rgb(var(--accent-rgb) / 0.12);
+  --scrollbar-track: #F5F5F5;
+  --scrollbar-thumb: #D4D4D4;
+  --scrollbar-hover: #9CA3AF;
+  --input-bg: #FFFFFF;
+  --input-border: #E5E5E5;
+  --input-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  --input-focus-border: rgb(var(--accent-rgb));
+  --input-focus-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.12);
+  --input-placeholder: #9A9A9A;
+  --selection-bg: rgb(var(--accent-rgb) / 0.14);
+  --noise-opacity: 0;
+  --emboss-bg: rgba(0, 0, 0, 0.03);
+  --emboss-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+  --toast-bg: #FFFFFF;
+  --toast-fg: #0A0A0A;
+  --toast-border: rgba(0, 0, 0, 0.1);
+  color-scheme: light;
+}
+
+/* ======================================= */
+/* BASE STYLES                             */
+/* ======================================= */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.tabular-nums { font-variant-numeric: tabular-nums; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
+/* Removes light “seam” where vertical + horizontal scrollbars meet */
+::-webkit-scrollbar-corner {
+  background: var(--bg-base);
+}
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+/* Dashboard main scroll — track matches panel bg (avoids pale edge stripe next to scrollbar) */
+.dashboard-main-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--bg-base);
+}
+.dashboard-main-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.dashboard-main-scroll::-webkit-scrollbar-track {
+  background: var(--bg-base);
+}
+.dashboard-main-scroll::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 4px;
+}
+.dashboard-main-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-hover);
+}
+.dashboard-main-scroll::-webkit-scrollbar-corner {
+  background: var(--bg-base);
+}
+
+::selection { background-color: var(--selection-bg); color: var(--text-primary); }
+
+/* ======================================= */
+/* GLASSMORPHISM — adapts to theme         */
+/* ======================================= */
+
+.glass {
+  background: var(--bg-glass);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid var(--border-glass);
+}
+
+.glass-light {
+  background: var(--bg-glass-light);
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  border: 1px solid var(--border-glass-bright);
+}
+
+.glass-heavy {
+  background: var(--bg-glass-heavy);
+  backdrop-filter: blur(24px) saturate(200%);
+  -webkit-backdrop-filter: blur(24px) saturate(200%);
+  border: 1px solid var(--border-glass);
+}
+
+.glass-card {
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--border-glass-bright);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.glass-panel {
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--border-glass);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+/* ======================================= */
+/* LIGHT THEME — White-Black glass &       */
+/* rainbow overrides                       */
+/* ======================================= */
+
+[data-theme="light"] .glass,
+[data-theme="light"] .glass-card,
+[data-theme="light"] .glass-panel,
+[data-theme="light"] .glass-light,
+[data-theme="light"] .glass-heavy,
+.theme-light .glass,
+.theme-light .glass-card,
+.theme-light .glass-panel,
+.theme-light .glass-light,
+.theme-light .glass-heavy {
+  border: 1px solid rgba(0,0,0,0.08);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+
+[data-theme="light"] .rainbow-card-1 { border-left: 3px solid #111827; }
+[data-theme="light"] .rainbow-card-2 { border-left: 3px solid #374151; }
+[data-theme="light"] .rainbow-card-3 { border-left: 3px solid #4b5563; }
+[data-theme="light"] .rainbow-card-4 { border-left: 3px solid #6b7280; }
+[data-theme="light"] .rainbow-card-5 { border-left: 3px solid #111827; }
+[data-theme="light"] .rainbow-card-6 { border-left: 3px solid #374151; }
+[data-theme="light"] .rainbow-card-7 { border-left: 3px solid #4b5563; }
+
+[data-theme="light"] .rainbow-bg {
+  background: transparent;
+}
+
+[data-theme="light"] .rainbow-border {
+  border: 1px solid #e5e7eb;
+}
+
+[data-theme="light"] .rainbow-text {
+  color: #111827;
+  -webkit-text-fill-color: #111827;
+  background: none;
+}
+
+/* ======================================= */
+/* SKEUOMORPHISM — adapts to theme         */
+/* ======================================= */
+
+.skeu-surface {
+  background: linear-gradient(180deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
+  border: 1px solid var(--border-glass);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 2px 8px rgba(0,0,0,0.15);
+}
+[data-theme="light"] .skeu-surface,
+.theme-light .skeu-surface {
+  border: 1px solid rgba(0,0,0,0.12);
+  box-shadow: none;
+}
+
+.skeu-raised {
+  background: linear-gradient(180deg, var(--bg-hover) 0%, var(--bg-tertiary) 100%);
+  border: 1px solid var(--border-glass-bright);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), inset 0 -1px 0 rgba(0,0,0,0.12), 0 4px 12px rgba(0,0,0,0.15);
+}
+[data-theme="light"] .skeu-raised,
+.theme-light .skeu-raised {
+  border: 1px solid rgba(0,0,0,0.12);
+  box-shadow: none;
+}
+
+.skeu-inset {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  box-shadow: inset 0 2px 6px rgba(0,0,0,0.25), 0 1px 0 rgba(255,255,255,0.02);
+}
+[data-theme="light"] .skeu-inset,
+.theme-light .skeu-inset {
+  border: 1px solid rgba(0,0,0,0.12);
+  box-shadow: none;
+}
+
+.skeu-btn {
+  background: linear-gradient(180deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0) 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -1px 0 rgba(0,0,0,0.1), 0 2px 8px rgba(0,0,0,0.15);
+  transition: all 150ms ease;
+}
+.skeu-btn:active { box-shadow: inset 0 2px 4px rgba(0,0,0,0.3); transform: translateY(1px); }
+[data-theme="light"] .skeu-btn,
+.theme-light .skeu-btn {
+  border: 1px solid #000000;
+  background: var(--bg-secondary);
+  color: #000000;
+  box-shadow: none;
+}
+[data-theme="light"] .skeu-btn:hover,
+.theme-light .skeu-btn:hover {
+  background: var(--bg-hover);
+}
+
+.skeu-btn-buy {
+  background: linear-gradient(180deg, #5B8CFF 0%, #1E66F5 50%, #1849C2 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -2px 0 rgba(0,0,0,0.15), 0 4px 16px rgba(30,102,245,0.28), 0 2px 4px rgba(0,0,0,0.15);
+  color: #ffffff;
+}
+.skeu-btn-buy:hover {
+  background: linear-gradient(180deg, #7CA3FF 0%, #5B8CFF 50%, #1E66F5 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), inset 0 -2px 0 rgba(0,0,0,0.12), 0 6px 24px rgba(30,102,245,0.38);
+}
+.skeu-btn-buy:active {
+  background: linear-gradient(180deg, #1E66F5 0%, #1849C2 100%);
+  box-shadow: inset 0 2px 6px rgba(0,0,0,0.35), 0 2px 8px rgba(30,102,245,0.2);
+  transform: translateY(1px);
+}
+[data-theme="light"] .skeu-btn-buy,
+.theme-light .skeu-btn-buy {
+  background: #1E66F5;
+  color: #ffffff;
+  border: none;
+  box-shadow: 0 2px 8px rgba(30, 102, 245, 0.3);
+}
+[data-theme="light"] .skeu-btn-buy:hover,
+.theme-light .skeu-btn-buy:hover {
+  background: #1849C2;
+  box-shadow: 0 4px 12px rgba(30, 102, 245, 0.4);
+}
+
+.skeu-btn-sell {
+  background: linear-gradient(180deg, #FF4D5E 0%, #FF2440 50%, #E61A33 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.15), inset 0 -2px 0 rgba(0,0,0,0.12), 0 4px 16px rgba(255,36,64,0.3), 0 2px 4px rgba(0,0,0,0.15);
+}
+.skeu-btn-sell:hover {
+  background: linear-gradient(180deg, #FF5E6D 0%, #FF4D5E 50%, #FF2440 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -2px 0 rgba(0,0,0,0.12), 0 6px 24px rgba(255,36,64,0.4);
+}
+.skeu-btn-sell:active {
+  background: linear-gradient(180deg, #FF2440 0%, #E61A33 100%);
+  box-shadow: inset 0 2px 6px rgba(0,0,0,0.4), 0 2px 8px rgba(255,36,64,0.2);
+  transform: translateY(1px);
+}
+[data-theme="light"] .skeu-btn-sell,
+.theme-light .skeu-btn-sell {
+  background: #FF2440;
+  color: #FFFFFF;
+  border: none;
+  box-shadow: 0 2px 8px rgba(255, 36, 64, 0.25);
+}
+[data-theme="light"] .skeu-btn-sell:hover,
+.theme-light .skeu-btn-sell:hover {
+  background: #E61A33;
+  box-shadow: 0 4px 12px rgba(255, 36, 64, 0.35);
+}
+
+.skeu-input {
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  box-shadow: var(--input-shadow);
+  transition: all 150ms ease;
+}
+.skeu-input:focus {
+  border-color: var(--input-focus-border);
+  box-shadow: var(--input-focus-shadow);
+}
+[data-theme="light"] .skeu-input,
+.theme-light .skeu-input {
+  border: 1px solid rgba(0,0,0,0.2);
+  box-shadow: none;
+}
+[data-theme="light"] .skeu-input:focus,
+.theme-light .skeu-input:focus {
+  border-color: #000000;
+  box-shadow: 0 0 0 1px #000000;
+}
+
+.emboss-divider {
+  border: none;
+  height: 1px;
+  background: var(--emboss-bg);
+  box-shadow: var(--emboss-shadow);
+}
+[data-theme="light"] .emboss-divider {
+  background: #000000;
+  box-shadow: none;
+}
+
+.noise-texture::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: var(--noise-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* ======================================= */
+/* ANIMATIONS                              */
+/* ======================================= */
+
+.flash-blue { animation: flashAccent 0.15s ease-out; }
+.flash-red { animation: flashRed 0.15s ease-out; }
+@keyframes flashAccent { 0% { background-color: rgba(99,102,241,0.22); } 100% { background-color: transparent; } }
+@keyframes flashRed { 0% { background-color: rgba(239,68,68,0.2); } 100% { background-color: transparent; } }
+
+/* react-hot-toast — library defaults are washed-out white squares; reskin
+ * to the PowerTradeFX dark surface with proper padding, gap, and typography so
+ * single-line errors don't wrap mid-word and the icon doesn't crash into
+ * the text. */
+/* The container the lib generates also needs to be clamped — it sits
+ * fixed at the top and absolutely-positions each toast, so if its width
+ * is unbounded the toasts can spill past the modal regardless of the
+ * inner max-width. */
+.powertradefx-toaster,
+.powertradefx-toaster > div,
+.powertradefx-toaster div[role="status"],
+.powertradefx-toaster * {
+  max-width: min(440px, calc(100vw - 32px)) !important;
+  box-sizing: border-box;
+}
+
+/* Override the inline transform-positioning wrapper react-hot-toast
+ * generates per-toast. The lib computes width: auto on it so the toast
+ * grows to content; clamp it here too. */
+.powertradefx-toaster > div > div {
+  max-width: min(440px, calc(100vw - 32px)) !important;
+  width: auto !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+}
+
+.powertradefx-hot-toast {
+  background: var(--toast-bg) !important;
+  color: var(--toast-fg) !important;
+  border: 1px solid var(--toast-border) !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3) !important;
+  border-radius: 12px !important;
+  padding: 12px 16px !important;
+  min-height: 44px;
+  min-width: 0 !important;
+  max-width: min(420px, calc(100vw - 32px)) !important;
+  font-size: 13.5px !important;
+  line-height: 1.45 !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.1px;
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* The message container — react-hot-toast puts the text in the child that
+ * carries role="status" (it spreads ariaProps={role:'status'} onto the
+ * message div; the icon wrapper has NO role). Flex children default to
+ * min-width:auto, so they refuse to shrink below their content's intrinsic
+ * width — that's exactly what let long backend error strings stretch the
+ * toast past its max-width and spill outside the box. flex:1 1 auto +
+ * min-width:0 + overflow-wrap force the text to wrap inside the bounds. */
+.powertradefx-hot-toast > div[role="status"] {
+  flex: 1 1 auto;
+  min-width: 0 !important;
+  margin: 0 !important;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+/* The status icon (✓ / ✕ / spinner) — the non-role child. Keep it at its
+ * natural size so it never shrinks or wraps. */
+.powertradefx-hot-toast > div:not([role="status"]) {
+  flex-shrink: 0;
+  margin-right: 2px;
+}
+
+/* Tighten the close-button (×) for toasts that ship with one. */
+.powertradefx-hot-toast button {
+  flex-shrink: 0;
+  color: var(--toast-fg) !important;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+.powertradefx-hot-toast button:hover {
+  opacity: 1;
+}
+
+/* Page fade-in — applied to main content area on route change */
+@keyframes pageFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.page-fade-in { animation: pageFadeIn 0.18s ease-out both; }
+
+/* Sidebar icon glow pulse */
+@keyframes iconGlowPulse {
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(99,102,241,0.15)); }
+  50%      { filter: drop-shadow(0 0 10px rgba(99,102,241,0.55)); }
+}
+.sidebar-icon-glow {
+  animation: iconGlowPulse 2.5s ease-in-out infinite;
+}
+
+@keyframes tradeSlideIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.trade-panel-enter { animation: tradeSlideIn 0.12s ease-out; }
+
+.resize-handle-h { cursor: col-resize; }
+.resize-handle-v { cursor: row-resize; }
+.focus-ring:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+.no-drag { -webkit-user-drag: none; user-select: none; }
+
+@layer components {
+  /* Shared scroll area: safe-area + aligned horizontal rhythm on phones */
+  .page-main {
+    @apply flex-1 overflow-y-auto overflow-x-hidden min-h-0;
+    @apply px-3 pt-3 sm:px-4 md:px-6 md:pt-4;
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@layer utilities {
+  /* Dashboard sidebar nav — dark track/thumb (avoids default light scrollbar rails) */
+  .sidebar-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  }
+  .sidebar-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+  .sidebar-scroll::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+  }
+  .sidebar-scroll::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 4px;
+  }
+  .sidebar-scroll::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-hover);
+  }
+
+  .transition-fast { transition: all 150ms ease; }
+  .scrollbar-none,
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar,
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@layer base {
+  .auth-page { overflow: auto; }
+  .trading-page {
+    overflow: hidden;
+    height: 100dvh;
+    max-height: 100dvh;
+    width: 100%;
+    max-width: 100vw;
+  }
+
+  input, select, textarea {
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    color: var(--text-primary);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    box-shadow: var(--input-shadow);
+    transition: all 150ms ease;
+    width: 100%;
+  }
+  input:focus, select:focus, textarea:focus {
+    border-color: var(--input-focus-border);
+    box-shadow: var(--input-focus-shadow);
+  }
+  [data-theme="light"] input,
+  [data-theme="light"] select,
+  [data-theme="light"] textarea {
+    border: 1px solid #000000;
+    box-shadow: none;
+    color: #000000;
+  }
+  [data-theme="light"] input::placeholder,
+  [data-theme="light"] textarea::placeholder {
+    color: #666666;
+  }
+  [data-theme="light"] input:focus,
+  [data-theme="light"] select:focus,
+  [data-theme="light"] textarea:focus {
+    border-color: #000000;
+    box-shadow: 0 0 0 1px #000000;
+  }
+
+  /*
+   * Nested dark shell (e.g. DashboardShell) lives inside root theme-light wrapper.
+   * Without this, [data-theme="light"] input { color: #000 } wins for all inputs and
+   * text becomes invisible on dark dashboard fields.
+   */
+  [data-theme="dark"] input,
+  [data-theme="dark"] select,
+  [data-theme="dark"] textarea,
+  .theme-dark input,
+  .theme-dark select,
+  .theme-dark textarea {
+    color: var(--text-primary);
+    background: var(--input-bg);
+    border-color: var(--input-border);
+    box-shadow: var(--input-shadow);
+  }
+  [data-theme="dark"] input::placeholder,
+  [data-theme="dark"] textarea::placeholder,
+  .theme-dark input::placeholder,
+  .theme-dark textarea::placeholder {
+    color: var(--input-placeholder);
+  }
+  [data-theme="dark"] input:focus,
+  [data-theme="dark"] select:focus,
+  [data-theme="dark"] textarea:focus,
+  .theme-dark input:focus,
+  .theme-dark select:focus,
+  .theme-dark textarea:focus {
+    border-color: var(--input-focus-border);
+    box-shadow: var(--input-focus-shadow);
+  }
+
+  /* Chrome autofill: avoid dark text on dark dashboard inputs */
+  [data-theme="dark"] input:-webkit-autofill,
+  [data-theme="dark"] input:-webkit-autofill:hover,
+  [data-theme="dark"] input:-webkit-autofill:focus,
+  .theme-dark input:-webkit-autofill,
+  .theme-dark input:-webkit-autofill:hover,
+  .theme-dark input:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--text-primary);
+    caret-color: var(--text-primary);
+    box-shadow: inset 0 0 0 100px var(--input-bg);
+    transition: background-color 9999s ease-out;
+  }
+
+  input:disabled, select:disabled, textarea:disabled { opacity: 0.5; cursor: not-allowed; }
+  [data-theme="dark"] input:disabled,
+  [data-theme="dark"] select:disabled,
+  [data-theme="dark"] textarea:disabled,
+  .theme-dark input:disabled,
+  .theme-dark select:disabled,
+  .theme-dark textarea:disabled {
+    color: var(--text-primary);
+    opacity: 0.72;
+  }
+  input[type="number"] { font-variant-numeric: tabular-nums; font-family: 'JetBrains Mono', monospace; }
+  input::placeholder, textarea::placeholder { color: var(--input-placeholder); }
+}
+
+/* Accounts / Internal Transfer: native <select> readable on Windows (dark text on dark fix) */
+@layer components {
+  .accounts-native-select {
+    background-color: var(--bg-secondary) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-primary) !important;
+    box-shadow: none !important;
+  }
+  .accounts-native-select:focus {
+    border-color: rgba(99, 102, 241, 0.55) !important;
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2) !important;
+  }
+  .accounts-native-select option {
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+  }
+}
+
+/* Legacy AppHeader override removed — the new sticky AppNavbar is
+   already flat / hairline-bordered, so the per-page reset is no
+   longer needed. */
+
+/* ── PowerTradeFX app hero-card surfaces ─────────────────────────────────
+ * Navy gradient + accent glow, shared by dashboard/accounts/etc. so the
+ * logged-in app speaks the same language as the landing without pulling
+ * in the landing effects sheet. */
+.ax-card-hero {
+  background:
+    radial-gradient(320px 160px at 90% -20%, rgb(var(--accent-rgb) / 0.30), transparent 70%),
+    linear-gradient(150deg, #0A1330 0%, #060B1A 82%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+/* Light mode: the hero card flips to a light surface so the theme-var
+ * text inside (text-text-*) stays readable — the dark navy version is
+ * dark-theme only. */
+[data-theme="light"] .ax-card-hero {
+  background:
+    radial-gradient(320px 160px at 90% -20%, rgb(var(--accent-rgb) / 0.10), transparent 70%),
+    linear-gradient(150deg, #FFFFFF 0%, #F2F5FB 82%);
+  border: 1px solid #E2E8F2;
+}
+.ax-glow-hover { transition: border-color .2s ease, box-shadow .25s ease, transform .2s ease; }
+.ax-glow-hover:hover {
+  border-color: rgb(var(--accent-rgb) / 0.45);
+  box-shadow: 0 18px 50px -18px rgb(var(--accent-rgb) / 0.40);
+  transform: translateY(-2px);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+ * DESK — the single dashboard shell + overview design system.
+ * The ONLY place desk colors exist. Components reference var(--…) or
+ * these dk-* classes exclusively; no hex anywhere in TSX.
+ * ════════════════════════════════════════════════════════════════════ */
+.desk {
+  --ink:#0A0D14; --panel:#111725; --panel-2:#161D2D; --raise:#1C2436;
+  --line:#212A3C; --line-2:#2E3950;
+  --accent:#3D7DFF; --accent-dim:#24427F;
+  --up:#28D293; --down:#FF5D6C;
+  --text:#E9EEF7; --muted:#8792A8; --faint:#5A6478;
+  --on-accent:#FFFFFF;
+  /* shadow the app accent triplet so any tailwind accent utility that
+   * leaks into the desk subtree matches the desk accent */
+  --accent-rgb: 61 125 255;
+  background:var(--ink); color:var(--text);
+  font-family:var(--f-ui),'Archivo',system-ui,sans-serif; font-size:14px;
+  min-height:100dvh; display:flex; flex-direction:column;
+}
+.desk .num { font-family:var(--f-num),'IBM Plex Mono',monospace; font-variant-numeric:tabular-nums; }
+
+/* Light-mode desk — same token names, daylight values. ThemeProvider
+ * stamps data-theme on <html>/wrapper, so flipping the app theme
+ * re-skins every dk-* surface with zero component changes. */
+[data-theme="light"] .desk {
+  --ink:#F4F6FB; --panel:#FFFFFF; --panel-2:#EEF2F8; --raise:#FFFFFF;
+  --line:#E2E8F2; --line-2:#CBD5E4;
+  --accent:#2563EB; --accent-dim:#BFD3FA;
+  --up:#0FA97B; --down:#E5484D;
+  --text:#0B1220; --muted:#4E5A70; --faint:#8792A8;
+  --on-accent:#FFFFFF;
+  --accent-rgb: 37 99 235;
+}
+
+/* ── Row 1: top navbar (58px) ── */
+.dk-nav { position:sticky; top:0; z-index:50; height:58px; display:flex; align-items:center;
+  gap:18px; padding:0 18px; background:var(--panel); border-bottom:1px solid var(--line); }
+.dk-brand { display:flex; align-items:center; gap:9px; font-weight:800; font-size:17px;
+  letter-spacing:-.02em; color:var(--text); }
+.dk-brand svg rect { fill:var(--accent); }
+.dk-brand em { font-style:normal; color:var(--accent); }
+.dk-links { display:flex; align-items:stretch; gap:2px; height:100%; margin:0 auto; }
+.dk-link { position:relative; display:flex; align-items:center; padding:0 13px; color:var(--muted);
+  font-weight:600; font-size:13px; }
+.dk-link:hover { color:var(--text); }
+.dk-link.is-on { color:var(--text); }
+.dk-link.is-on::after { content:''; position:absolute; left:10px; right:10px; bottom:0;
+  height:2px; background:var(--accent); }
+.dk-more { position:relative; }
+.dk-more-menu { position:absolute; top:calc(100% + 6px); right:0; min-width:190px; z-index:60;
+  background:var(--panel-2); border:1px solid var(--line-2); border-radius:12px; padding:6px;
+  box-shadow:0 18px 50px rgba(0,0,0,.55); list-style:none; }
+.dk-more-menu a { display:block; padding:8px 11px; border-radius:8px; color:var(--muted);
+  font-size:13px; font-weight:500; }
+.dk-more-menu a:hover { background:var(--raise); color:var(--text); }
+.dk-right { display:flex; align-items:center; gap:10px; }
+.dk-pill { position:relative; }
+.dk-pill > button { display:flex; align-items:center; gap:8px; background:var(--panel-2);
+  border:1px solid var(--line); color:var(--text); border-radius:999px; padding:7px 12px;
+  cursor:pointer; font:inherit; font-size:12px; }
+.dk-pill-menu { position:absolute; top:calc(100% + 8px); left:0; z-index:60; min-width:270px;
+  background:var(--panel-2); border:1px solid var(--line-2); border-radius:12px; padding:6px;
+  list-style:none; box-shadow:0 18px 50px rgba(0,0,0,.55); }
+.dk-pill-menu button { display:flex; align-items:center; gap:9px; width:100%; padding:8px 10px;
+  border-radius:8px; background:none; border:0; color:var(--text); cursor:pointer; font:inherit; font-size:12px; }
+.dk-pill-menu button:hover { background:var(--raise); }
+.dk-pill-menu .dk-dim { margin-left:auto; color:var(--faint); }
+.dk-tag { font-size:9px; font-weight:800; letter-spacing:.09em; padding:2px 6px; border-radius:5px;
+  background:var(--accent-dim); color:var(--on-accent); }
+.dk-search { display:flex; align-items:center; gap:8px; background:var(--panel-2);
+  border:1px solid var(--line); border-radius:10px; padding:0 10px; color:var(--faint); width:210px; }
+.dk-search input, [data-theme] .dk-search input { flex:1; min-width:0; background:none; border:0; box-shadow:none;
+  color:var(--text); padding:8px 0; font:inherit; font-size:12px; outline:none; }
+.dk-search input::placeholder, [data-theme] .dk-search input::placeholder { color:var(--faint); }
+.dk-search kbd { font-size:9px; border:1px solid var(--line-2); border-radius:4px; padding:1px 5px;
+  color:var(--muted); }
+.dk-clock { font-size:11px; color:var(--muted); letter-spacing:.05em; white-space:nowrap; }
+.dk-bell { position:relative; background:var(--panel-2); border:1px solid var(--line);
+  color:var(--muted); border-radius:9px; padding:8px; cursor:pointer; display:flex; }
+.dk-bell:hover { color:var(--text); border-color:var(--line-2); }
+.dk-bell i { position:absolute; top:6px; right:6px; width:6px; height:6px; border-radius:99px;
+  background:var(--accent); }
+.dk-cta { background:var(--accent); color:var(--on-accent); font-weight:700; font-size:13px;
+  border-radius:10px; padding:8px 17px; }
+.dk-cta:hover { filter:brightness(1.1); }
+.dk-avatar { width:32px; height:32px; border-radius:99px; background:var(--raise);
+  border:1px solid var(--line-2); color:var(--text); display:flex; align-items:center;
+  justify-content:center; font-size:11px; font-weight:700; }
+
+/* ── layout + panels ── */
+.dk-wrap { width:100%; max-width:1560px; margin:0 auto; padding:16px 18px 26px; flex:1; }
+.dk-panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px;
+  animation:dkIn .5s cubic-bezier(.22,1,.36,1) both; }
+@keyframes dkIn { from { opacity:0; transform:translateY(12px);} to { opacity:1; transform:none;} }
+.dk-eyebrow { font-size:10px; font-weight:800; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--muted); margin-bottom:7px; }
+.dk-ctx { display:flex; align-items:center; gap:14px; padding:2px 2px 12px; color:var(--faint);
+  font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
+.dk-ctx b { color:var(--text); letter-spacing:.14em; }
+.dk-ctx .sep { width:1px; height:12px; background:var(--line-2); }
+.dk-hero { display:grid; grid-template-columns:1fr; gap:14px; }
+.dk-kpis { display:grid; grid-template-columns:repeat(5,1fr); margin-top:14px; padding:0; }
+.dk-kpi { padding:14px 16px; border-right:1px solid var(--line); display:flex; flex-direction:column; gap:4px; }
+.dk-kpi:last-child { border-right:0; }
+.dk-kpi span { font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
+.dk-kpi b { font-size:18px; font-weight:600; color:var(--text); }
+.dk-body { display:grid; grid-template-columns:1.62fr 1fr; gap:14px; margin-top:14px; align-items:start; }
+.dk-body-solo { grid-template-columns:1fr; }
+.dk-col { display:flex; flex-direction:column; gap:14px; min-width:0; }
+.dk-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.dk-link-sm { color:var(--accent); font-size:12px; font-weight:600; }
+
+/* ── equity panel ── */
+.dk-equity { font-size:44px; font-weight:600; line-height:1.04; color:var(--text); letter-spacing:-.01em; }
+.dk-chip { display:inline-flex; align-items:center; gap:6px; margin-top:6px; font-size:12px;
+  font-weight:700; border-radius:8px; padding:3px 9px; }
+.dk-chip.up { background:rgba(40,210,147,.12); color:var(--up); }
+.dk-chip.dn { background:rgba(255,93,108,.12); color:var(--down); }
+.dk-chip.flat { background:var(--raise); color:var(--muted); }
+.dk-tfs { display:flex; gap:3px; background:var(--panel-2); border:1px solid var(--line);
+  border-radius:9px; padding:3px; }
+.dk-tfs button { border:0; background:none; color:var(--muted); font:inherit; font-size:10px;
+  font-weight:800; padding:4px 9px; border-radius:6px; cursor:pointer; }
+.dk-tfs button.is-on { background:var(--accent-dim); color:var(--on-accent); }
+.dk-chart { width:100%; height:180px; margin-top:12px; display:block; }
+.dk-hl { display:flex; justify-content:space-between; margin-top:8px; font-size:11px; color:var(--faint); }
+.dk-hl b { color:var(--muted); font-weight:600; }
+@keyframes dkPulse { 0%,100% { opacity:.25; } 50% { opacity:.6; } }
+.dk-edge-halo { animation:dkPulse 2.2s ease-in-out infinite; }
+
+/* ── table / log / empty ── */
+.dk-table { width:100%; border-collapse:collapse; margin-top:6px; font-size:13px; }
+.dk-table th { text-align:left; font-size:9px; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--faint); padding:7px 8px; border-bottom:1px solid var(--line); }
+.dk-table td { padding:10px 8px; border-bottom:1px solid var(--line); }
+.dk-table tr:last-child td { border-bottom:0; }
+.dk-table .r { text-align:right; }
+.dk-side-b { font-size:9px; font-weight:800; padding:2px 7px; border-radius:5px;
+  background:var(--raise); color:var(--muted); letter-spacing:.06em; }
+.dk-pl-up { color:var(--up); } .dk-pl-dn { color:var(--down); }
+.dk-empty { display:flex; flex-direction:column; align-items:center; gap:8px; padding:30px 10px;
+  color:var(--faint); font-size:13px; text-align:center; }
+.dk-empty svg { color:var(--line-2); }
+.dk-empty b { color:var(--muted); font-weight:600; }
+.dk-log { list-style:none; margin-top:4px; }
+.dk-log li { display:flex; align-items:baseline; gap:10px; padding:8px 2px; border-top:1px solid var(--line);
+  font-size:12px; }
+.dk-log li:first-child { border-top:0; }
+.dk-log-type { color:var(--text); font-weight:600; text-transform:capitalize; white-space:nowrap; }
+.dk-log-desc { color:var(--faint); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; font-size:11px; }
+
+/* ── watchlist ── */
+
+/* ── price flash (green/red reserved for price/P&L movement) ── */
+@keyframes dkUp { 0% { color:var(--up);} 100% { color:inherit;} }
+@keyframes dkDn { 0% { color:var(--down);} 100% { color:inherit;} }
+.dk-fl-up { animation:dkUp .8s ease-out; }
+.dk-fl-dn { animation:dkDn .8s ease-out; }
+
+.dk-foot { padding:14px 18px 20px; color:var(--faint); font-size:11px; }
+
+@media (max-width:1100px) {
+  .dk-hero, .dk-body { grid-template-columns:1fr; }
+  .dk-kpis { grid-template-columns:repeat(2,1fr); }
+  .dk-kpi { border-right:0; border-bottom:1px solid var(--line); }
+  .dk-links { display:none; }
+  .dk-search { display:none; }
+  .dk-clock { display:none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dk-panel { animation:none; }
+  .dk-fl-up, .dk-fl-dn, .dk-edge-halo { animation:none; }
+}
+
+/* ── Clarix showcase (scroll-driven 3D act on the landing) ─────────── */
+.cx-wrap { position:relative; height:320vh; }
+.cx-sticky { position:sticky; top:0; height:100vh; overflow:hidden;
+  background:
+    radial-gradient(70% 55% at 60% 45%, rgb(var(--accent-rgb) / 0.10), transparent 70%),
+    linear-gradient(180deg, #05080F 0%, #070D20 50%, #05080F 100%); }
+.cx-canvas { position:absolute; inset:0; }
+.cx-copy { position:absolute; max-width:400px; opacity:0; pointer-events:none;
+  transition:opacity .12s linear; }
+.cx-right { right:6vw; top:50%; transform:translateY(-50%); text-align:left; }
+.cx-left { left:6vw; top:50%; transform:translateY(-50%); }
+.cx-center { left:50%; bottom:12vh; transform:translateX(-50%); text-align:center; max-width:560px; }
+.cx-eyebrow { font-size:11px; font-weight:800; letter-spacing:.2em; text-transform:uppercase;
+  color:rgb(var(--accent-rgb)); margin-bottom:10px; }
+.cx-title { font-family:var(--font-display), 'Space Grotesk', sans-serif; font-weight:700;
+  font-size:clamp(24px, 3vw, 40px); line-height:1.1; color:#fff; margin-bottom:12px;
+  letter-spacing:-.01em; }
+.cx-desc { color:rgb(148 163 184); font-size:15px; line-height:1.65; }
+@media (max-width:1024px) {
+  .cx-wrap { height:260vh; }
+  .cx-right, .cx-left { left:50%; right:auto; top:auto; bottom:10vh;
+    transform:translateX(-50%); text-align:center; max-width:80vw; }
+}
+
+/* ── mobile responsiveness pass (showcase) ─────────────────────────── */
+@media (max-width:1024px) {
+  .cx-copy { background:rgba(5,8,15,.62); border:1px solid rgba(255,255,255,.07);
+    border-radius:14px; padding:16px 18px; backdrop-filter:blur(6px); }
+}
+@media (max-width:639px) {
+  .cx-wrap { height:220vh; }
+  .cx-title { font-size:22px; }
+  .cx-desc { font-size:13px; }
+  .cx-copy { max-width:88vw; }
+  .cx-center { bottom:8vh; }
+}

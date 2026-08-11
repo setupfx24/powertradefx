@@ -1,0 +1,1243 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import { cn } from '@/lib/utils';
+import { adminApi, getAdminApiBase } from '@/lib/api';
+import toast from 'react-hot-toast';
+import { downloadReportPdf, fmtMoney, fmtWhen } from '@/lib/pdf';
+import {
+  ArrowDownCircle,
+  ArrowUpCircle,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  FileText,
+  History,
+  Loader2,
+  X,
+} from 'lucide-react';
+
+type TabId = 'deposits' | 'withdrawals' | 'history';
+type StatusFilter = 'pending' | 'approved' | 'rejected' | 'all';
+
+interface Deposit {
+  id: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  amount: number;
+  currency: string;
+  method: string;
+  transaction_id: string;
+  screenshot_url: string;
+  status: 'pending' | 'approved' | 'auto_approved' | 'rejected';
+  created_at: string;
+  note?: string;
+  reason?: string;
+  // Set by the admin once they review a local-banking request and
+  // attach a payment URL for the user. NULL until they do.
+  payment_link?: string | null;
+}
+
+interface WithdrawalBankDetails {
+  manual?: boolean;
+  upi_id?: string | null;
+  notes?: string | null;
+  user_payout_qr_path?: string | null;
+  oxapay_payout?: string;
+  [key: string]: unknown;
+}
+
+interface Withdrawal {
+  id: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  amount: number;
+  currency: string;
+  method: string;
+  bank_name?: string;
+  account_number?: string;
+  ifsc_code?: string;
+  bank_details?: WithdrawalBankDetails | null;
+  crypto_address?: string | null;
+  wallet_chain_snapshot?: string | null;
+  crypto_tx_hash?: string | null;
+  status: 'pending' | 'approved' | 'rejected' | 'paid';
+  created_at: string;
+  approved_at?: string | null;
+  completed_at?: string | null;
+  note?: string;
+  reason?: string;
+}
+
+interface TransactionRecord {
+  id: string;
+  user_id: string;
+  user_name?: string;
+  user_email?: string;
+  type: string;
+  amount: number;
+  balance_after?: number;
+  description?: string;
+  created_at: string;
+}
+
+interface ActionModal {
+  type: 'approve' | 'reject' | 'mark-paid';
+  target: 'deposit' | 'withdrawal';
+  id: string;
+  userName: string;
+  amount: number;
+  /** Pre-filled context shown read-only on the mark-paid modal so the
+   *  admin can copy the wallet address while pasting the tx hash. */
+  cryptoAddress?: string | null;
+  network?: string | null;
+}
+
+const TABS: { id: TabId; label: string; icon: typeof ArrowDownCircle }[] = [
+  { id: 'deposits', label: 'Deposits', icon: ArrowDownCircle },
+  { id: 'withdrawals', label: 'Withdrawals', icon: ArrowUpCircle },
+  { id: 'history', label: 'History', icon: History },
+];
+
+const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'approved', label: 'Approved' },
+  { value: 'rejected', label: 'Rejected' },
+];
+
+function statusBadge(status: string) {
+  switch (status) {
+    case 'approved':
+    case 'auto_approved':
+      return 'bg-success/15 text-success';
+    case 'rejected':
+      return 'bg-danger/15 text-danger';
+    case 'pending':
+      return 'bg-warning/15 text-warning';
+    default:
+      return 'bg-text-tertiary/15 text-text-tertiary';
+  }
+}
+
+function statusLabel(status: string) {
+  if (status === 'auto_approved') return 'Auto Approved';
+  return status;
+}
+
+function formatMoney(n: number) {
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatDate(d: string) {
+  return new Date(d).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+async function openAdminBinaryFile(path: string, token: string | null) {
+  const res = await fetch(path, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error('Failed to load file');
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank', 'noopener,noreferrer');
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+/** Inline image that loads via auth header, shows thumbnail + click to expand. */
+function AuthImage({ src, token, alt, className }: { src: string; token: string | null; alt: string; className?: string }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(src, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok || cancelled) return;
+        const blob = await res.blob();
+        if (cancelled) return;
+        setBlobUrl(URL.createObjectURL(blob));
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [src, token]);
+
+  if (!blobUrl) return <span className="text-xxs text-text-tertiary">Loading...</span>;
+
+  return (
+    <>
+      <img
+        src={blobUrl}
+        alt={alt}
+        className={cn('cursor-pointer rounded border border-border-primary bg-white object-contain hover:opacity-80 transition-fast', className || 'w-10 h-10')}
+        onClick={() => setExpanded(true)}
+      />
+      {expanded && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-bg-base/80 backdrop-blur-sm" onClick={() => setExpanded(false)}>
+          <div className="relative max-w-[90vw] max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+            <button type="button" onClick={() => setExpanded(false)} className="absolute -top-3 -right-3 z-10 w-8 h-8 rounded-full bg-bg-secondary border border-border-primary flex items-center justify-center text-text-primary hover:bg-sell/20 hover:text-sell">
+              <X size={16} />
+            </button>
+            <img src={blobUrl} alt={alt} className="max-w-[85vw] max-h-[85vh] rounded-lg border border-border-primary shadow-modal object-contain bg-white" />
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function withdrawalPayoutSummary(w: Withdrawal): string {
+  const bd = w.bank_details;
+  if (!bd || typeof bd !== 'object') return '—';
+  if (bd.oxapay_payout && typeof bd.oxapay_payout === 'string') return bd.oxapay_payout;
+  if (bd.manual) {
+    const parts: string[] = [];
+    if (bd.upi_id) parts.push(`UPI: ${bd.upi_id}`);
+    if (bd.notes) parts.push(String(bd.notes));
+    if (bd.user_payout_qr_path) parts.push('QR attached');
+    return parts.length ? parts.join(' · ') : 'Manual';
+  }
+  try {
+    return JSON.stringify(bd);
+  } catch {
+    return '—';
+  }
+}
+
+const PAGE_SIZE = 20;
+
+export default function DepositsPage() {
+  const [activeTab, setActiveTab] = useState<TabId>('deposits');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending');
+  // Method filter — client-side, so admin can isolate "local_banking" rows
+  // from older razorpay / manual test entries cluttering the queue.
+  const [methodFilter, setMethodFilter] = useState<'all' | 'local_banking' | 'manual' | 'razorpay' | 'wallet_connect'>('all');
+  const [page, setPage] = useState(1);
+
+  const [deposits, setDeposits] = useState<Deposit[]>([]);
+  const [depositsTotal, setDepositsTotal] = useState(0);
+  const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
+  const [withdrawalsTotal, setWithdrawalsTotal] = useState(0);
+
+  const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
+  const [transactionsTotal, setTransactionsTotal] = useState(0);
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [actionModal, setActionModal] = useState<ActionModal | null>(null);
+  // Set-payment-link modal for local-banking deposits. Separate from the
+  // approve/reject modal so the form fields don't have to coexist.
+  const [linkModal, setLinkModal] = useState<{ id: string; userName: string; amount: number } | null>(null);
+  const [linkUrl, setLinkUrl] = useState('');
+  const [linkMessage, setLinkMessage] = useState('');
+  const [linkSubmitting, setLinkSubmitting] = useState(false);
+
+  const [actionNote, setActionNote] = useState('');
+  const [actionReason, setActionReason] = useState('');
+  const [actionTxHash, setActionTxHash] = useState('');
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const fetchDeposits = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params: Record<string, string> = {
+        page: String(page),
+        per_page: String(PAGE_SIZE),
+      };
+
+      let endpoint: string;
+      if (statusFilter === 'pending') {
+        endpoint = '/finance/deposits/pending';
+      } else {
+        endpoint = '/finance/deposits';
+        if (statusFilter !== 'all') params.status = statusFilter;
+      }
+
+      const res = await adminApi.get<{ items: Deposit[]; total: number }>(
+        endpoint,
+        params,
+      );
+      setDeposits(res.items || []);
+      setDepositsTotal(res.total || 0);
+    } catch (e: any) {
+      setError(e.message);
+      setDeposits([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, statusFilter]);
+
+  const fetchWithdrawals = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params: Record<string, string> = {
+        page: String(page),
+        per_page: String(PAGE_SIZE),
+      };
+
+      let endpoint: string;
+      if (statusFilter === 'pending') {
+        endpoint = '/finance/withdrawals/pending';
+      } else {
+        endpoint = '/finance/withdrawals';
+        if (statusFilter !== 'all') params.status = statusFilter;
+      }
+
+      const res = await adminApi.get<{ items: Withdrawal[]; total: number }>(
+        endpoint,
+        params,
+      );
+      setWithdrawals(res.items || []);
+      setWithdrawalsTotal(res.total || 0);
+    } catch (e: any) {
+      setError(e.message);
+      setWithdrawals([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, statusFilter]);
+
+  const fetchTransactions = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params: Record<string, string> = {
+        page: String(page),
+        per_page: String(PAGE_SIZE),
+      };
+      const res = await adminApi.get<{ items: TransactionRecord[]; total: number }>(
+        '/transactions', params,
+      );
+      setTransactions(res.items || []);
+      setTransactionsTotal(res.total || 0);
+    } catch (e: any) {
+      setError(e.message);
+      setTransactions([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [page]);
+
+  useEffect(() => {
+    if (activeTab === 'deposits') fetchDeposits();
+    else if (activeTab === 'withdrawals') fetchWithdrawals();
+    else fetchTransactions();
+  }, [activeTab, fetchDeposits, fetchWithdrawals, fetchTransactions]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [activeTab, statusFilter]);
+
+  const handleAction = async () => {
+    if (!actionModal) return;
+    if (actionModal.type === 'reject' && !actionReason.trim()) {
+      toast.error('Reason is required for rejection');
+      return;
+    }
+    if (actionModal.type === 'mark-paid' && !actionTxHash.trim()) {
+      toast.error('Transaction hash / reference is required');
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const basePath =
+        actionModal.target === 'deposit'
+          ? `/finance/deposits/${actionModal.id}`
+          : `/finance/withdrawals/${actionModal.id}`;
+
+      if (actionModal.type === 'approve') {
+        await adminApi.post(`${basePath}/approve`, {
+          note: actionNote.trim() || undefined,
+        });
+        toast.success('Approved successfully');
+      } else if (actionModal.type === 'mark-paid') {
+        await adminApi.post(`${basePath}/mark-paid`, {
+          tx_hash: actionTxHash.trim(),
+          notes: actionNote.trim() || undefined,
+        });
+        toast.success('Withdrawal marked as paid');
+      } else {
+        await adminApi.post(`${basePath}/reject`, {
+          reason: actionReason.trim(),
+        });
+        toast.success('Rejected successfully');
+      }
+
+      setActionModal(null);
+      setActionNote('');
+      setActionReason('');
+      setActionTxHash('');
+
+      if (activeTab === 'deposits') fetchDeposits();
+      else fetchWithdrawals();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const submitPaymentLink = async () => {
+    if (!linkModal) return;
+    const url = linkUrl.trim();
+    if (!url) {
+      toast.error('Payment link is required');
+      return;
+    }
+    if (!/^(https?:\/\/|upi:\/\/)/i.test(url)) {
+      toast.error('Link must start with http://, https://, or upi://');
+      return;
+    }
+    setLinkSubmitting(true);
+    try {
+      await adminApi.post(`/finance/deposits/${linkModal.id}/payment-link`, {
+        payment_link: url,
+        message: linkMessage.trim() || undefined,
+      });
+      toast.success('Payment link sent to the user');
+      setLinkModal(null);
+      setLinkUrl('');
+      setLinkMessage('');
+      fetchDeposits();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not attach link');
+    } finally {
+      setLinkSubmitting(false);
+    }
+  };
+
+  const currentItems = activeTab === 'deposits' ? deposits : activeTab === 'withdrawals' ? withdrawals : transactions;
+  const currentTotal = activeTab === 'deposits' ? depositsTotal : activeTab === 'withdrawals' ? withdrawalsTotal : transactionsTotal;
+  const totalPages = Math.max(1, Math.ceil(currentTotal / PAGE_SIZE));
+
+  const handleExportPdf = () => {
+    if (currentItems.length === 0) { toast.error('Nothing to export'); return; }
+    const stamp = new Date().toISOString().slice(0, 10);
+    if (activeTab === 'deposits') {
+      void downloadReportPdf({
+        title: 'Deposits Report',
+        subtitleLines: [`Status: ${statusFilter}`, methodFilter !== 'all' ? `Method: ${methodFilter}` : ''].filter(Boolean),
+        columns: [
+          { header: 'ID', mono: true }, { header: 'User' }, { header: 'Amount', align: 'right', mono: true },
+          { header: 'Method' }, { header: 'Transaction ID', mono: true }, { header: 'Status' }, { header: 'Date', mono: true },
+        ],
+        rows: deposits.map((d) => [d.id, d.user_name || d.user_email || '—', fmtMoney(d.amount), d.method, d.transaction_id || '—', statusLabel(d.status), fmtWhen(d.created_at)]),
+        filename: `powertradefx-deposits-${stamp}.pdf`,
+      });
+    } else if (activeTab === 'withdrawals') {
+      void downloadReportPdf({
+        title: 'Withdrawals Report',
+        subtitleLines: [`Status: ${statusFilter}`],
+        columns: [
+          { header: 'ID', mono: true }, { header: 'User' }, { header: 'Amount', align: 'right', mono: true },
+          { header: 'Method' }, { header: 'Status' }, { header: 'Date', mono: true },
+        ],
+        rows: withdrawals.map((w) => [w.id, w.user_name || w.user_email || '—', fmtMoney(w.amount), w.method, statusLabel(w.status), fmtWhen(w.created_at)]),
+        filename: `powertradefx-withdrawals-${stamp}.pdf`,
+      });
+    } else {
+      void downloadReportPdf({
+        title: 'Money-flow History',
+        columns: [
+          { header: 'Type' }, { header: 'User' }, { header: 'Amount', align: 'right', mono: true },
+          { header: 'Description' }, { header: 'Date', mono: true },
+        ],
+        rows: transactions.map((t) => [t.type, t.user_name || t.user_email || '—', fmtMoney(t.amount), t.description || '—', fmtWhen(t.created_at)]),
+        filename: `powertradefx-money-history-${stamp}.pdf`,
+      });
+    }
+  };
+
+  return (
+    <>
+      <div className="p-3 sm:p-6 space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h1 className="text-lg font-semibold text-text-primary">Deposits & Withdrawals</h1>
+            <p className="text-xxs text-text-tertiary mt-0.5">
+              Review and manage funding requests
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleExportPdf}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border-primary bg-bg-secondary text-xs font-medium text-text-primary transition-fast hover:bg-bg-hover shrink-0"
+          >
+            <FileText size={14} className="text-text-secondary" /> Download PDF
+          </button>
+        </div>
+
+        <div className="bg-bg-secondary border border-border-primary rounded-md">
+          {/* Tabs */}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-primary">
+            <div className="flex gap-1 p-1 overflow-x-auto max-w-full">
+              {TABS.map((t) => {
+                const Icon = t.icon;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setActiveTab(t.id)}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-fast',
+                      activeTab === t.id
+                        ? 'bg-bg-hover text-text-primary border border-border-primary'
+                        : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover/60',
+                    )}
+                  >
+                    <Icon size={13} />
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Status filter — hide for history tab */}
+            <div className={cn('px-3 pb-2 sm:pb-0 flex flex-wrap items-center gap-2', activeTab === 'history' && 'hidden')}>
+              {/* Method filter — only meaningful on the Deposits tab. */}
+              {activeTab === 'deposits' && (
+                <>
+                  <span className="text-xxs text-text-tertiary">Method:</span>
+                  <div className="relative">
+                    <select
+                      value={methodFilter}
+                      onChange={(e) => setMethodFilter(e.target.value as typeof methodFilter)}
+                      className="text-xs py-1 pl-2 pr-7 appearance-none bg-bg-input border border-border-primary rounded-md text-text-primary"
+                    >
+                      <option value="all">All</option>
+                      <option value="local_banking">Local Banking</option>
+                      <option value="manual">Manual / Bank</option>
+                      <option value="wallet_connect">Crypto on-chain</option>
+                      <option value="razorpay">Razorpay (legacy)</option>
+                    </select>
+                    <ChevronDown
+                      size={12}
+                      className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-text-tertiary"
+                    />
+                  </div>
+                </>
+              )}
+              <span className="text-xxs text-text-tertiary">Status:</span>
+              <div className="relative">
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+                  className="text-xs py-1 pl-2 pr-7 appearance-none bg-bg-input border border-border-primary rounded-md text-text-primary"
+                >
+                  {STATUS_FILTERS.map((f) => (
+                    <option key={f.value} value={f.value}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  size={12}
+                  className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-text-tertiary"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Content */}
+          <div className="p-0">
+            {loading ? (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 size={20} className="animate-spin text-text-tertiary" />
+              </div>
+            ) : error ? (
+              <div className="text-center py-16 text-xs text-danger">{error}</div>
+            ) : currentItems.length === 0 ? (
+              <div className="text-center py-16 text-xs text-text-tertiary">
+                No {activeTab} found
+              </div>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  {activeTab === 'deposits' ? (
+                    <table className="w-full min-w-[1000px]" data-tab="deposits">
+                      <thead>
+                        <tr className="border-b border-border-primary bg-bg-tertiary/40">
+                          {[
+                            'ID',
+                            'User',
+                            'Amount',
+                            'Method',
+                            'Transaction ID',
+                            'Screenshot',
+                            'Status',
+                            'Date',
+                            'Actions',
+                          ].map((col) => (
+                            <th
+                              key={col}
+                              className={cn(
+                                'text-left px-4 py-2.5 text-xxs font-medium text-text-tertiary uppercase tracking-wide',
+                                col === 'Amount' && 'text-right',
+                                col === 'Actions' && 'text-right',
+                              )}
+                            >
+                              {col}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {deposits
+                          .filter((d) => methodFilter === 'all' || d.method === methodFilter)
+                          .map((d) => (
+                          <tr
+                            key={d.id}
+                            className="border-b border-border-primary/50 transition-fast hover:bg-bg-hover"
+                          >
+                            <td className="px-4 py-2.5 text-xs text-text-secondary font-mono tabular-nums">
+                              {d.id}
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <p className="text-xs text-text-primary">{d.user_name}</p>
+                              <p className="text-xxs text-text-tertiary">{d.user_email}</p>
+                            </td>
+                            <td className="px-4 py-2.5 text-xs text-text-primary text-right font-mono tabular-nums">
+                              ${formatMoney(d.amount)}
+                            </td>
+                            <td className="px-4 py-2.5 text-xs text-text-secondary">{d.method}</td>
+                            <td className="px-4 py-2.5 text-xs text-text-secondary font-mono tabular-nums">
+                              {d.transaction_id}
+                            </td>
+                            <td className="px-4 py-2.5">
+                              {d.screenshot_url ? (
+                                <AuthImage
+                                  src={`${getAdminApiBase()}/finance/deposits/${d.id}/screenshot`}
+                                  token={adminApi.getToken()}
+                                  alt={`Deposit proof ${d.id}`}
+                                  className="w-12 h-12"
+                                />
+                              ) : (
+                                <span className="text-xxs text-text-tertiary">—</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <span
+                                className={cn(
+                                  'inline-flex px-1.5 py-0.5 rounded-sm text-xxs font-medium capitalize',
+                                  statusBadge(d.status),
+                                )}
+                              >
+                                {statusLabel(d.status)}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 text-xs text-text-tertiary font-mono tabular-nums whitespace-nowrap">
+                              {formatDate(d.created_at)}
+                            </td>
+                            <td className="px-4 py-2.5 text-right">
+                              {d.status === 'pending' && (
+                                <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                                  {/* Local-banking flow — admin has two paths:
+                                      1. Approve & Razorpay (default) — auto-creates a Razorpay order
+                                         server-side for the user's locked amount. User pays via
+                                         Razorpay popup; webhook credits automatically.
+                                      2. Set custom link — for cases where admin wants to share a
+                                         non-Razorpay URL (custom invoice, bank instructions, UPI VPA). */}
+                                  {d.method === 'local_banking' && !d.payment_link && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={async () => {
+                                          try {
+                                            await adminApi.post(`/finance/deposits/${d.id}/approve-razorpay`, {});
+                                            toast.success('Approved — user can now pay via Razorpay');
+                                            await fetchDeposits();
+                                          } catch (e: any) {
+                                            toast.error(e?.message || 'Failed to approve');
+                                          }
+                                        }}
+                                        className="px-2 py-1 rounded-md text-xxs font-medium bg-buy/15 text-buy border border-buy/30 hover:bg-buy/25 transition-fast"
+                                        title="Approve the request — user picks the amount and pays via Razorpay"
+                                      >
+                                        Approve & Razorpay
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setLinkUrl('');
+                                          setLinkMessage('');
+                                          setLinkModal({
+                                            id: d.id,
+                                            userName: d.user_name,
+                                            amount: d.amount,
+                                          });
+                                        }}
+                                        className="px-2 py-1 rounded-md text-xxs font-medium bg-accent/15 text-accent border border-accent/30 hover:bg-accent/25 transition-fast"
+                                        title="Share a custom payment URL instead of using Razorpay"
+                                      >
+                                        Custom link
+                                      </button>
+                                    </>
+                                  )}
+                                  {/* Standalone Approve is the manual mark-paid
+                                      path for proof-uploaded deposits (crypto,
+                                      manual UPI, etc.). Hidden for fresh
+                                      local_banking requests where the admin
+                                      should pick Approve & Razorpay or Custom
+                                      link instead — those two flows manage the
+                                      approval lifecycle themselves. */}
+                                  {!(d.method === 'local_banking' && !d.payment_link) && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setActionModal({
+                                          type: 'approve',
+                                          target: 'deposit',
+                                          id: d.id,
+                                          userName: d.user_name,
+                                          amount: d.amount,
+                                        })
+                                      }
+                                      className="px-2 py-1 rounded-md text-xxs font-medium bg-success/15 text-success border border-success/30 hover:bg-success/25 transition-fast"
+                                    >
+                                      Approve
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setActionModal({
+                                        type: 'reject',
+                                        target: 'deposit',
+                                        id: d.id,
+                                        userName: d.user_name,
+                                        amount: d.amount,
+                                      })
+                                    }
+                                    className="px-2 py-1 rounded-md text-xxs font-medium bg-danger/15 text-danger border border-danger/30 hover:bg-danger/25 transition-fast"
+                                  >
+                                    Reject
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : activeTab === 'withdrawals' ? (
+                    <table className="w-full min-w-[1200px]">
+                      <thead>
+                        <tr className="border-b border-border-primary bg-bg-tertiary/40">
+                          {[
+                            'ID',
+                            'User',
+                            'Amount',
+                            'Method',
+                            'Wallet Address',
+                            'Network',
+                            'Bank / Payout',
+                            'Status',
+                            'TX Hash',
+                            'Date',
+                            'Actions',
+                          ].map((col) => (
+                            <th
+                              key={col}
+                              className={cn(
+                                'text-left px-4 py-2.5 text-xxs font-medium text-text-tertiary uppercase tracking-wide',
+                                col === 'Amount' && 'text-right',
+                                col === 'Actions' && 'text-right',
+                              )}
+                            >
+                              {col}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {withdrawals.map((w) => (
+                          <tr
+                            key={w.id}
+                            className="border-b border-border-primary/50 transition-fast hover:bg-bg-hover"
+                          >
+                            <td className="px-4 py-2.5 text-xs text-text-secondary font-mono tabular-nums">
+                              {w.id}
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <p className="text-xs text-text-primary">{w.user_name}</p>
+                              <p className="text-xxs text-text-tertiary">{w.user_email}</p>
+                            </td>
+                            <td className="px-4 py-2.5 text-xs text-sell text-right font-mono tabular-nums">
+                              -${formatMoney(w.amount)}
+                            </td>
+                            <td className="px-4 py-2.5 text-xs text-text-secondary">{w.method}</td>
+                            <td className="px-4 py-2.5 max-w-[260px]">
+                              {w.crypto_address ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void navigator.clipboard.writeText(w.crypto_address as string);
+                                    toast.success('Wallet address copied');
+                                  }}
+                                  className="text-xs font-mono text-text-primary break-all text-left hover:text-buy"
+                                  title="Click to copy"
+                                >
+                                  {w.crypto_address}
+                                </button>
+                              ) : (
+                                <span className="text-xxs text-text-tertiary">—</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 text-xs">
+                              {w.wallet_chain_snapshot ? (
+                                <span className="inline-flex px-1.5 py-0.5 rounded-sm text-xxs font-medium uppercase bg-buy/15 text-buy border border-buy/30">
+                                  {w.wallet_chain_snapshot}
+                                </span>
+                              ) : (
+                                <span className="text-xxs text-text-tertiary">—</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 max-w-[220px]">
+                              <p className="text-xs text-text-primary break-words">{withdrawalPayoutSummary(w)}</p>
+                              {w.bank_details?.user_payout_qr_path ? (
+                                <div className="mt-1">
+                                  <AuthImage
+                                    src={`${getAdminApiBase()}/finance/withdrawals/${w.id}/payout-qr`}
+                                    token={adminApi.getToken()}
+                                    alt={`Payout QR ${w.id}`}
+                                    className="w-10 h-10"
+                                  />
+                                </div>
+                              ) : null}
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <span
+                                className={cn(
+                                  'inline-flex px-1.5 py-0.5 rounded-sm text-xxs font-medium capitalize',
+                                  statusBadge(w.status),
+                                )}
+                              >
+                                {w.status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 max-w-[180px]">
+                              {w.crypto_tx_hash ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void navigator.clipboard.writeText(w.crypto_tx_hash as string);
+                                    toast.success('TX hash copied');
+                                  }}
+                                  className="text-xxs font-mono text-text-secondary break-all text-left hover:text-buy"
+                                  title="Click to copy"
+                                >
+                                  {w.crypto_tx_hash}
+                                </button>
+                              ) : (
+                                <span className="text-xxs text-text-tertiary">—</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 text-xs text-text-tertiary font-mono tabular-nums whitespace-nowrap">
+                              {formatDate(w.created_at)}
+                            </td>
+                            <td className="px-4 py-2.5 text-right">
+                              {w.status === 'pending' && (
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setActionModal({
+                                        type: 'approve',
+                                        target: 'withdrawal',
+                                        id: w.id,
+                                        userName: w.user_name,
+                                        amount: w.amount,
+                                        cryptoAddress: w.crypto_address ?? null,
+                                        network: w.wallet_chain_snapshot ?? null,
+                                      })
+                                    }
+                                    className="px-2 py-1 rounded-md text-xxs font-medium bg-success/15 text-success border border-success/30 hover:bg-success/25 transition-fast"
+                                  >
+                                    Approve
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setActionModal({
+                                        type: 'reject',
+                                        target: 'withdrawal',
+                                        id: w.id,
+                                        userName: w.user_name,
+                                        amount: w.amount,
+                                      })
+                                    }
+                                    className="px-2 py-1 rounded-md text-xxs font-medium bg-danger/15 text-danger border border-danger/30 hover:bg-danger/25 transition-fast"
+                                  >
+                                    Reject
+                                  </button>
+                                </div>
+                              )}
+                              {w.status === 'approved' && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setActionModal({
+                                      type: 'mark-paid',
+                                      target: 'withdrawal',
+                                      id: w.id,
+                                      userName: w.user_name,
+                                      amount: w.amount,
+                                      cryptoAddress: w.crypto_address ?? null,
+                                      network: w.wallet_chain_snapshot ?? null,
+                                    })
+                                  }
+                                  className="px-2 py-1 rounded-md text-xxs font-medium bg-buy/15 text-buy border border-buy/30 hover:bg-buy/25 transition-fast"
+                                >
+                                  Mark Paid
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : activeTab === 'history' ? (
+                    <table className="w-full min-w-[800px]">
+                      <thead>
+                        <tr className="border-b border-border-primary bg-bg-tertiary/40">
+                          {['Type', 'User', 'Amount', 'Description', 'Date'].map(
+                            (h) => (
+                              <th
+                                key={h}
+                                className="px-3 py-2 text-left text-xxs font-semibold text-text-tertiary uppercase tracking-wider"
+                              >
+                                {h}
+                              </th>
+                            ),
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border-primary">
+                        {(transactions as TransactionRecord[]).map((t) => {
+                          const isPositive = t.amount >= 0;
+                          const typeLabel = t.type === 'admin_commission' ? 'Admin Commission'
+                            : t.type === 'ib_commission' ? 'Master Fee'
+                            : t.type === 'commission' ? 'Performance Fee'
+                            : t.type === 'deposit' ? 'Deposit'
+                            : t.type === 'withdrawal' ? 'Withdrawal'
+                            : t.type;
+                          const typeBadge = t.type === 'admin_commission' ? 'bg-purple-500/15 text-purple-600'
+                            : t.type === 'ib_commission' ? 'bg-blue-500/15 text-blue-600'
+                            : t.type === 'deposit' ? 'bg-success/15 text-success'
+                            : t.type === 'withdrawal' ? 'bg-danger/15 text-danger'
+                            : 'bg-text-tertiary/15 text-text-tertiary';
+                          return (
+                            <tr key={t.id} className="hover:bg-bg-hover/40 transition-fast">
+                              <td className="px-3 py-2.5">
+                                <span className={cn('inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize', typeBadge)}>
+                                  {typeLabel}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2.5 text-xs">
+                                <div className="font-medium text-text-primary">{t.user_name || '—'}</div>
+                                <div className="text-text-tertiary text-[10px]">{t.user_email || t.user_id?.slice(0, 8)}</div>
+                              </td>
+                              <td className="px-3 py-2.5 text-xs font-mono font-semibold">
+                                <span className={isPositive ? 'text-success' : 'text-danger'}>
+                                  {isPositive ? '+' : ''}{formatMoney(t.amount)}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2.5 text-xs text-text-secondary max-w-[300px] truncate">
+                                {t.description || '—'}
+                              </td>
+                              <td className="px-3 py-2.5 text-xxs text-text-tertiary whitespace-nowrap">
+                                {formatDate(t.created_at)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  ) : null}
+                </div>
+
+                {/* Pagination */}
+                {totalPages > 1 && (
+                  <div className="px-4 py-3 border-t border-border-primary flex items-center justify-between">
+                    <p className="text-xxs text-text-tertiary">
+                      Showing {(page - 1) * PAGE_SIZE + 1}–
+                      {Math.min(page * PAGE_SIZE, currentTotal)} of {currentTotal}
+                    </p>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={page <= 1}
+                        onClick={() => setPage((p) => p - 1)}
+                        className="p-1.5 rounded-md border border-border-primary text-text-secondary hover:bg-bg-hover disabled:opacity-30 disabled:pointer-events-none transition-fast"
+                      >
+                        <ChevronLeft size={14} />
+                      </button>
+                      <span className="px-2 text-xs text-text-secondary font-mono tabular-nums">
+                        {page} / {totalPages}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={page >= totalPages}
+                        onClick={() => setPage((p) => p + 1)}
+                        className="p-1.5 rounded-md border border-border-primary text-text-secondary hover:bg-bg-hover disabled:opacity-30 disabled:pointer-events-none transition-fast"
+                      >
+                        <ChevronRight size={14} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Action modal */}
+      {actionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg-base/70">
+          <div className="w-full max-w-md bg-bg-secondary border border-border-primary rounded-md shadow-modal animate-fade-in">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border-primary">
+              <h2 className="text-sm font-semibold text-text-primary capitalize">
+                {actionModal.type === 'mark-paid' ? 'Mark as paid' : actionModal.type} {actionModal.target}
+              </h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setActionModal(null);
+                  setActionNote('');
+                  setActionReason('');
+                  setActionTxHash('');
+                }}
+                className="p-1 rounded-md text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-fast"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              <div className="p-3 rounded-md bg-bg-tertiary border border-border-primary space-y-2">
+                <div>
+                  <p className="text-xxs text-text-tertiary">User</p>
+                  <p className="text-xs text-text-primary font-medium">{actionModal.userName}</p>
+                </div>
+                <div>
+                  <p className="text-xxs text-text-tertiary">Amount</p>
+                  <p className="text-sm text-text-primary font-mono tabular-nums">
+                    ${formatMoney(actionModal.amount)}
+                  </p>
+                </div>
+                {actionModal.cryptoAddress && (
+                  <div>
+                    <p className="text-xxs text-text-tertiary">Send to wallet</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(actionModal.cryptoAddress as string);
+                        toast.success('Address copied');
+                      }}
+                      className="text-xs text-text-primary font-mono break-all text-left hover:text-buy"
+                      title="Click to copy"
+                    >
+                      {actionModal.cryptoAddress}
+                    </button>
+                  </div>
+                )}
+                {actionModal.network && (
+                  <div>
+                    <p className="text-xxs text-text-tertiary">Network</p>
+                    <span className="inline-flex px-1.5 py-0.5 rounded-sm text-xxs font-medium uppercase bg-buy/15 text-buy border border-buy/30">
+                      {actionModal.network}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {actionModal.type === 'approve' ? (
+                <div>
+                  <label className="block text-xxs text-text-tertiary mb-1">
+                    Note (optional)
+                  </label>
+                  <textarea
+                    value={actionNote}
+                    onChange={(e) => setActionNote(e.target.value)}
+                    rows={3}
+                    placeholder="Add an optional note..."
+                    className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md placeholder:text-text-tertiary transition-fast focus:border-buy resize-none"
+                  />
+                </div>
+              ) : actionModal.type === 'mark-paid' ? (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xxs text-text-tertiary mb-1">
+                      Transaction hash / reference <span className="text-danger">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={actionTxHash}
+                      onChange={(e) => setActionTxHash(e.target.value)}
+                      placeholder="0x… (on-chain tx) or bank reference"
+                      className="w-full px-3 py-2 text-xs font-mono bg-bg-input border border-border-primary rounded-md placeholder:text-text-tertiary transition-fast focus:border-buy"
+                    />
+                    <p className="text-xxs text-text-tertiary mt-1">
+                      This is shown to the user as proof of payment. Paste the on-chain
+                      tx hash you signed, or your bank/UPI reference.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-xxs text-text-tertiary mb-1">
+                      Internal notes (optional)
+                    </label>
+                    <textarea
+                      value={actionNote}
+                      onChange={(e) => setActionNote(e.target.value)}
+                      rows={2}
+                      placeholder="Visible only in the audit log"
+                      className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md placeholder:text-text-tertiary transition-fast focus:border-buy resize-none"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xxs text-text-tertiary mb-1">
+                    Reason <span className="text-danger">*</span>
+                  </label>
+                  <textarea
+                    value={actionReason}
+                    onChange={(e) => setActionReason(e.target.value)}
+                    rows={3}
+                    placeholder="Provide a reason for rejection..."
+                    className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md placeholder:text-text-tertiary transition-fast focus:border-buy resize-none"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="px-4 py-3 border-t border-border-primary flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setActionModal(null);
+                  setActionNote('');
+                  setActionReason('');
+                  setActionTxHash('');
+                }}
+                className="px-3 py-1.5 text-xs text-text-secondary border border-border-primary rounded-md hover:bg-bg-hover transition-fast"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={actionLoading}
+                onClick={handleAction}
+                className={cn(
+                  'px-3 py-1.5 text-xs font-medium rounded-md transition-fast inline-flex items-center gap-1.5',
+                  actionModal.type === 'approve'
+                    ? 'bg-success text-white hover:bg-success/80'
+                    : actionModal.type === 'mark-paid'
+                      ? 'bg-buy text-white hover:bg-buy/80'
+                      : 'bg-danger text-white hover:bg-danger/80',
+                  actionLoading && 'opacity-50 pointer-events-none',
+                )}
+              >
+                {actionLoading && <Loader2 size={12} className="animate-spin" />}
+                {actionModal.type === 'approve'
+                  ? 'Confirm Approval'
+                  : actionModal.type === 'mark-paid'
+                    ? 'Confirm Paid'
+                    : 'Confirm Rejection'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Set Payment Link modal (local-banking flow). Admin pastes a URL
+          + optional message; backend notifies the user in-app and emails
+          the link. */}
+      {linkModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={() => !linkSubmitting && setLinkModal(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-md bg-bg-card border border-border-primary shadow-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b border-border-primary">
+              <h3 className="text-sm font-semibold text-text-primary">
+                Send payment link
+              </h3>
+              <p className="text-xxs text-text-tertiary mt-0.5">
+                {linkModal.userName} · ${linkModal.amount.toLocaleString()}
+              </p>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="block text-xxs text-text-tertiary mb-1">
+                  Payment URL <span className="text-danger">*</span>
+                </label>
+                <input
+                  type="url"
+                  value={linkUrl}
+                  onChange={(e) => setLinkUrl(e.target.value)}
+                  placeholder="https://rzp.io/... or upi://pay?..."
+                  className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md placeholder:text-text-tertiary transition-fast focus:border-accent"
+                />
+              </div>
+              <div>
+                <label className="block text-xxs text-text-tertiary mb-1">
+                  Message <span className="text-text-tertiary">(optional)</span>
+                </label>
+                <textarea
+                  value={linkMessage}
+                  onChange={(e) => setLinkMessage(e.target.value)}
+                  rows={2}
+                  placeholder="Shown to the user in the notification + email"
+                  className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md placeholder:text-text-tertiary transition-fast focus:border-accent resize-none"
+                />
+              </div>
+            </div>
+            <div className="px-4 py-3 border-t border-border-primary flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setLinkModal(null)}
+                className="px-3 py-1.5 text-xs text-text-secondary border border-border-primary rounded-md hover:bg-bg-hover transition-fast"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={linkSubmitting}
+                onClick={() => void submitPaymentLink()}
+                className={cn(
+                  'px-3 py-1.5 text-xs font-medium rounded-md transition-fast inline-flex items-center gap-1.5 bg-accent text-white hover:bg-accent/80',
+                  linkSubmitting && 'opacity-50 pointer-events-none',
+                )}
+              >
+                {linkSubmitting && <Loader2 size={12} className="animate-spin" />}
+                Send link
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+    </>
+  );
+}

@@ -1,0 +1,247 @@
+# PowerTradeFX stack (project name → container/volume prefix).
+name: powertradefx
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-powertradefx}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-powertradefx_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-powertradefx}
+    # No host port binding — all services connect via Docker network (postgres:5432)
+    # For local dev access: docker compose exec postgres psql -U powertradefx
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./backend/infra/docker/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      # Explicit user+db (from this container's own env) rather than relying on
+      # pg_isready defaulting dbname to the username — that coupling is what
+      # silently broke the timescaledb check below.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  timescaledb:
+    # Pinned to a specific Timescale release for reproducible builds —
+    # `latest-pg16` could quietly upgrade across releases and surface
+    # breaking SQL changes during a routine docker pull.
+    image: timescale/timescaledb:2.17.2-pg16
+    environment:
+      POSTGRES_USER: ${TIMESCALE_USER:-powertradefx}
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD:-powertradefx_dev}
+      POSTGRES_DB: ${TIMESCALE_DB:-marketdata}
+    # No host port binding — all services connect via Docker network (timescaledb:5432)
+    volumes:
+      - ts_data:/var/lib/postgresql/data
+      - ./backend/infra/docker/init-timescale.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      # Probe the DB this container actually serves. `pg_isready -U x` defaults
+      # dbname to the username, so the old check hit db "powertradefx" — which
+      # doesn't exist here (this is "marketdata") — and every 5s probe logged a
+      # server-side FATAL (~12 lines/min of noise that buried real errors).
+      # $$VAR reaches the container's own env, so it follows POSTGRES_* above.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    # No host port binding — all services connect via Docker network (redis:6379)
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Kafka + Zookeeper + kafka-ui were removed. The codebase produced
+  # events to Kafka topics that nothing consumed (~1.5 GB RAM for a
+  # write-only sink). Real-time fan-out lives in Redis pub/sub; durable
+  # state in Postgres. produce_event() in packages/common/src/kafka_client.py
+  # is now a no-op shim that keeps call-sites compiling. When a real
+  # consumer is needed, the cheapest re-introduction is Redis Streams.
+
+  # Admin dashboard API (port 8001)
+  # Loads secrets from backend/.env (Compose does NOT auto-load that path for ${VAR} substitution).
+  admin-api:
+    build:
+      context: .
+      dockerfile: backend/services/admin/Dockerfile
+    ports:
+      - "8001:8001"
+    env_file:
+      - path: ./.env
+        required: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Override: shared backend/.env uses REDIS_URL for gateway (db 0); admin service must use db 1
+      REDIS_URL: redis://redis:6379/1
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-powertradefx}:${POSTGRES_PASSWORD:-powertradefx_dev}@postgres:5432/${POSTGRES_DB:-powertradefx}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:?Set ADMIN_JWT_SECRET in .env}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      BANNERS_UPLOAD_DIR: /app/uploads/banners
+      WALLET_UPLOAD_ROOT: /app/uploads/wallet
+      BANK_QR_UPLOAD_DIR: /app/uploads/qr
+      KYC_UPLOAD_ROOT: /app/uploads/kyc
+    volumes:
+      - ./backend/services/admin:/app
+      - ./backend/packages/common:/app/packages/common
+      - ./backend/uploads:/app/uploads
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
+
+  gateway:
+    build:
+      context: .
+      dockerfile: backend/services/gateway/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: ./.env
+        required: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      BANNERS_UPLOAD_DIR: /app/uploads/banners
+      WALLET_UPLOAD_ROOT: /app/uploads/wallet
+      KYC_UPLOAD_ROOT: /app/uploads/kyc
+    volumes:
+      - ./backend/services/gateway:/app/services/gateway
+      - ./backend/packages:/app/packages
+      - ./backend/uploads:/app/uploads
+
+  market-data:
+    build:
+      context: .
+      dockerfile: backend/services/market-data/Dockerfile
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      # Ensure key is in process env (Compose substitution + container env)
+      INFOWAY_API_KEY: ${INFOWAY_API_KEY:-}
+      INFOWAY_API_URL: ${INFOWAY_API_URL:-https://api.infoway.io}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/services/market-data:/app/services/market_data
+      - ./backend/packages:/app/packages
+
+  b-book-engine:
+    build:
+      context: .
+      dockerfile: backend/services/b-book-engine/Dockerfile
+    env_file:
+      - path: ./.env
+        required: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/services/b-book-engine:/app/services/b_book_engine
+      - ./backend/packages:/app/packages
+
+  risk-engine:
+    build:
+      context: .
+      dockerfile: backend/services/risk-engine/Dockerfile
+    env_file:
+      - path: ./.env
+        required: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/services/risk-engine:/app/services/risk_engine
+      - ./backend/packages:/app/packages
+
+  # Trader frontend (port 3000) — RESTART ALONE IS NOT ENOUGH. Rebuild the image or the browser keeps old JS:
+  #   PowerShell:  $env:APP_VERSION=(Get-Date -Format 'yyyyMMdd-HHmmss'); docker compose build --no-cache trader-frontend; docker compose up -d trader-frontend
+  #   Bash:        APP_VERSION=$(date +%Y%m%d-%H%M%S) docker compose build --no-cache trader-frontend && docker compose up -d trader-frontend
+  # After deploy: hard-refresh (Ctrl+Shift+R). Top bar shows APP_VERSION when set (xl screens).
+  trader-frontend:
+    build:
+      context: ./frontend/trader
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_APP_VERSION: ${APP_VERSION:-docker}
+        # WalletConnect (Reown) project ID — baked into the Next.js
+        # client bundle so the wallet-link modal can negotiate sessions.
+        # Read from the root .env (or shell env). When empty,
+        # isWalletConnectConfigured() returns false and the wallet
+        # button shows "Wallet sign-in not configured" — surface that
+        # to the user instead of silently failing.
+        NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: ${NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID:-}
+        # Google OAuth client ID — baked into the bundle so the
+        # "Continue with Google" button on the auth page can render.
+        # Same value as the backend's GOOGLE_CLIENT_ID. When empty,
+        # GoogleAuthButton returns null and the button silently disappears.
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
+    ports:
+      # Host 3010 if 3000 is already taken (local Next/other apps)
+      - "3010:3000"
+    environment:
+      # Do NOT set NEXT_PUBLIC_* http/ws here — browsers on https:// will hit mixed-content blocks.
+      # App route src/app/api/v1/[...path]/route.ts proxies using INTERNAL_API_URL or TRADER_API_PROXY_TARGET.
+      INTERNAL_API_URL: http://gateway:8000/api/v1
+      TRADER_API_PROXY_TARGET: http://gateway:8000
+    depends_on:
+      - gateway
+
+  # Admin frontend — host 3011 if 3001 is already taken
+  admin-frontend:
+    build:
+      context: ./frontend/admin
+      dockerfile: Dockerfile
+    ports:
+      - "3011:3001"
+    environment:
+      # Server-side proxy /admin-api → admin-api (browser must not use docker hostname admin-api)
+      ADMIN_API_PROXY_TARGET: http://admin-api:8001
+    depends_on:
+      - gateway
+      - admin-api
+
+  # One-off migration runner — NOT started automatically.
+  # Run with: docker compose --profile migrate up migrate
+  migrate:
+    image: python:3.12-slim
+    working_dir: /app
+    command: >
+      sh -c "pip install -e packages/common --quiet &&
+             pip install alembic sqlalchemy[asyncio] asyncpg --quiet &&
+             alembic -c infra/migrations/alembic.ini upgrade head"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://powertradefx:powertradefx_dev@postgres:5432/powertradefx}
+    volumes:
+      - ./backend:/app
+    profiles:
+      - migrate
+
+volumes:
+  pg_data:
+  ts_data:
+  redis_data:
