@@ -15,6 +15,12 @@ const PUBLIC_EXACT_PATHS = new Set<string>([
   '/',
   '/contact', '/account-deletion',
   '/privacy', '/terms', '/risk', '/policy',
+  '/label',   // standalone Nocturne label page — public, no account needed
+  // Portal marketing sub-pages. Linked from the home nav, so they must
+  // render logged-out; without this they bounce to /auth/login.
+  // /classes and /sessions are no longer in the top bar but are still
+  // linked from /platform and the footer, so they stay public too.
+  '/markets', '/platform', '/classes', '/sessions',
 ]);
 
 function isPublicPath(pathname: string | null | undefined): boolean {
@@ -22,6 +28,10 @@ function isPublicPath(pathname: string | null | undefined): boolean {
   if (pathname.startsWith('/auth')) return true;
   if (pathname.startsWith('/s/')) return true;       // public share-trade short links
   if (pathname.startsWith('/education')) return true;
+  // /classes AND its per-class pages (/classes/forex, …). A prefix rule
+  // rather than five entries, so adding a class to marketData.ts does not
+  // silently produce a page that bounces logged-out visitors to login.
+  if (pathname.startsWith('/classes')) return true;
   return PUBLIC_EXACT_PATHS.has(pathname);
 }
 

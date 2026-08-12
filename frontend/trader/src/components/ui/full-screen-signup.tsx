@@ -3,12 +3,14 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
 import { Eye, EyeOff, Loader2, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api/client';
 import { scorePassword } from '@/lib/passwordStrength';
+import { DotMatrixBackdrop } from '@/components/ui/dot-matrix-backdrop';
 import '@/components/landing/landing-fx.css';
 
 type Mode = 'login' | 'signup';
@@ -78,8 +80,14 @@ export const FullScreenSignup = ({ mode = 'signup' }: FullScreenSignupProps) => 
 
   useEffect(() => {
     try {
-      const ref = new URLSearchParams(window.location.search).get('ref');
+      const q = new URLSearchParams(window.location.search);
+      const ref = q.get('ref');
       if (ref && ref.trim()) setReferralCode(ref.trim());
+      // ?email= is set by the marketing footer's sign-up field, which is a
+      // plain GET form onto this page. Only ever pre-fills the input — the
+      // usual validation and OTP flow still run.
+      const prefill = q.get('email');
+      if (prefill && prefill.trim()) setEmail(prefill.trim());
     } catch {
       /* no query string / SSR guard — ignore */
     }
@@ -214,37 +222,50 @@ export const FullScreenSignup = ({ mode = 'signup' }: FullScreenSignupProps) => 
   };
 
   return (
-    <div className="min-h-screen relative overflow-hidden flex flex-col lx-canvas">
-      {/* Backdrop — blueprint grid + glow orbs, same language as the landing */}
+    /* lx-auth swaps the accent tokens from the app's blue to gold for
+       this card and everything under it — see landing-fx.css. */
+    /* min-h-[100dvh] over min-h-screen: `screen` is 100vh, which on mobile
+       is the URL-bar-hidden height, so the card sat taller than the visible
+       area and the footer legal line fell below the fold. */
+    <div className="lx-auth min-h-screen min-h-[100dvh] relative overflow-hidden flex flex-col bg-black">
+      {/* Backdrop — dot matrix sweeping out from the centre, then a vignette
+          so the card does not fight the grid for attention. */}
       <div aria-hidden="true" className="absolute inset-0 pointer-events-none">
+        <DotMatrixBackdrop className="absolute inset-0 h-full w-full" />
         <div
-          className="absolute inset-0 opacity-50"
+          className="absolute inset-0"
           style={{
-            backgroundImage:
-              'linear-gradient(rgb(var(--accent-rgb) / 0.06) 1px, transparent 1px),' +
-              'linear-gradient(90deg, rgb(var(--accent-rgb) / 0.06) 1px, transparent 1px)',
-            backgroundSize: '44px 44px',
-            maskImage: 'radial-gradient(ellipse 80% 60% at 50% 40%, black 30%, transparent 75%)',
+            background:
+              'radial-gradient(circle at center, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0) 70%)',
           }}
         />
-        <div className="absolute -top-24 right-[12%] w-80 h-80 rounded-full bg-accent/20 blur-3xl" />
-        <div className="absolute bottom-[-6rem] left-[8%] w-72 h-72 rounded-full bg-accent/10 blur-3xl" />
       </div>
 
       {/* Top bar */}
       <header className="relative z-10 h-16 flex items-center justify-between px-5 sm:px-8">
-        <Link href="/" aria-label="PowerTradeFX home" className="inline-flex items-center gap-2.5">
-          <svg viewBox="0 0 32 32" aria-hidden="true" className="w-8 h-8">
-            <rect width="32" height="32" rx="7" className="fill-accent" />
-            <path fillRule="evenodd" d="M11 6.5 H19.2 C23.3 6.5 26.2 9.3 26.2 13.2 C26.2 17.1 23.3 19.9 19.2 19.9 H15.2 V25.5 H11 Z M15.2 10.2 V16.2 H18.9 C20.9 16.2 22 15 22 13.2 C22 11.4 20.9 10.2 18.9 10.2 Z" fill="#ffffff" />
-          </svg>
-          <span className="inline-flex items-baseline font-display font-bold tracking-tight text-lg select-none">
-            <span className="text-white">PowerTrade</span>
-            <span className="text-accent">FX</span>
-          </span>
+        {/* The lockup already carries the name, so it replaces the old tile +
+            type pair rather than joining it. Sized by height; `w-auto` keeps
+            the ~6.5:1 ratio and stops next/image warning about a modified
+            dimension. The link's accessible name comes from aria-label, so
+            the image itself is decorative.
+
+            `sizes` is required for the same reason as the marketing bar:
+            without it next/image ships a 1920px variant for a ~180px box. */}
+        <Link href="/" aria-label="PowerTradeFX home" className="inline-flex items-center">
+          <Image
+            src="/portal/logo.png"
+            alt=""
+            width={1536}
+            height={236}
+            sizes="200px"
+            priority
+            className="h-6 w-auto select-none sm:h-7"
+          />
         </Link>
-        <div className="hidden sm:flex items-center gap-3 text-sm text-gray-400">
-          {copy.switchPrompt}
+        {/* The mode switch lives here, to the side, on every breakpoint —
+            only the prompt text drops away on narrow screens. */}
+        <div className="flex items-center gap-3 text-sm text-gray-400">
+          <span className="hidden sm:inline">{copy.switchPrompt}</span>
           <Link
             href={copy.switchHref}
             className="font-semibold text-white border border-white/15 hover:border-accent/60 rounded-xl px-4 py-2 transition-colors"
@@ -256,20 +277,8 @@ export const FullScreenSignup = ({ mode = 'signup' }: FullScreenSignupProps) => 
 
       {/* Centre stage */}
       <main className="relative z-10 flex-1 flex items-center justify-center px-4 py-10">
-        {/* decorative floating quote chips */}
-        <div className="lx-float lx-card hidden lg:block absolute left-[10%] top-[24%] rounded-2xl px-4 py-3 shadow-2xl" aria-hidden="true">
-          <p className="text-[10px] uppercase tracking-widest text-gray-500 mb-0.5">EURUSD</p>
-          <p className="font-mono tabular-nums text-sm font-bold text-white">1.08425</p>
-          <p className="text-[10px] font-semibold text-emerald-400">live</p>
-        </div>
-        <div className="lx-float-slow lx-card hidden lg:block absolute right-[10%] bottom-[22%] rounded-2xl px-4 py-3 shadow-2xl" aria-hidden="true">
-          <p className="text-[10px] uppercase tracking-widest text-gray-500 mb-0.5">XAUUSD</p>
-          <p className="font-mono tabular-nums text-sm font-bold text-white">2,412.50</p>
-          <p className="text-[10px] font-semibold text-accent">gold · spot</p>
-        </div>
-
         <div className="w-full max-w-md">
-          <div className="lx-card rounded-3xl p-7 sm:p-9 shadow-2xl relative">
+          <div className="relative rounded-xl border border-[#222] bg-[#121212] p-7 shadow-[0_10px_40px_rgba(0,0,0,0.8)] sm:p-9">
             {step === 'credentials' && (
               <>
                 <div className="mb-7">
@@ -332,10 +341,15 @@ export const FullScreenSignup = ({ mode = 'signup' }: FullScreenSignupProps) => 
                     />
                   )}
 
+                  {/* Same reason as the fields above — see Field(). Only the
+                      two buttons in THIS branch need it: the OTP step's
+                      buttons never exist at hydration time, because `step`
+                      always starts at 'credentials'. */}
                   <button
                     type="submit"
                     disabled={submitting}
                     className="lx-cta w-full disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 px-4 rounded-xl transition hover:brightness-110 inline-flex items-center justify-center gap-2 mt-1.5"
+                    suppressHydrationWarning
                   >
                     {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
                     {submitting ? 'Please wait…' : copy.cta}
@@ -352,16 +366,10 @@ export const FullScreenSignup = ({ mode = 'signup' }: FullScreenSignupProps) => 
                     onClick={handleDemo}
                     disabled={submitting}
                     className="w-full disabled:opacity-60 disabled:cursor-not-allowed border border-white/15 hover:border-accent/60 text-gray-200 hover:text-white font-semibold py-3 px-4 rounded-xl transition-colors inline-flex items-center justify-center gap-2"
+                    suppressHydrationWarning
                   >
                     Try free $10,000 demo
                   </button>
-
-                  <div className="text-center text-gray-500 text-sm sm:hidden">
-                    {copy.switchPrompt}{' '}
-                    <Link href={copy.switchHref} className="text-white font-semibold hover:text-accent">
-                      {copy.switchLink}
-                    </Link>
-                  </div>
                 </form>
               </>
             )}
@@ -492,6 +500,12 @@ function Field({
         </label>
         {rightSlot}
       </div>
+      {/* suppressHydrationWarning on the field and its reveal toggle: a
+          password manager is exactly the kind of extension that stamps an
+          `fdprocessedid` attribute onto inputs and buttons before React
+          hydrates, and a sign-in form is the first thing it goes for. Both
+          elements render from props and from `revealed`, whose initial value
+          matches on both sides, so nothing genuine is being masked. */}
       <div className="relative">
         <input
           type={effectiveType}
@@ -507,6 +521,7 @@ function Field({
           onChange={(e) => onChange(e.target.value)}
           aria-invalid={!!error}
           aria-describedby={error ? `${id}-error` : undefined}
+          suppressHydrationWarning
         />
         {revealable && (
           <button
@@ -515,6 +530,7 @@ function Field({
             tabIndex={-1}
             aria-label={revealed ? 'Hide password' : 'Show password'}
             className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-200 transition-colors"
+            suppressHydrationWarning
           >
             {revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>

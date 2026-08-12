@@ -1,6 +1,44 @@
 /* Landing visual effects — scoped by .lx-* class names so nothing leaks
  * into the app. Deep-navy canvas + electric-blue glow, per the reference. */
 
+/* ── Auth accent override ─────────────────────────────────────────
+ * The sign-up and sign-in cards run gold instead of the app's electric
+ * blue, so they sit in the same palette as the marketing portal the
+ * visitor just came from. Applied ONLY to the FullScreenSignup root, so
+ * /auth/register and /auth/login change and nothing else does — the
+ * dashboard, wallet and the rest of the app keep the blue accent, and the
+ * trading terminal keeps its own green (.term-theme).
+ *
+ * The hues come from the --brand-gold-* primitives already in
+ * globals.css rather than fresh hex values: that file's header states
+ * brand hues exist as numbers in exactly one block, and this keeps it
+ * true. (Those primitives are currently dead — the blue re-theme was
+ * pasted below them in :root and [data-theme="dark"] without removing
+ * them, which is why the whole app reads blue.)
+ *
+ * Doubled selector on purpose, same reason as .lx-field below: `:root`
+ * scores (0,1,0) and so would a lone class, leaving the winner down to
+ * stylesheet order, which is not something to rely on. `[data-theme]`
+ * lifts this to (0,2,0) so it lands regardless.
+ *
+ * --accent / --accent-hover / --accent-soft are restated because they are
+ * COMPUTED at :root from the triplets, so descendants inherit the already
+ * resolved blue and would not pick the gold up on their own. */
+.lx-auth,
+[data-theme] .lx-auth {
+  --accent-rgb: var(--brand-gold-600);
+  --accent-hover-rgb: var(--brand-gold-700);
+  --accent-bright-rgb: var(--brand-gold-500);
+  --accent-bright: rgb(var(--accent-bright-rgb));
+
+  --accent: rgb(var(--accent-rgb));
+  --accent-hover: rgb(var(--accent-hover-rgb));
+  --accent-soft: rgb(var(--accent-rgb) / 0.12);
+  --border-accent: rgb(var(--accent-rgb));
+  --input-focus-border: rgb(var(--accent-rgb));
+  --input-focus-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.12);
+}
+
 .lx-canvas {
   background:
     radial-gradient(1100px 620px at 82% -10%, rgb(var(--accent-rgb) / 0.16), transparent 60%),

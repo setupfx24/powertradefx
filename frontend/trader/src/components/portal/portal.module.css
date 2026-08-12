@@ -1,0 +1,1720 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Nocturne — dark label style.
+
+   MOTION CONTRACT (read before editing):
+   The BASE rules in this file describe the FINISHED page — portal open,
+   image uncovered, every reveal visible. `.motionOn` is added by the
+   page only after confirming prefers-reduced-motion is not set, and it
+   is what re-closes the portal and hides the reveals so they can play.
+   Consequence: the reduced-motion render and the no-JS render are both
+   the completed page, never a blank one. Never move an "initial" state
+   into a base rule.
+
+   Scroll-bound values ride two custom properties the page writes on the
+   scroll frame: --p (hero portal progress) and --q (statement drift).
+   Both are plain scroll POSITION, so everything they drive plays in
+   reverse on the way back up. Entry reveals use IntersectionObserver
+   and latch — they must not un-reveal.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.page {
+  --ground: #0a0c0e;
+  --ground-2: #101317;
+  --ink: #ede7dc;
+  --ink-2: #9ea5a8;
+  --muted: #6c7378;
+  --amber: #e8913c;
+  --teal: #2e6b72;
+  --hair: rgba(237, 231, 220, 0.13);
+
+  --display: var(--label-display), 'Syne', system-ui, sans-serif;
+  --body: var(--label-body), 'Sora', system-ui, sans-serif;
+
+  --pad: clamp(20px, 5vw, 76px);
+  --nav-h: 58px;
+  /* Deck flip duration. MUST equal FLIP_MS in PortalPage.tsx — the JS
+     timers that re-stack the deck are keyed to it. */
+  --flip: 520ms;
+
+  /* Scroll-driven, rewritten each frame by the page. --p starts at 0 so
+     the very first painted frame under `.motionOn` is the CLOSED portal
+     (scroll is at the top), never an open one that snaps shut. */
+  --p: 0;
+  --q: 0;
+
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--body);
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
+}
+
+.page *,
+.page *::before,
+.page *::after {
+  box-sizing: border-box;
+}
+
+/* ── Shared type ─────────────────────────────────────────────── */
+
+.label {
+  font-family: var(--body);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.labelAmber {
+  color: var(--amber);
+}
+
+.heading {
+  font-family: var(--display);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 0.94;
+  color: var(--ink);
+  margin: 0;
+}
+
+.lede {
+  font-size: clamp(13.5px, 1.15vw, 16px);
+  line-height: 1.62;
+  color: var(--ink-2);
+  max-width: 46ch;
+  margin: 0;
+}
+
+/* Accents stay on type, dots and rules — never a filled area. The single
+   exception is the wash behind the closing wordmark (`.close::before`),
+   which is ambient light rather than a surface: no type sits on its dense
+   end, and nothing there is a control. Do not extend it to buttons. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 20px;
+  border: 1px solid var(--hair);
+  border-radius: 999px;
+  background: none;
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  text-decoration: none;
+  /* Never wrap: inside the fixed-height nav bar a two-line label breaks
+     the pill out of the 58px rail. */
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.28s ease, border-color 0.28s ease;
+}
+
+.btn:hover,
+.btn:focus-visible {
+  color: var(--amber);
+  border-color: rgba(232, 145, 60, 0.55);
+}
+
+.btnQuiet {
+  color: var(--ink-2);
+}
+
+.btnQuiet:hover,
+.btnQuiet:focus-visible {
+  color: var(--ink);
+  border-color: rgba(237, 231, 220, 0.34);
+}
+
+.page :focus-visible {
+  outline: 1px solid var(--amber);
+  outline-offset: 3px;
+}
+
+/* ── Navigation ──────────────────────────────────────────────── */
+
+.nav {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 60;
+  height: var(--nav-h);
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 0 var(--pad);
+  background: rgba(10, 12, 14, 0.72);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--hair);
+}
+
+/* Holds either the type mark or the logo lockup — the type rules below are
+   inert when a logo is supplied. */
+.navMark {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  text-decoration: none;
+  margin-right: auto;
+}
+
+.navMark span {
+  color: var(--amber);
+}
+
+/* Sized by height only: `width: auto` is what stops next/image warning about
+   a modified dimension, and keeps the ~6.5:1 lockup undistorted. */
+.navLogo {
+  display: block;
+  height: 21px;
+  width: auto;
+}
+
+.navLinks {
+  display: flex;
+  gap: 26px;
+}
+
+.navLink {
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  text-decoration: none;
+  transition: color 0.24s ease;
+}
+
+.navLink:hover,
+.navLink:focus-visible {
+  color: var(--amber);
+}
+
+@media (max-width: 860px) {
+  .navLinks {
+    display: none;
+  }
+}
+
+/* ── Mobile menu ─────────────────────────────────────────────────
+   The bar drops .navLinks below 860px, so this is what carries the
+   routes there. Button and sheet are display:none above the same
+   breakpoint — the button being display:none also keeps it out of the
+   desktop tab order. See PortalMobileMenu.tsx. */
+
+.navBurger {
+  display: none;
+  position: relative;
+  /* 44px: the smallest comfortable touch target. The bar is 58px, so it
+     fits without pushing the rail open. */
+  width: 44px;
+  height: 44px;
+  margin-right: -10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+/* Resting position is set per-bar by .burgerBarA/.burgerBarB rather than
+   :nth-of-type — an :nth-of-type selector scores (0,2,0) and would beat
+   the single-class open state below, leaving the bars parallel instead of
+   crossed. Every rule here is one class, so only source order decides. */
+.burgerBar {
+  position: absolute;
+  left: 12px;
+  width: 20px;
+  height: 1.5px;
+  background: var(--ink);
+  border-radius: 2px;
+  transition: transform 0.3s ease, top 0.3s ease;
+}
+
+.burgerBarA {
+  top: 19px;
+}
+
+.burgerBarB {
+  top: 25px;
+}
+
+/* Both bars travel to the centre line, then cross. */
+.burgerBarTop {
+  top: 22px;
+  transform: rotate(45deg);
+}
+
+.burgerBarBottom {
+  top: 22px;
+  transform: rotate(-45deg);
+}
+
+.navSheet {
+  position: fixed;
+  top: var(--nav-h);
+  left: 0;
+  right: 0;
+  z-index: 59;
+  display: none;
+  background: rgba(10, 12, 14, 0.97);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--hair);
+}
+
+.navSheetInner {
+  display: flex;
+  flex-direction: column;
+  padding: 8px var(--pad) calc(20px + env(safe-area-inset-bottom, 0px));
+}
+
+.navSheetLink {
+  padding: 17px 0;
+  border-bottom: 1px solid var(--hair);
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 21px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.navSheetLinkOn {
+  color: var(--amber);
+}
+
+.navSheetCta {
+  align-self: flex-start;
+  margin-top: 20px;
+}
+
+/* Sits under the sheet and over the page, so a tap outside closes. */
+.navScrim {
+  position: fixed;
+  inset: var(--nav-h) 0 0 0;
+  z-index: 58;
+  display: none;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: rgba(10, 12, 14, 0.5);
+  cursor: default;
+}
+
+@media (max-width: 860px) {
+  .navBurger,
+  .navScrim {
+    display: block;
+  }
+
+  /* Only the OPEN sheet is shown. Giving .navSheet itself `display: block`
+     here would beat the `hidden` attribute — `[hidden]{display:none}` is a
+     UA type-less rule and loses to any class — and the menu would sit open
+     permanently on every phone. */
+  .navSheetOpen {
+    display: block;
+  }
+}
+
+/* Phones: a long wordmark plus a long CTA overruns the bar, so tighten
+   both rather than let either wrap or clip. */
+@media (max-width: 520px) {
+  .nav {
+    gap: 12px;
+  }
+
+  .navMark {
+    font-size: 13px;
+  }
+
+  .navLogo {
+    height: 17px;
+  }
+
+  .nav .btn {
+    height: 34px;
+    padding: 0 14px;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+  }
+}
+
+/* ── 1. Portal hero ──────────────────────────────────────────── */
+
+/* svh, not vh: on mobile `100vh` is the viewport with the URL bar HIDDEN,
+   so a bar that is currently showing pushes the stage's bottom corners
+   ("Six instruments · 24/5 markets", "Scroll to open") below the fold.
+   `svh` is the small — always-visible — viewport, so nothing is ever
+   clipped. `dvh` would fit exactly but changes as the bar collapses, and
+   this hero is bound to scroll POSITION, so a mid-scroll resize would
+   re-measure the travel under the reader's finger. The plain vh line
+   stays first as the fallback for browsers without svh. */
+.hero {
+  position: relative;
+  height: 250vh;
+  height: 250svh;
+}
+
+.stage {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  height: 100svh;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.stageImage {
+  position: absolute;
+  inset: -2px;
+  background: url('/label/hero.svg') center / cover no-repeat;
+  transform: scale(1);
+  transform-origin: 52% 40%;
+  z-index: 0;
+}
+
+/* Duotone wash — the one place an accent covers area, because the brief
+   requires the two accents blended over the photograph itself. */
+.stageDuotone {
+  position: absolute;
+  inset: -2px;
+  z-index: 1;
+  background: linear-gradient(122deg, var(--amber) 0%, transparent 46%, var(--teal) 100%);
+  mix-blend-mode: overlay;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.stageVeil {
+  position: absolute;
+  inset: -2px;
+  z-index: 2;
+  background:
+    radial-gradient(128% 92% at 50% 46%, transparent 34%, rgba(10, 12, 14, 0.62) 78%, rgba(10, 12, 14, 0.93) 100%),
+    linear-gradient(180deg, rgba(10, 12, 14, 0.66) 0%, transparent 26%, transparent 62%, rgba(10, 12, 14, 0.78) 100%);
+  pointer-events: none;
+}
+
+/* The two doors. Slightly over half-width each so they overlap at the
+   seam and no hairline of image leaks through when closed. */
+.panel {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 50.6%;
+  z-index: 3;
+  background: var(--ground);
+  pointer-events: none;
+}
+
+/* BASE = portal OPEN, because the base render IS the finished page. The
+   panels sit fully outside the frame here; `.motionOn` below is what
+   re-closes them and binds them to --p. Putting the closed state here
+   instead would leave reduced-motion and no-JS readers staring at a
+   covered hero forever. */
+.panelL {
+  left: 0;
+  border-right: 1px solid var(--hair);
+  transform: translate3d(-104%, 0, 0);
+}
+
+.panelR {
+  right: 0;
+  border-left: 1px solid var(--hair);
+  transform: translate3d(104%, 0, 0);
+}
+
+.dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 4;
+  width: 5px;
+  height: 5px;
+  margin: -2.5px 0 0 -2.5px;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.dotA {
+  background: var(--amber);
+  box-shadow: 0 0 14px 2px rgba(232, 145, 60, 0.75);
+}
+
+.dotB {
+  background: var(--teal);
+  box-shadow: 0 0 14px 2px rgba(46, 107, 114, 0.85);
+}
+
+/* The portal title. Grows and tightens at the same time while its two
+   halves travel to opposite edges — doing only one of the two loses the
+   effect entirely. */
+.titleWrap {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.title {
+  display: flex;
+  justify-content: center;
+  white-space: nowrap;
+  font-family: var(--display);
+  font-weight: 800;
+  /* Sized so all eight letters FIT the viewport at rest — the portal grows
+     it 1.2x from here, and only then do the halves part and run off the
+     edges. Any larger and the label's own name is cropped before the
+     reader has read it. */
+  font-size: max(26px, var(--title-vw, 9.4vw));
+  line-height: 1;
+  letter-spacing: -0.05em;
+  color: var(--ink);
+  transform: scale(1.2);
+  transform-origin: center;
+}
+
+.titleA,
+.titleB {
+  display: block;
+}
+
+.titleA {
+  transform: translateX(-50%);
+}
+
+.titleB {
+  transform: translateX(50%);
+}
+
+.corner {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.cornerTL {
+  top: calc(var(--nav-h) + 26px);
+  left: var(--pad);
+}
+
+.cornerTR {
+  top: calc(var(--nav-h) + 26px);
+  right: var(--pad);
+}
+
+.cornerBL {
+  bottom: 30px;
+  left: var(--pad);
+}
+
+.cornerBR {
+  bottom: 30px;
+  right: var(--pad);
+}
+
+@media (max-width: 700px) {
+  .cornerTR,
+  .cornerBR {
+    display: none;
+  }
+}
+
+/* ── 2. Statement fold ───────────────────────────────────────── */
+
+.statement {
+  position: relative;
+  /* isolation + a z-index:-1 pseudo keeps the wash above the section's own
+     ground but below every child, without needing a wrapper element. */
+  isolation: isolate;
+  /* dvh rather than svh here: this is a min-height on a normal-flow fold,
+     so the URL bar collapsing just relaxes a minimum — nothing is bound to
+     scroll position and nothing jumps. */
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  padding: clamp(90px, 14vh, 150px) var(--pad);
+  overflow: clip;
+  border-top: 1px solid var(--hair);
+}
+
+/* Ambient wash under the plate on the right edge.
+   The accent contract keeps amber and teal on type, dots and rules — this
+   takes the same exception the closing fold does: it reads as light in the
+   room rather than a surface. Both radials are anchored past 90% across, so
+   the dense end sits off the right edge, no type ever crosses it, and there
+   is no control anywhere near it. The statement column ends around 40% of
+   the width, so the two never meet.
+   Warm core sits on the plate; the cooler pool sits below and outside it,
+   which is the same amber-over-teal relationship as the hero photograph. */
+.statement::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(
+      46% 58% at 93% 40%,
+      rgba(232, 145, 60, 0.30) 0%,
+      rgba(232, 145, 60, 0.17) 28%,
+      rgba(232, 145, 60, 0.07) 52%,
+      rgba(232, 145, 60, 0.02) 68%,
+      transparent 80%
+    ),
+    radial-gradient(
+      54% 64% at 104% 76%,
+      rgba(46, 107, 114, 0.36) 0%,
+      rgba(46, 107, 114, 0.17) 34%,
+      rgba(46, 107, 114, 0.05) 58%,
+      transparent 76%
+    );
+  pointer-events: none;
+}
+
+.statementInner {
+  position: relative;
+  z-index: 2;
+  max-width: 1320px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.statementText {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: clamp(24px, 3.6vw, 52px);
+  line-height: 1.16;
+  letter-spacing: -0.025em;
+  max-width: 22ch;
+  margin: 26px 0 0;
+  color: var(--ink);
+}
+
+.statementText em {
+  font-style: normal;
+  color: var(--amber);
+}
+
+/* Anchored LEFT, under the statement column. The plate owns the right
+   edge; putting the numeral there too just tangles two large shapes. */
+.index {
+  position: absolute;
+  left: 0;
+  bottom: -0.3em;
+  z-index: 1;
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: clamp(110px, 17vw, 260px);
+  line-height: 0.8;
+  letter-spacing: -0.05em;
+  color: transparent;
+  -webkit-text-stroke: 1px rgba(237, 231, 220, 0.16);
+  pointer-events: none;
+  user-select: none;
+}
+
+.plate {
+  position: absolute;
+  z-index: 0;
+  top: 50%;
+  right: clamp(-190px, -9vw, -70px);
+  width: clamp(260px, 34vw, 460px);
+  aspect-ratio: 1;
+  margin-top: -22%;
+  border-radius: 50%;
+  background: url('/label/plate.svg') center / cover no-repeat;
+  /* Lifted from 0.34 now that the wash sits behind it — against a lit
+     ground the dial needs a little more presence to read as an object
+     rather than a smudge. */
+  opacity: 0.42;
+  pointer-events: none;
+}
+
+/* Phones put the statement text much closer to the right edge, so pull the
+   wash back and dim the plate rather than let either crowd the type. */
+@media (max-width: 760px) {
+  .plate {
+    opacity: 0.24;
+  }
+
+  .statement::before {
+    opacity: 0.55;
+  }
+}
+
+/* ── 3. Releases + deck ──────────────────────────────────────── */
+
+.releases {
+  padding: clamp(90px, 12vh, 148px) var(--pad);
+  border-top: 1px solid var(--hair);
+}
+
+.releasesGrid {
+  max-width: 1320px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: clamp(40px, 6vw, 88px);
+  align-items: center;
+}
+
+.releasesCopy h2 {
+  font-size: clamp(34px, 5.4vw, 76px);
+  margin: 20px 0 22px;
+}
+
+.releasesActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 34px;
+}
+
+.deckCol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Wrapper that exists only to give the two arrows something to be
+   positioned against — the stack itself is a transform playground and the
+   back cards fan out past its right edge. */
+.deckStage {
+  position: relative;
+  width: 100%;
+  max-width: 460px;
+}
+
+.deck {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  touch-action: pan-y;
+  cursor: grab;
+}
+
+/* Outside the card on both sides, clear of the fanned back cards (which
+   reach ~33px past the right edge). Same pill vocabulary as .btn, just
+   round. */
+.deckArrow {
+  position: absolute;
+  top: 50%;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 1px solid var(--hair);
+  border-radius: 50%;
+  background: rgba(10, 12, 14, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--ink);
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: color 0.28s ease, border-color 0.28s ease, background-color 0.28s ease;
+}
+
+.deckArrow:hover,
+.deckArrow:focus-visible {
+  color: var(--amber);
+  border-color: rgba(232, 145, 60, 0.55);
+  background: rgba(10, 12, 14, 0.85);
+}
+
+.deckArrowPrev {
+  left: clamp(-72px, -4.6vw, -16px);
+}
+
+.deckArrowNext {
+  right: clamp(-84px, -5.6vw, -18px);
+}
+
+.deck:active {
+  cursor: grabbing;
+}
+
+.card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 24px;
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+  background: var(--ground-2);
+  overflow: hidden;
+  /* The one element allowed a drop shadow — the deck must read physical. */
+  box-shadow: 0 18px 44px -18px rgba(0, 0, 0, 0.9);
+  will-change: transform;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.cardArt {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* next/image with `fill` positions itself; this only has to cover and sit
+   under the scrim. */
+.cardPhoto {
+  z-index: 0;
+  object-fit: cover;
+  object-position: center;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Ground for the tag/title block, which sits on an arbitrary photograph.
+   Weighted to the bottom half so the image reads at the top of the card. */
+.cardScrim {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(10, 12, 14, 0.1) 0%,
+    rgba(10, 12, 14, 0.18) 42%,
+    rgba(10, 12, 14, 0.62) 74%,
+    rgba(10, 12, 14, 0.88) 100%
+  );
+  pointer-events: none;
+}
+
+.cardBody {
+  position: relative;
+  z-index: 1;
+}
+
+.cardCode {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.cardTitle {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: clamp(22px, 2.6vw, 32px);
+  letter-spacing: -0.025em;
+  line-height: 1.02;
+  margin: 0 0 6px;
+}
+
+.cardArtist {
+  font-size: 12px;
+  color: var(--ink-2);
+  margin: 0;
+}
+
+.deckHint {
+  margin: 22px 0 0;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: center;
+}
+
+.deckDots {
+  display: flex;
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.deckDot {
+  width: 5px;
+  height: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(237, 231, 220, 0.22);
+  cursor: pointer;
+  transition: background 0.3s ease, transform 0.3s ease;
+}
+
+.deckDotOn {
+  background: var(--amber);
+  transform: scale(1.35);
+}
+
+@media (max-width: 900px) {
+  .releasesGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .deckCol {
+    order: -1;
+  }
+}
+
+/* Phones: the deck fills the column, so there is no room beside it. Move
+   the arrows onto the card — its type block sits at the bottom, so nothing
+   is covered at mid-height. */
+@media (max-width: 640px) {
+  .deckArrow {
+    width: 38px;
+    height: 38px;
+  }
+
+  .deckArrowPrev {
+    left: 10px;
+  }
+
+  .deckArrowNext {
+    right: 10px;
+  }
+}
+
+/* ── 4. Roster ───────────────────────────────────────────────── */
+
+.roster {
+  padding: clamp(90px, 12vh, 148px) var(--pad);
+  border-top: 1px solid var(--hair);
+}
+
+.sectionHead {
+  max-width: 1320px;
+  margin: 0 auto 44px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.sectionHead h2 {
+  font-size: clamp(30px, 4.4vw, 60px);
+}
+
+.rosterList {
+  max-width: 1320px;
+  margin: 0 auto;
+  border-top: 1px solid var(--hair);
+}
+
+.rosterRow {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) auto;
+  gap: 20px;
+  align-items: center;
+  padding: clamp(20px, 2.6vw, 32px) 0;
+  border-bottom: 1px solid var(--hair);
+}
+
+.rosterName {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: clamp(22px, 3vw, 40px);
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  transition: color 0.3s ease;
+}
+
+.rosterRow:hover .rosterName {
+  color: var(--amber);
+}
+
+/* Rows that lead somewhere render as <a> rather than <div>, so the WHOLE
+   row is the hit target and the amber-on-hover name above is an accurate
+   affordance instead of decoration beside a text-sized link. Needs the
+   reset because nothing else in this stylesheet touches bare anchors. */
+.rosterLink {
+  text-decoration: none;
+  color: inherit;
+}
+
+.rosterCount {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .rosterRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .rosterRow .label {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ── 5. Dates ────────────────────────────────────────────────── */
+
+.dates {
+  padding: clamp(90px, 12vh, 148px) var(--pad);
+  border-top: 1px solid var(--hair);
+}
+
+.table {
+  max-width: 1320px;
+  margin: 0 auto;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th {
+  padding: 0 0 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--hair);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.table td {
+  padding: clamp(18px, 2.2vw, 26px) 16px clamp(18px, 2.2vw, 26px) 0;
+  border-bottom: 1px solid var(--hair);
+  font-size: 13px;
+  color: var(--ink-2);
+  vertical-align: baseline;
+}
+
+.table td:first-child {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: clamp(15px, 1.5vw, 19px);
+  letter-spacing: -0.015em;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.status {
+  color: var(--teal);
+  font-weight: 500;
+}
+
+.statusLow {
+  color: var(--amber);
+}
+
+.statusOut {
+  color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .table thead {
+    display: none;
+  }
+
+  .table,
+  .table tbody,
+  .table tr {
+    display: block;
+    width: 100%;
+  }
+
+  .table tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 16px;
+    padding: 20px 0;
+    border-bottom: 1px solid var(--hair);
+  }
+
+  .table td {
+    padding: 0;
+    border: 0;
+  }
+
+  .table td:first-child {
+    grid-column: 1 / -1;
+    margin-bottom: 6px;
+  }
+}
+
+/* ── 6. Close ────────────────────────────────────────────────── */
+
+/* The amber wash rises from the bottom edge behind the wordmark and is
+   gone well before the directory columns, so the type above it still sits
+   on near-black. `isolation` keeps the negative z-index inside this
+   section instead of dropping it behind the page background. */
+.close {
+  position: relative;
+  isolation: isolate;
+  /* The bottom value is what keeps the wordmark off the page edge — see the
+     note on .closeMark. Reducing it back to 0 re-crops the mark. */
+  padding: clamp(90px, 12vh, 148px) var(--pad) clamp(18px, 2.8vh, 34px);
+  border-top: 1px solid var(--hair);
+  overflow: clip;
+}
+
+/* Centred just past the bottom edge so the gradient is at its densest
+   behind the wordmark, with the whole lower half of the section for the
+   falloff to fade through. */
+.close::before {
+  content: '';
+  position: absolute;
+  inset: 18% 0 0;
+  z-index: -1;
+  background: radial-gradient(
+    108% 116% at 50% 104%,
+    rgba(232, 145, 60, 0.72) 0%,
+    rgba(232, 145, 60, 0.52) 16%,
+    rgba(232, 145, 60, 0.3) 33%,
+    rgba(232, 145, 60, 0.145) 49%,
+    rgba(232, 145, 60, 0.06) 65%,
+    rgba(232, 145, 60, 0.018) 79%,
+    transparent 92%
+  );
+  pointer-events: none;
+}
+
+/* Headline left, buttons ranged right on the same baseline. The risk
+   paragraph is a sibling BELOW this row, not inside the lead column —
+   sitting it beside the buttons left an obvious hole between the two. */
+.closeGrid {
+  max-width: 1320px;
+  margin: 0 auto;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 32px 40px;
+  flex-wrap: wrap;
+}
+
+.closeGrid h2 {
+  font-size: clamp(30px, 4.2vw, 60px);
+}
+
+.closeLead {
+  min-width: 0;
+}
+
+/* Its own 1320px rail, so the paragraph starts on the same left edge as the
+   heading above and the column heads below at every viewport width. */
+.fineRow {
+  max-width: 1320px;
+  margin: 22px auto 0;
+}
+
+.fine {
+  margin: 0;
+  max-width: 62ch;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.closeActions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* The badge on the primary CTA, outlined rather than filled so it obeys the
+   accent contract at the top of this file. */
+.btnPlus {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin: 0 -6px 0 2px;
+  border: 1px solid rgba(232, 145, 60, 0.45);
+  border-radius: 6px;
+  color: var(--amber);
+  font-size: 12px;
+  line-height: 1;
+  transition: border-color 0.28s ease, transform 0.28s ease;
+}
+
+.btn:hover .btnPlus,
+.btn:focus-visible .btnPlus {
+  border-color: rgba(232, 145, 60, 0.85);
+  transform: rotate(90deg);
+}
+
+/* ── Directory columns ───────────────────────────────────────── */
+
+/* Three narrow link columns, then the sign-up block taking the rest. The
+   hairline above them separates the closing CTA from the directory. */
+.footCols {
+  max-width: 1320px;
+  margin: clamp(56px, 8vh, 96px) auto 0;
+  padding-top: clamp(34px, 5vh, 54px);
+  border-top: 1px solid var(--hair);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 0.72fr)) minmax(0, 1.3fr);
+  align-items: start;
+  gap: clamp(28px, 3.4vw, 56px);
+}
+
+.footCol {
+  min-width: 0;
+}
+
+.footColWide {
+  min-width: 0;
+}
+
+.footHead {
+  margin: 0;
+  font-family: var(--body);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.footList {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 9px;
+}
+
+.footLink {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  text-decoration: none;
+  transition: color 0.28s ease;
+}
+
+.footLink:hover,
+.footLink:focus-visible {
+  color: var(--amber);
+}
+
+.footMuted {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.footNote {
+  margin: 14px 0 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink-2);
+  max-width: 42ch;
+}
+
+/* ── Sign-up field ───────────────────────────────────────────── */
+
+.mailForm {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* The doubled selector is deliberate: globals.css styles bare `input` under
+   [data-theme="dark"] at (0,1,1), and Tailwind v3 inlines its @layer base
+   so that rule lands unlayered — a single class here would lose to it and
+   the field would render with the app's near-black surface and radius. */
+.mailInput,
+[data-theme] .mailInput {
+  flex: 1 1 190px;
+  min-width: 0;
+  width: auto;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--hair);
+  border-radius: 999px;
+  background: rgba(237, 231, 220, 0.045);
+  box-shadow: none;
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 12.5px;
+  letter-spacing: 0.01em;
+  transition: border-color 0.28s ease, background-color 0.28s ease;
+}
+
+.mailInput::placeholder,
+[data-theme] .mailInput::placeholder {
+  color: var(--muted);
+  letter-spacing: 0.01em;
+}
+
+.mailInput:focus,
+[data-theme] .mailInput:focus {
+  border-color: rgba(232, 145, 60, 0.55);
+  background: rgba(237, 231, 220, 0.07);
+  box-shadow: none;
+}
+
+/* Reset the app's global button metrics back to the portal pill. */
+.mailBtn {
+  flex: 0 0 auto;
+}
+
+.footStrip {
+  max-width: 1320px;
+  margin: clamp(56px, 8vh, 92px) auto 0;
+  padding: 18px 0;
+  border-top: 1px solid var(--hair);
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 18px;
+}
+
+/* This strip sits where the amber wash has real density, and --muted (a cool
+   grey) sinks into it. Lift these three to a warm off-white; the rest of the
+   footer keeps the quieter label colour. */
+.footStrip .label {
+  color: rgba(237, 231, 220, 0.66);
+}
+
+.footStripMid {
+  text-align: center;
+}
+
+.footStripEnd {
+  text-align: right;
+}
+
+/* The sign-up block needs roughly 300px before the field and its button
+   stop sharing a line, so it drops to its own full-width row first. */
+@media (max-width: 1080px) {
+  .footCols {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    row-gap: clamp(34px, 5vw, 52px);
+  }
+
+  .footColWide {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 620px) {
+  .footCols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .footStripMid,
+  .footStripEnd {
+    text-align: left;
+  }
+
+  .footStrip {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+}
+
+/* Full-bleed wordmark sitting just clear of the page edge.
+   The negative horizontal margins cancel the section's own side padding so
+   the mark can use the FULL viewport width — without them it is sized
+   against the padded column, overflows it, and gets sliced at both sides.
+   `.close` is overflow:clip, so this cannot cause a horizontal scrollbar.
+
+   It used to be translated down so the page edge cropped the capitals; that
+   read as the mark being cut off, so it now sits whole with a small gap
+   below. The gap is the interaction of three values: the sub-1 line-height
+   (glyphs overflow their own line box top and bottom), .close's
+   padding-bottom, and margin-top here. Change one and re-check the other
+   two — dropping .close's padding-bottom brings the crop straight back. */
+.closeMark {
+  display: block;
+  width: auto;
+  margin: clamp(14px, 2vh, 26px) calc(var(--pad) * -1) 0;
+  padding: 0;
+  font-family: var(--display);
+  font-weight: 800;
+  /* Sized from glyph count by PortalPage — see closeVw() there. */
+  font-size: var(--close-vw, 9.8vw);
+  line-height: 0.78;
+  letter-spacing: -0.045em;
+  text-align: center;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.closeMark span {
+  color: var(--amber);
+}
+
+/* ═══ MOTION LAYER ═══════════════════════════════════════════════
+   Everything below only applies once the page has confirmed motion is
+   welcome. Removing `.motionOn` must always leave the finished page.
+   ═════════════════════════════════════════════════════════════════ */
+
+/* -- Scroll-bound (reversible: driven by --p / --q, never by a timer) -- */
+
+.motionOn .stageImage {
+  /* 1.18 → 1.00 as the portal opens. */
+  transform: scale(calc(1.18 - 0.18 * var(--p)));
+}
+
+.motionOn .stageDuotone {
+  opacity: calc(var(--p) * 0.5);
+}
+
+/* Closed at --p:0, cleared past their own width at --p:1. */
+.motionOn .panelL {
+  transform: translate3d(calc(var(--p) * -104%), 0, 0);
+}
+
+.motionOn .panelR {
+  transform: translate3d(calc(var(--p) * 104%), 0, 0);
+}
+
+.motionOn .dotA {
+  opacity: calc(1 - var(--p) * 0.35);
+  transform: translate3d(calc(var(--p) * -34vw), calc(var(--p) * -30vh), 0);
+}
+
+.motionOn .dotB {
+  opacity: calc(1 - var(--p) * 0.35);
+  transform: translate3d(calc(var(--p) * 34vw), calc(var(--p) * 30vh), 0);
+}
+
+/* Grow and tighten together — the signature move. */
+.motionOn .title {
+  transform: scale(calc(1 + 0.2 * var(--p)));
+  letter-spacing: calc(-0.02em - 0.03em * var(--p));
+}
+
+.motionOn .titleA {
+  transform: translateX(calc(var(--p) * -50%));
+}
+
+.motionOn .titleB {
+  transform: translateX(calc(var(--p) * 50%));
+}
+
+.motionOn .plate {
+  transform: translateY(calc(var(--q) * -70px)) rotate(calc(var(--q) * 26deg));
+}
+
+/* -- Entry reveals (latched: they fire once and never un-reveal) -- */
+
+.motionOn .reveal {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.85s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.85s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.motionOn .isIn {
+  opacity: 1;
+  transform: none;
+}
+
+/* Travel is eased over the full --flip; the fade runs at just over half
+   that, so a card stays solid through the first part of its journey and is
+   gone before it reaches the copy column, rather than being visibly
+   translucent the whole way across. */
+.motionOn .card {
+  transition:
+    transform var(--flip) cubic-bezier(0.22, 1, 0.36, 1),
+    opacity calc(var(--flip) * 0.55) linear;
+}
+
+/* The one card that teleports this frame — the thrown card dropping to the
+   back, the pulled card being parked off-frame, or the card under a finger.
+   Everything else keeps its transition and glides. */
+.motionOn .cardStill {
+  transition: none;
+}
+
+/* Belt-and-braces: if the class is ever applied by mistake, the OS
+   preference still wins and nothing animates or hides. */
+@media (prefers-reduced-motion: reduce) {
+  .motionOn .reveal,
+  .motionOn .isIn {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .motionOn .stageImage,
+  .motionOn .stageDuotone,
+  .motionOn .panelL,
+  .motionOn .panelR,
+  .motionOn .dotA,
+  .motionOn .dotB,
+  .motionOn .title,
+  .motionOn .titleA,
+  .motionOn .titleB,
+  .motionOn .plate,
+  .motionOn .card {
+    transition: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SUB-PAGE PRIMITIVES  (/markets, /classes, /sessions)
+
+   These pages carry no portal hero, so they own their own top spacing
+   under the fixed bar. They reuse every token, the hairline rules, the
+   .table and the .close fold from above — nothing here re-declares a
+   colour or a face.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.sub {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.pageHead {
+  padding: calc(var(--nav-h) + clamp(56px, 11vh, 128px)) var(--pad) clamp(40px, 6vh, 72px);
+  border-bottom: 1px solid var(--hair);
+}
+
+.pageHeadInner {
+  max-width: 1320px;
+  margin: 0 auto;
+}
+
+.pageTitle {
+  font-family: var(--display);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 0.94;
+  color: var(--ink);
+  font-size: clamp(40px, 7.2vw, 104px);
+  margin: 20px 0 0;
+}
+
+.pageLede {
+  font-size: clamp(14px, 1.2vw, 17px);
+  line-height: 1.6;
+  color: var(--ink-2);
+  max-width: 52ch;
+  margin: 24px 0 0;
+}
+
+.section {
+  padding: clamp(64px, 9vh, 116px) var(--pad);
+  border-bottom: 1px solid var(--hair);
+}
+
+.sectionInner {
+  max-width: 1320px;
+  margin: 0 auto;
+}
+
+.sectionTitle {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: clamp(22px, 2.6vw, 34px);
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  margin: 14px 0 0;
+}
+
+/* ── Detail rows (asset classes) ─────────────────────────────── */
+
+.detailList {
+  max-width: 1320px;
+  margin: 0 auto;
+  border-top: 1px solid var(--hair);
+}
+
+.detailRow {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr) minmax(0, 1.5fr) auto;
+  gap: clamp(16px, 3vw, 40px);
+  align-items: baseline;
+  padding: clamp(24px, 3.2vw, 40px) 0;
+  border-bottom: 1px solid var(--hair);
+}
+
+.detailName {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: clamp(22px, 2.8vw, 36px);
+  letter-spacing: -0.025em;
+  color: var(--ink);
+}
+
+.detailBlurb {
+  font-size: 13.5px;
+  line-height: 1.62;
+  color: var(--ink-2);
+  margin: 0;
+}
+
+.detailCount {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .detailRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .detailRow .label {
+    grid-column: 1 / -1;
+  }
+
+  .detailBlurb {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ── Session timeline ────────────────────────────────────────── */
+
+.rail {
+  max-width: 1320px;
+  margin: 0 auto;
+}
+
+.railRow {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) 92px;
+  gap: clamp(14px, 2.4vw, 28px);
+  align-items: center;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--hair);
+}
+
+.railCity {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: clamp(16px, 1.7vw, 21px);
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+/* The 24-hour track. Sessions are drawn as RULES, never filled blocks —
+   the accents stay on type, a dot or a rule. */
+.railTrack {
+  position: relative;
+  height: 14px;
+}
+
+.railTrack::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: var(--hair);
+}
+
+.railSeg {
+  position: absolute;
+  top: 50%;
+  height: 2px;
+  margin-top: -1px;
+  background: var(--ink-2);
+}
+
+.railSegPeak {
+  background: var(--amber);
+}
+
+.railHours {
+  font-size: 11.5px;
+  color: var(--ink-2);
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.railScale {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) 92px;
+  gap: clamp(14px, 2.4vw, 28px);
+  padding-top: 12px;
+}
+
+.railTicks {
+  grid-column: 2;
+  display: flex;
+  justify-content: space-between;
+}
+
+@media (max-width: 720px) {
+  .railRow,
+  .railScale {
+    grid-template-columns: minmax(0, 1fr) 92px;
+  }
+
+  .railRow .railTrack {
+    grid-column: 1 / -1;
+    order: 3;
+  }
+
+  .railTicks {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Active nav link — same amber the links take on hover. */
+.navLinkOn {
+  color: var(--amber);
+}
+
+/* ── Falling statement (matter-js physics) ───────────────────── */
+
+/* The words are absolutely positioned by the simulation once it starts,
+   so the stage needs a real height — the component measures it and bails
+   out at zero. Wide enough to hold the sentence at its natural measure
+   before anything falls. */
+/* Width is NOT in `ch`: the big type is set by an inline font-size on the
+   component's inner div, so `ch` here would resolve against this element's
+   own 16px body font and collapse the stage to ~309px — nine wrapped lines
+   overflowing a 414px box. A length keeps the sentence on the same measure
+   as .statementText. Height leaves room below the text for the drop; the
+   component measures this box and bails out at zero. */
+/* Full width on purpose: the words are absolutely positioned once the
+   simulation runs, so this box IS the arena they fall inside. Capping it
+   left the sentence in a column with an empty right half, which read as
+   two panels rather than one fold.
+   Not in `ch` — the big type is set by an inline font-size on the
+   component's inner div, so `ch` here would resolve against this element's
+   own 16px body font and collapse the stage to ~309px. */
+.fallStage {
+  position: relative;
+  width: 100%;
+  height: clamp(340px, 56vh, 560px);
+  margin-top: 22px;
+  cursor: pointer;
+}
+
+/* Matches .statementText so the sentence reads identically before the
+   physics take over — same face, same weight, same tracking. */
+.fallText {
+  font-family: var(--display);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.16;
+  color: var(--ink);
+  text-align: left;
+}
+
+/* The highlight colour is the page's own accent, not the component's
+   stock cyan. Words carrying it are exactly the phrase that is amber in
+   the static statement — see how highlightWords is derived in PortalPage. */
+.fallAmber {
+  color: var(--amber);
+}

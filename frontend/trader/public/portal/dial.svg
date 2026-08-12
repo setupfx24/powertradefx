@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Abstract market dial in amber and teal">
+  <defs>
+    <radialGradient id="dWarm" cx="36%" cy="30%" r="70%">
+      <stop offset="0" stop-color="#E8913C" stop-opacity=".78"/>
+      <stop offset="46%" stop-color="#7E4B23" stop-opacity=".34"/>
+      <stop offset="100%" stop-color="#0A0C0E" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="dCool" cx="72%" cy="74%" r="66%">
+      <stop offset="0" stop-color="#2E6B72" stop-opacity=".8"/>
+      <stop offset="100%" stop-color="#0A0C0E" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="dGrain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" stitchTiles="stitch"/>
+      <feColorMatrix type="saturate" values="0"/>
+    </filter>
+  </defs>
+
+  <rect width="800" height="800" fill="#0A0C0E"/>
+  <rect width="800" height="800" fill="url(#dCool)"/>
+  <rect width="800" height="800" fill="url(#dWarm)"/>
+
+  <g fill="none" stroke="#EDE7DC" opacity=".15">
+    <circle cx="400" cy="400" r="368" stroke-width="1"/>
+    <circle cx="400" cy="400" r="300" stroke-width="1"/>
+    <circle cx="400" cy="400" r="232" stroke-width="1"/>
+    <circle cx="400" cy="400" r="164" stroke-width="1"/>
+  </g>
+
+  <!-- Session ticks around the dial -->
+  <g stroke="#EDE7DC" stroke-opacity=".22" stroke-width="1.5">
+    <path d="M400 32 V70"/><path d="M400 730 V768"/>
+    <path d="M32 400 H70"/><path d="M730 400 H768"/>
+    <path d="M140 140 L167 167"/><path d="M660 660 L633 633"/>
+    <path d="M660 140 L633 167"/><path d="M140 660 L167 633"/>
+  </g>
+
+  <circle cx="400" cy="400" r="120" fill="none" stroke="#E8913C" stroke-width="1.5" opacity=".55"/>
+  <circle cx="400" cy="400" r="86" fill="none" stroke="#2E6B72" stroke-width="1.5" opacity=".72"/>
+  <circle cx="400" cy="400" r="7" fill="#EDE7DC" opacity=".5"/>
+
+  <rect width="800" height="800" filter="url(#dGrain)" opacity=".2" style="mix-blend-mode:overlay"/>
+</svg>

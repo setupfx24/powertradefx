@@ -1,161 +1,152 @@
-'use client';
-
-import Link from 'next/link';
-import { motion } from 'framer-motion';
+import type { Metadata } from 'next';
+import PortalPage, { type PortalContent } from '@/components/portal/PortalPage';
+import { portalFontClass } from '@/components/portal/fonts';
+import { PORTAL_BRAND } from '@/components/portal/brand';
 import {
-  ArrowRight, Bot, CandlestickChart, Copy, LineChart, ShieldCheck, Timer, Wallet,
-  UserPlus, Banknote,
-} from 'lucide-react';
-import { useLandingLang } from '@/components/landing/i18n';
-import { MarketsTable } from '@/components/landing/LiveMarkets';
-import dynamic from 'next/dynamic';
+  INSTRUMENTS,
+  FEATURED_INSTRUMENTS,
+  ASSET_CLASSES,
+  classHref,
+  countIn,
+  hh,
+  Word,
+  SESSIONS,
+} from '@/components/portal/marketData';
 
-// Liquid-metal shader hero — WebGL canvas, client-only.
-const LiquidHero = dynamic(() => import('@/components/hero/LiquidHero'), { ssr: false });
-const ClarixShowcase = dynamic(() => import('@/components/landing/clarix/ClarixShowcase'), { ssr: false });
+/**
+ * Marketing home — the portal surface.
+ *
+ * Replaces the previous WebGL/liquid-metal landing. A server component:
+ * the content below is a plain serialisable object handed to the client
+ * component that owns the motion, so the page server-renders properly
+ * instead of appearing only after hydration.
+ *
+ * CONTENT RULES for this page — it fronts a live brokerage:
+ *   - No performance figures, user counts, awards, press quotes or
+ *     regulator names. None of those are verifiable from this repo.
+ *   - Instruments and asset classes come from what the platform actually
+ *     lists (see components/trading/Watchlist.tsx).
+ *   - Session times are standard market hours in UTC, not a claim.
+ *   - The counts stated in the hero corners, the roster and the deck are
+ *     internally consistent, and PortalPage asserts that in development.
+ */
 
-const fadeUp = {
-  initial: { opacity: 0, y: 28 },
-  whileInView: { opacity: 1, y: 0 },
-  viewport: { once: true, margin: '-80px' },
-  transition: { duration: 0.6, ease: [0.22, 1, 0.36, 1] },
-} as const;
+export const metadata: Metadata = {
+  title: 'PowerTradeFX — Forex & CFD Trading',
+  description:
+    'Trade forex, metals, indices, crypto and energy from one account. Charts, orders and risk on a single screen.',
+};
 
-function Eyebrow({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="text-xs uppercase tracking-[0.22em] font-semibold text-accent mb-3">
-      {children}
-    </p>
-  );
-}
+const content: PortalContent = {
+  wordmark: PORTAL_BRAND.wordmark,
+
+  /* Nav points at the real sub-pages, not in-page anchors — clicking a
+     menu item navigates. The sections below keep their ids so the
+     in-page buttons still work. */
+  nav: { links: PORTAL_BRAND.links, cta: PORTAL_BRAND.cta, logo: PORTAL_BRAND.logo },
+
+  hero: {
+    cornerTL: 'Forex & CFD trading',
+    cornerTR: `${Word(ASSET_CLASSES.length)} asset classes`,
+    cornerBLa: `${Word(INSTRUMENTS.length)} instruments`,
+    cornerBLb: '24/5 markets',
+    cornerBR: 'Scroll to open',
+  },
+
+  statement: {
+    label: '01 — The platform',
+    lead: 'Charts, orders and risk sit on one screen, ',
+    amber: 'so the only thing you are watching is the market',
+    tail: '.',
+    index: '01',
+    /* Physics-driven words that drop on hover. The sentence is still in
+       the server-rendered HTML and reduced-motion readers get it whole
+       and static — see FallingText's header for how. */
+    falling: true,
+  },
+
+  deck: {
+    id: 'markets',
+    label: '02 — Instruments',
+    heading: `${Word(INSTRUMENTS.length)} markets, one account.`,
+    lede:
+      'Forex, metals, indices, crypto and energy, all from a single balance and one order ticket. Every position, margin level and open order stays on the same screen as the chart.',
+    /* One action, deliberately. Sessions has its own fold further down
+       (04) and a footer link, so a second button here competed with the
+       one route this fold is actually about. */
+    actions: [{ label: 'See all markets', href: '/markets' }],
+    hint: 'Drag, tap the arrows, or use ← →',
+    /* Three cards, not the whole catalogue — see FEATURED_CARDS, which also
+       names each card's sleeve image. The heading above still counts
+       INSTRUMENTS, and "See all markets" is where the full list lives. */
+    items: FEATURED_INSTRUMENTS.map((i) => ({
+      tag: i.klass,
+      meta: i.kind,
+      title: i.symbol,
+      sub: i.name,
+      group: i.klass,
+      art: i.art,
+    })),
+  },
+
+  roster: {
+    id: 'classes',
+    label: `03 — ${Word(ASSET_CLASSES.length)} classes`,
+    heading: 'Asset classes',
+    /* Counts are COUNTED, not typed — they can no longer disagree with
+       the deck. PortalPage still asserts the tally in development. */
+    rows: ASSET_CLASSES.map((c) => ({
+      tag: c.tag,
+      name: c.name,
+      count: countIn(c.name),
+      unit: c.unit,
+      /* Makes the whole row a link to that class's page. Built from the
+         shared helper so this and the route that answers it cannot drift. */
+      href: classHref(c.slug),
+    })),
+  },
+
+  table: {
+    id: 'sessions',
+    label: '04 — All times UTC',
+    heading: 'Market sessions',
+    headers: ['Session', 'Opens', 'Closes', 'In focus'],
+    rows: SESSIONS.map((s) => ({
+      a: s.city,
+      b: hh(s.open),
+      c: hh(s.close),
+      d: s.focus,
+      ...(s.peak ? { tone: 'low' as const } : {}),
+    })),
+  },
+
+  close: {
+    id: 'start',
+    label: '05 — Get started',
+    heading: 'Open an account.',
+    fine: PORTAL_BRAND.riskWarning,
+    actions: [
+      { label: 'Open account', href: '/auth/register' },
+      { label: 'Sign in', href: '/auth/login' },
+    ],
+    footLeft: PORTAL_BRAND.foot.left,
+    footRight: PORTAL_BRAND.foot.right,
+    mark: PORTAL_BRAND.mark,
+  },
+
+  /* No `plate`: the statement fold keeps its ambient wash but drops the
+     circular dial. The Nocturne reference build still passes one. */
+  art: { hero: '/portal/banner2.png' },
+};
 
 export default function Home() {
-  const { t } = useLandingLang();
-
-  const features = [
-    { icon: Timer, k: '1' }, { icon: LineChart, k: '2' }, { icon: Copy, k: '3' },
-    { icon: Bot, k: '4' }, { icon: ShieldCheck, k: '5' }, { icon: CandlestickChart, k: '6' },
-  ];
-
-  const steps = [
-    { icon: UserPlus, k: '1' },
-    { icon: Banknote, k: '2' },
-    { icon: CandlestickChart, k: '3' },
-  ];
-
+  /* The font class is applied HERE rather than in the route group's
+     layout because that layout is a Client Component, and next/font
+     loaders cannot be called from one. This page is a Server Component,
+     so it is the correct place for it. */
   return (
-    <>
-      <LiquidHero />
-
-
-      {/* ── STEPS ────────────────────────────────────────────────── */}
-      <section className="max-w-7xl mx-auto px-5 lg:px-8 py-20 lg:py-28">
-        <motion.div {...fadeUp} className="max-w-2xl">
-          <Eyebrow>PowerTradeFX</Eyebrow>
-          <h2 className="font-display font-bold text-white text-3xl sm:text-4xl mb-4">
-            {t('steps.title')}
-          </h2>
-        </motion.div>
-        <div className="grid sm:grid-cols-3 gap-5 mt-10">
-          {steps.map(({ icon: Icon, k }, i) => (
-            <motion.div
-              key={k}
-              {...fadeUp}
-              transition={{ ...fadeUp.transition, delay: i * 0.12 }}
-              className={`rounded-2xl p-7 ${i === 2 ? 'lx-card-hot' : 'lx-card'}`}
-            >
-              <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-5 ${
-                i === 2 ? 'bg-white/15' : 'bg-accent/10'
-              }`}>
-                <Icon className={`w-6 h-6 ${i === 2 ? 'text-white' : 'text-accent'}`} />
-              </div>
-              <p className={`text-xs font-mono mb-2 ${i === 2 ? 'text-white/70' : 'text-gray-500'}`}>
-                0{i + 1}
-              </p>
-              <h3 className="font-display font-semibold text-white text-lg mb-2">
-                {t(`steps.${k}.t`)}
-              </h3>
-              <p className={`text-sm leading-relaxed ${i === 2 ? 'text-white/80' : 'text-gray-400'}`}>
-                {t(`steps.${k}.d`)}
-              </p>
-            </motion.div>
-          ))}
-        </div>
-      </section>
-
-      <ClarixShowcase />
-
-      {/* ── FEATURES ─────────────────────────────────────────────── */}
-      <section id="features" className="border-t border-white/5 bg-black/20">
-        <div className="max-w-7xl mx-auto px-5 lg:px-8 py-20 lg:py-28">
-          <motion.div {...fadeUp} className="max-w-2xl mb-12">
-            <Eyebrow>{t('feat.eyebrow')}</Eyebrow>
-            <h2 className="font-display font-bold text-white text-3xl sm:text-4xl">
-              {t('feat.title')}
-            </h2>
-          </motion.div>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {features.map(({ icon: Icon, k }, i) => (
-              <motion.div
-                key={k}
-                {...fadeUp}
-                transition={{ ...fadeUp.transition, delay: (i % 3) * 0.1 }}
-                className="lx-card rounded-2xl p-6 hover:border-accent/30 transition-colors group"
-              >
-                <div className="w-11 h-11 rounded-xl bg-accent/10 flex items-center justify-center mb-4 group-hover:bg-accent/20 transition-colors">
-                  <Icon className="w-5 h-5 text-accent" />
-                </div>
-                <h3 className="font-display font-semibold text-white mb-1.5">{t(`feat.${k}.t`)}</h3>
-                <p className="text-sm text-gray-400 leading-relaxed">{t(`feat.${k}.d`)}</p>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── LIVE MARKETS ─────────────────────────────────────────── */}
-      <section id="markets" className="max-w-7xl mx-auto px-5 lg:px-8 py-20 lg:py-28">
-        <motion.div {...fadeUp} className="max-w-2xl mb-10">
-          <Eyebrow>{t('mkt.eyebrow')}</Eyebrow>
-          <h2 className="font-display font-bold text-white text-3xl sm:text-4xl">{t('mkt.title')}</h2>
-        </motion.div>
-        <motion.div {...fadeUp}>
-          <MarketsTable />
-        </motion.div>
-      </section>
-
-      {/* ── CTA ──────────────────────────────────────────────────── */}
-      <section className="relative overflow-hidden border-t border-white/5">
-        <div className="max-w-4xl mx-auto px-5 lg:px-8 py-20 lg:py-28 text-center relative">
-          <motion.div {...fadeUp}>
-            <div className="mx-auto w-14 h-14 mb-6">
-              <svg viewBox="0 0 32 32" aria-hidden="true" className="w-14 h-14 lx-pulse rounded-[14px]">
-                <rect width="32" height="32" rx="7" className="fill-accent" />
-                <path fillRule="evenodd" d="M11 6.5 H19.2 C23.3 6.5 26.2 9.3 26.2 13.2 C26.2 17.1 23.3 19.9 19.2 19.9 H15.2 V25.5 H11 Z M15.2 10.2 V16.2 H18.9 C20.9 16.2 22 15 22 13.2 C22 11.4 20.9 10.2 18.9 10.2 Z" fill="#ffffff" />
-              </svg>
-            </div>
-            <h2 className="font-display font-bold text-white text-3xl sm:text-5xl mb-4">
-              {t('cta.title')}
-            </h2>
-            <p className="text-gray-400 text-base sm:text-lg mb-9 max-w-xl mx-auto">{t('cta.sub')}</p>
-            <div className="flex flex-wrap justify-center gap-4">
-              <Link
-                href="/auth/register"
-                className="lx-cta inline-flex items-center gap-2 text-white font-semibold px-8 py-4 rounded-xl hover:brightness-110 transition"
-              >
-                <Wallet className="w-4 h-4" />
-                {t('nav.open')}
-              </Link>
-              <Link
-                href="/auth/login"
-                className="inline-flex items-center gap-2 text-gray-200 font-semibold px-8 py-4 rounded-xl border border-white/15 hover:border-accent/60 transition"
-              >
-                {t('nav.signin')}
-              </Link>
-            </div>
-          </motion.div>
-        </div>
-      </section>
-    </>
+    <div className={portalFontClass}>
+      <PortalPage content={content} />
+    </div>
   );
 }

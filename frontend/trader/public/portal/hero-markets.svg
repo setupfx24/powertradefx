@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Abstract market horizon in amber and teal">
+  <defs>
+    <!-- The two page accents live here first; the interface samples them,
+         so the UI and the image are guaranteed to agree. Deliberately
+         abstract: no candles, prices or curves, because a decorative
+         hero must not read as real market data. -->
+    <radialGradient id="mWarm" cx="62%" cy="34%" r="58%">
+      <stop offset="0" stop-color="#E8913C" stop-opacity=".9"/>
+      <stop offset="32%" stop-color="#B96C2C" stop-opacity=".46"/>
+      <stop offset="70%" stop-color="#38230F" stop-opacity=".22"/>
+      <stop offset="100%" stop-color="#0A0C0E" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="mCool" cx="16%" cy="78%" r="72%">
+      <stop offset="0" stop-color="#2E6B72" stop-opacity=".9"/>
+      <stop offset="46%" stop-color="#1B4348" stop-opacity=".44"/>
+      <stop offset="100%" stop-color="#0A0C0E" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mFloor" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0A0C0E" stop-opacity="0"/>
+      <stop offset="62%" stop-color="#0A0C0E" stop-opacity=".72"/>
+      <stop offset="100%" stop-color="#0A0C0E" stop-opacity=".98"/>
+    </linearGradient>
+    <linearGradient id="mSky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0A0C0E" stop-opacity=".92"/>
+      <stop offset="100%" stop-color="#0A0C0E" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="mSoft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="30"/>
+    </filter>
+    <filter id="mGrain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.86" numOctaves="3" stitchTiles="stitch"/>
+      <feColorMatrix type="saturate" values="0"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="1000" fill="#0A0C0E"/>
+  <rect width="1600" height="1000" fill="url(#mCool)"/>
+  <rect width="1600" height="1000" fill="url(#mWarm)"/>
+
+  <!-- Meridian grid receding to the horizon: global markets, drawn as
+       geometry rather than as a chart. -->
+  <g stroke="#EDE7DC" stroke-opacity=".085" stroke-width="1" fill="none">
+    <path d="M-200 620 H1800"/>
+    <path d="M-140 664 H1760"/>
+    <path d="M-60 720 H1680"/>
+    <path d="M40 790 H1580"/>
+    <path d="M160 874 H1460"/>
+    <path d="M300 972 H1320"/>
+  </g>
+  <g stroke="#EDE7DC" stroke-opacity=".07" stroke-width="1" fill="none">
+    <path d="M800 612 L800 1000"/>
+    <path d="M800 612 L560 1000"/>
+    <path d="M800 612 L1040 1000"/>
+    <path d="M800 612 L300 1000"/>
+    <path d="M800 612 L1300 1000"/>
+    <path d="M800 612 L40 1000"/>
+    <path d="M800 612 L1560 1000"/>
+  </g>
+
+  <!-- Horizon glow -->
+  <g filter="url(#mSoft)" opacity=".75">
+    <ellipse cx="900" cy="606" rx="420" ry="54" fill="#E8913C" opacity=".5"/>
+    <ellipse cx="330" cy="618" rx="300" ry="40" fill="#2E6B72" opacity=".55"/>
+  </g>
+
+  <!-- Horizon hairline, the one hard edge in the frame -->
+  <rect x="0" y="611" width="1600" height="1" fill="#EDE7DC" opacity=".2"/>
+
+  <rect x="0" y="0" width="1600" height="360" fill="url(#mSky)"/>
+  <rect x="0" y="560" width="1600" height="440" fill="url(#mFloor)"/>
+
+  <!-- Film grain, so the image does not read as flat vector -->
+  <rect width="1600" height="1000" filter="url(#mGrain)" opacity=".16" style="mix-blend-mode:overlay"/>
+</svg>
