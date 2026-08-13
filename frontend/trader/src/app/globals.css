@@ -1314,13 +1314,66 @@ html {
 
 .dk-foot { padding:14px 18px 20px; color:var(--faint); font-size:11px; }
 
+/* ── responsive: tablet / small laptop ──────────────────────────────
+ * The navbar wraps to two rows and the section links become a
+ * horizontally scrollable strip. They used to be `display:none` below
+ * 1100px, which left phones with no in-app navigation at all (the More
+ * menu lives inside .dk-links, so it disappeared too). */
 @media (max-width:1100px) {
+  .dk-nav { height:auto; min-height:58px; flex-wrap:wrap; gap:10px; padding:8px 12px; }
+  .dk-brand { flex:0 0 auto; }
+  .dk-links { order:3; width:100%; height:auto; margin:0; gap:0;
+    overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:none;
+    border-top:1px solid var(--line); }
+  .dk-links::-webkit-scrollbar { display:none; }
+  .dk-link { flex:0 0 auto; white-space:nowrap; height:42px; padding:0 12px; }
+  .dk-more { flex:0 0 auto; }
+  /* The strip scrolls, so an absolutely-positioned dropdown would be
+     clipped by it. Fixed positioning escapes the scroll container —
+     render the More menu as a bottom sheet instead. */
+  .dk-more-menu { position:fixed; top:auto; bottom:0; left:0; right:0;
+    min-width:0; max-height:60vh; overflow-y:auto; border-radius:14px 14px 0 0;
+    padding:8px 10px calc(8px + env(safe-area-inset-bottom)); }
+  .dk-right { margin-left:auto; flex:1 1 auto; min-width:0; justify-content:flex-end; gap:8px; }
+  .dk-pill { min-width:0; }
+  .dk-pill > button { max-width:100%; }
+  .dk-pill-menu { left:auto; right:0; max-width:calc(100vw - 24px); }
+  .dk-bell, .dk-cta, .dk-avatar { flex:0 0 auto; }
+  .dk-search { display:none; }
+  .dk-clock { display:none; }
   .dk-hero, .dk-body { grid-template-columns:1fr; }
   .dk-kpis { grid-template-columns:repeat(2,1fr); }
   .dk-kpi { border-right:0; border-bottom:1px solid var(--line); }
-  .dk-links { display:none; }
-  .dk-search { display:none; }
-  .dk-clock { display:none; }
+}
+
+/* ── responsive: phone ── */
+@media (max-width:640px) {
+  .dk-nav { padding:8px 10px; gap:8px; }
+  .dk-brand span { display:none; }
+  .dk-right { gap:7px; }
+  .dk-pill > button { padding:0 8px; gap:6px; }
+  .dk-pill > button .num { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dk-cta { padding:0 11px; font-size:12px; }
+  .dk-wrap { padding:12px 12px 20px; }
+  .dk-ctx { flex-wrap:wrap; gap:6px 10px; }
+  .dk-head { flex-wrap:wrap; gap:8px; }
+  .dk-equity { font-size:32px; }
+  .dk-tfs { max-width:100%; overflow-x:auto; scrollbar-width:none; }
+  .dk-tfs::-webkit-scrollbar { display:none; }
+  .dk-tfs button { flex:0 0 auto; }
+  .dk-hl { flex-wrap:wrap; gap:4px 12px; }
+  .dk-panel { padding:13px; }
+  .dk-kpi { padding:12px 13px; }
+  .dk-kpi b { font-size:16px; }
+  /* Keep every column readable — the table itself becomes the scroll area. */
+  .dk-table { display:block; overflow-x:auto; white-space:nowrap; }
+}
+
+/* Very narrow phones: the DEMO/LIVE tag is repeated inside the account
+   menu, so drop it from the bar before squeezing the account number. */
+@media (max-width:480px) {
+  .dk-pill > button .dk-tag { display:none; }
+  .dk-cta { padding:0 9px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .dk-panel { animation:none; }

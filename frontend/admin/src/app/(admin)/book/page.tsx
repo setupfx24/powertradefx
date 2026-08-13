@@ -373,7 +373,7 @@ function BookTab() {
 
       {/* Stats Cards */}
       {stats && (
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {[
             { label: 'A-Book Users', value: stats.a_book_users, icon: Users, color: 'text-buy' },
             { label: 'B-Book Users', value: stats.b_book_users, icon: Users, color: 'text-sell' },

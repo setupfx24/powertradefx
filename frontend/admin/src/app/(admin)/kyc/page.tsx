@@ -146,7 +146,7 @@ export default function KYCPage() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {[
             { label: 'Pending Review', value: pending.length, color: 'text-warning' },
             { label: 'Approved', value: approved.length, color: 'text-success' },

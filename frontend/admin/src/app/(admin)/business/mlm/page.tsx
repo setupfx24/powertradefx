@@ -108,7 +108,7 @@ export default function MLMPage() {
               <div className="px-4 py-3 border-b border-border-primary">
                 <h2 className="text-sm font-medium text-text-primary">Level Distribution</h2>
               </div>
-              <div className="p-4">
+              <div className="p-4 overflow-x-auto">
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-border-primary">

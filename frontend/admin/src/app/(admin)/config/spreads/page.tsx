@@ -176,7 +176,7 @@ export default function SpreadsPage() {
           <h3 className="text-xs font-semibold text-text-primary">{title}</h3>
           <button onClick={() => addRow(scopeType)} className="inline-flex items-center gap-1 px-2 py-1 text-xxs font-medium text-text-secondary border border-border-primary rounded hover:bg-bg-hover transition-fast"><Plus size={11} /> Add</button>
         </div>
-        <div className="overflow-visible">
+        <div className="overflow-visible max-md:overflow-x-auto">
           <table className="w-full">
             <thead><tr className="border-b border-border-primary bg-bg-tertiary/40">
               {headers.map(c => (
