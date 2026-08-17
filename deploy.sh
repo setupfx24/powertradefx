@@ -55,7 +55,10 @@ fi
 
 if [ $NEEDS_MIGRATE -eq 1 ]; then
   echo "▶ Running migrations…"
-  docker compose --profile migrate run --rm migrate
+  # Use the explicit prod file pair — bare `docker compose` auto-loads
+  # docker-compose.override.yml (the dev overlay: insecure cookies,
+  # localhost CORS, republished ports).
+  $COMPOSE --profile migrate run --rm migrate
 fi
 
 TO_BUILD=()

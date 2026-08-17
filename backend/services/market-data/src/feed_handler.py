@@ -1,14 +1,16 @@
 """Feed Handler — Infoway (see `infoway_feed`) when `INFOWAY_API_KEY` is set.
 
-Fallback (no API key): Binance for crypto + GBM simulator for other symbols.
+Fallback (no API key): LIVE Binance crypto only. Non-crypto symbols stay
+unquoted ('-') — no simulated/mock prices are ever generated. (A GBM
+price simulator used to live here; it had been unreachable since
+`start()` stopped launching it, and was removed. See git history if a
+synthetic feed is ever needed for load testing.)
 """
 
 import asyncio
 import json
 import logging
-import math
 import random
-import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -25,6 +27,9 @@ BINANCE_MAP = {
     "ltcusdt": "LTCUSD",
     "xrpusdt": "XRPUSD",
     "solusdt": "SOLUSD",
+    "adausdt": "ADAUSD",
+    "bnbusdt": "BNBUSD",
+    "dogeusdt": "DOGEUSD",
 }
 LIVE_CRYPTO_SYMBOLS = set(BINANCE_MAP.values())
 
@@ -58,14 +63,40 @@ INSTRUMENTS: Dict[str, dict] = {
     "CADJPY":  {"base_price": 110.20,   "category": "forex_minor", "pip": 0.01,    "decimals": 3},
     "NZDJPY":  {"base_price": 91.40,    "category": "forex_minor", "pip": 0.01,    "decimals": 3},
     "USDHKD":  {"base_price": 7.7850,   "category": "forex_minor", "pip": 0.0001,  "decimals": 5},
-}
-
-ANNUAL_VOLATILITY = {
-    "forex_major": 0.08,
-    "forex_minor": 0.08,
-    "commodity":   0.20,
-    "index":       0.15,
-    "crypto":      0.50,
+    # ── Coverage for the rest of the seeded instruments table ─────────
+    # (this dict drives which symbols the Infoway feed subscribes; any DB
+    # instrument missing here never gets a price. base_price only seeds
+    # the in-memory last-price map — live ticks overwrite it.)
+    "AUDCAD":  {"base_price": 0.9050,   "category": "forex_minor", "pip": 0.0001,  "decimals": 5},
+    "AUDCHF":  {"base_price": 0.5800,   "category": "forex_minor", "pip": 0.0001,  "decimals": 5},
+    "AUDNZD":  {"base_price": 1.0750,   "category": "forex_minor", "pip": 0.0001,  "decimals": 5},
+    "CADCHF":  {"base_price": 0.6450,   "category": "forex_minor", "pip": 0.0001,  "decimals": 5},
+    "CHFJPY":  {"base_price": 169.50,   "category": "forex_minor", "pip": 0.01,    "decimals": 3},
+    "EURAUD":  {"base_price": 1.6480,   "category": "forex_minor", "pip": 0.0001,  "decimals": 5},
+    "EURCAD":  {"base_price": 1.4810,   "category": "forex_minor", "pip": 0.0001,  "decimals": 5},
+    "EURNZD":  {"base_price": 1.7720,   "category": "forex_minor", "pip": 0.0001,  "decimals": 5},
+    "GBPAUD":  {"base_price": 1.9230,   "category": "forex_minor", "pip": 0.0001,  "decimals": 5},
+    "GBPCAD":  {"base_price": 1.7280,   "category": "forex_minor", "pip": 0.0001,  "decimals": 5},
+    "GBPNZD":  {"base_price": 2.0680,   "category": "forex_minor", "pip": 0.0001,  "decimals": 5},
+    "NZDCAD":  {"base_price": 0.8360,   "category": "forex_minor", "pip": 0.0001,  "decimals": 5},
+    "NZDCHF":  {"base_price": 0.5400,   "category": "forex_minor", "pip": 0.0001,  "decimals": 5},
+    "XPTUSD":  {"base_price": 980.0,    "category": "commodity",   "pip": 0.01,    "decimals": 2},
+    "NATGAS":  {"base_price": 2.85,     "category": "commodity",   "pip": 0.001,   "decimals": 3},
+    "UKOIL":   {"base_price": 82.50,    "category": "commodity",   "pip": 0.01,    "decimals": 2},
+    "US100":   {"base_price": 18250.0,  "category": "index",       "pip": 0.1,     "decimals": 1},
+    "JPN225":  {"base_price": 38500.0,  "category": "index",       "pip": 1.0,     "decimals": 0},
+    "AUS200":  {"base_price": 7750.0,   "category": "index",       "pip": 0.1,     "decimals": 1},
+    "ADAUSD":  {"base_price": 0.45,     "category": "crypto",      "pip": 0.0001,  "decimals": 4},
+    "BNBUSD":  {"base_price": 580.0,    "category": "crypto",      "pip": 0.01,    "decimals": 2},
+    "DOGEUSD": {"base_price": 0.12,     "category": "crypto",      "pip": 0.00001, "decimals": 5},
+    "AAPL":    {"base_price": 225.0,    "category": "stock",       "pip": 0.01,    "decimals": 2},
+    "AMZN":    {"base_price": 185.0,    "category": "stock",       "pip": 0.01,    "decimals": 2},
+    "GOOGL":   {"base_price": 175.0,    "category": "stock",       "pip": 0.01,    "decimals": 2},
+    "META":    {"base_price": 560.0,    "category": "stock",       "pip": 0.01,    "decimals": 2},
+    "MSFT":    {"base_price": 425.0,    "category": "stock",       "pip": 0.01,    "decimals": 2},
+    "NFLX":    {"base_price": 700.0,    "category": "stock",       "pip": 0.01,    "decimals": 2},
+    "NVDA":    {"base_price": 130.0,    "category": "stock",       "pip": 0.01,    "decimals": 2},
+    "TSLA":    {"base_price": 250.0,    "category": "stock",       "pip": 0.01,    "decimals": 2},
 }
 
 SPREAD_RANGE: Dict[str, tuple] = {
@@ -98,55 +129,17 @@ SPREAD_RANGE: Dict[str, tuple] = {
     "CADJPY":  (0.010,   0.030),
     "NZDJPY":  (0.012,   0.035),
     "USDHKD":  (0.0002,  0.0006),
+    # New crypto symbols — required: the Binance side-feed indexes this
+    # dict directly and would KeyError without an entry.
+    "ADAUSD":  (0.0002,  0.0008),
+    "BNBUSD":  (0.05,    0.20),
+    "DOGEUSD": (0.00005, 0.0002),
 }
-
-TICK_FREQ: Dict[str, tuple] = {
-    "forex_major": (2, 5),
-    "forex_minor": (2, 5),
-    "commodity":   (1, 3),
-    "index":       (1, 3),
-    "crypto":      (3, 8),
-}
-
-VOLUME_RANGE: Dict[str, tuple] = {
-    "forex_major": (50, 500),
-    "forex_minor": (20, 200),
-    "commodity":   (10, 150),
-    "index":       (5, 100),
-    "crypto":      (1, 50),
-}
-
-CORRELATIONS: List[tuple] = [
-    ("EURUSD", "EURGBP",  0.60),
-    ("EURUSD", "EURJPY",  0.70),
-    ("EURUSD", "USDCHF", -0.80),
-    ("EURUSD", "USDCAD", -0.40),
-    ("GBPUSD", "EURGBP", -0.50),
-    ("GBPUSD", "GBPJPY",  0.70),
-    ("USDJPY", "EURJPY",  0.50),
-    ("USDJPY", "GBPJPY",  0.50),
-    ("XAUUSD", "XAGUSD",  0.85),
-    ("XAUUSD", "EURUSD",  0.30),
-    ("US500",  "NAS100",  0.90),
-    ("US500",  "US30",    0.85),
-    ("UK100",  "GER40",   0.65),
-    ("BTCUSD", "ETHUSD",  0.75),
-    ("BTCUSD", "LTCUSD",  0.70),
-    ("ETHUSD", "SOLUSD",  0.72),
-]
-
-TRADING_SECONDS_PER_YEAR = 252 * 24 * 3600
-MEAN_REVERSION_SPEED = 0.01
-
 
 class FeedSimulator:
-    """Realistic market data feed simulator.
-
-    Generates price ticks for all 18 instruments using geometric Brownian
-    motion with mean reversion, cross-instrument correlations, and random
-    volatility bursts. Publishes to Redis and exposes a tick queue for
-    downstream consumers.
-    """
+    """Live crypto feed (Binance trade stream) behind the same interface as
+    InfowayFeed / CorecenLPFeed (`start` / `stop` / `get_tick` /
+    `current_prices`). The name is historical — nothing is simulated."""
 
     def __init__(self, tick_rate_multiplier: float = 1.0):
         self.tick_rate_multiplier = tick_rate_multiplier
@@ -158,13 +151,6 @@ class FeedSimulator:
         self._prices: Dict[str, float] = {
             sym: info["base_price"] for sym, info in INSTRUMENTS.items()
         }
-        self._last_returns: Dict[str, float] = dict.fromkeys(INSTRUMENTS, 0.0)
-        self._vol_mult: Dict[str, float] = dict.fromkeys(INSTRUMENTS, 1.0)
-        self._burst_until: Dict[str, float] = dict.fromkeys(INSTRUMENTS, 0.0)
-
-        self._corr_targets: Dict[str, List[tuple]] = {sym: [] for sym in INSTRUMENTS}
-        for source, target, factor in CORRELATIONS:
-            self._corr_targets[target].append((source, factor))
 
     @property
     def current_prices(self) -> Dict[str, float]:
@@ -200,123 +186,6 @@ class FeedSimulator:
             return self._tick_queue.get_nowait()
         except asyncio.QueueEmpty:
             return None
-
-    # ------------------------------------------------------------------
-    # Per-symbol tick loop
-    # ------------------------------------------------------------------
-
-    async def _symbol_loop(self, symbol: str):
-        info = INSTRUMENTS[symbol]
-        category = info["category"]
-        decimals = info["decimals"]
-        last_t = time.monotonic()
-
-        while self._running:
-            freq_lo, freq_hi = TICK_FREQ[category]
-            freq = random.uniform(freq_lo, freq_hi) * self.tick_rate_multiplier
-            await asyncio.sleep(1.0 / max(freq, 0.1))
-
-            now = time.monotonic()
-            dt = now - last_t
-            last_t = now
-
-            step = self._price_step(symbol, dt)
-            new_price = self._prices[symbol] + step
-            if new_price <= 0:
-                new_price = self._prices[symbol] * 0.999
-
-            pct_return = (new_price - self._prices[symbol]) / self._prices[symbol]
-            self._prices[symbol] = new_price
-            self._last_returns[symbol] = pct_return
-
-            spread = self._spread(symbol)
-            half = spread / 2.0
-            bid = round(new_price - half, decimals)
-            ask = round(new_price + half, decimals)
-
-            ts = datetime.now(timezone.utc)
-            timestamp = ts.strftime("%Y-%m-%dT%H:%M:%S.") + f"{ts.microsecond // 1000:03d}Z"
-
-            vol_lo, vol_hi = VOLUME_RANGE[category]
-            volume = random.randint(vol_lo, vol_hi)
-
-            tick = {
-                "symbol": symbol,
-                "bid": bid,
-                "ask": ask,
-                "timestamp": timestamp,
-                "volume": volume,
-            }
-
-            self._enqueue(tick)
-            await self._publish_redis(tick, spread)
-
-    # ------------------------------------------------------------------
-    # Price model
-    # ------------------------------------------------------------------
-
-    def _price_step(self, symbol: str, dt: float) -> float:
-        """GBM step with mean reversion: dS = θ(μ−S)dt + σ·S·dW"""
-        info = INSTRUMENTS[symbol]
-        base = info["base_price"]
-        price = self._prices[symbol]
-        sigma = ANNUAL_VOLATILITY[info["category"]] * self._vol_mult[symbol]
-
-        dt_years = dt / TRADING_SECONDS_PER_YEAR
-        vol_tick = sigma * math.sqrt(dt_years)
-        diffusion = price * vol_tick * random.gauss(0, 1)
-
-        deviation = (price - base) / base
-        reversion = -MEAN_REVERSION_SPEED * deviation * price * dt_years * 252
-
-        corr_adj = 0.0
-        for source, factor in self._corr_targets[symbol]:
-            corr_adj += self._last_returns[source] * factor * price * 0.1
-
-        return diffusion + reversion + corr_adj
-
-    def _spread(self, symbol: str) -> float:
-        lo, hi = SPREAD_RANGE[symbol]
-        base_spread = random.uniform(lo, hi)
-        return base_spread * (0.8 + 0.4 * self._vol_mult[symbol])
-
-    # ------------------------------------------------------------------
-    # Volatility bursts
-    # ------------------------------------------------------------------
-
-    async def _burst_scheduler(self):
-        """Randomly trigger volatility bursts simulating news events."""
-        while self._running:
-            await asyncio.sleep(random.uniform(5.0, 30.0))
-
-            count = random.randint(1, 3)
-            symbols = random.sample(list(INSTRUMENTS.keys()), count)
-            mult = random.uniform(2.0, 5.0)
-            duration = random.uniform(2.0, 10.0)
-            now = time.monotonic()
-
-            for sym in symbols:
-                self._vol_mult[sym] = mult
-                self._burst_until[sym] = now + duration
-                logger.debug("Vol burst: %s x%.1f for %.1fs", sym, mult, duration)
-
-            for source, target, factor in CORRELATIONS:
-                if source in symbols and abs(factor) > 0.5:
-                    self._vol_mult[target] = max(
-                        self._vol_mult[target],
-                        1.0 + (mult - 1.0) * abs(factor),
-                    )
-                    self._burst_until[target] = max(
-                        self._burst_until[target],
-                        now + duration * 0.7,
-                    )
-
-            await asyncio.sleep(duration)
-
-            now2 = time.monotonic()
-            for sym in INSTRUMENTS:
-                if self._burst_until[sym] <= now2:
-                    self._vol_mult[sym] = 1.0
 
     # ------------------------------------------------------------------
     # Live Binance crypto feed

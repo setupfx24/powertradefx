@@ -143,7 +143,10 @@ function formatDate(d: string) {
 }
 
 async function openAdminBinaryFile(path: string, token: string | null) {
+  // credentials: 'include' — auth is the HttpOnly fx_admin cookie; the Bearer
+  // header is a legacy fallback and getToken() is normally null.
   const res = await fetch(path, {
+    credentials: 'include',
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) throw new Error('Failed to load file');
@@ -163,6 +166,7 @@ function AuthImage({ src, token, alt, className }: { src: string; token: string 
     (async () => {
       try {
         const res = await fetch(src, {
+          credentials: 'include',
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (!res.ok || cancelled) return;

@@ -61,33 +61,12 @@ const nextConfig = {
       ? { dynamic: 0, static: 0 }
       : { dynamic: 0, static: 30 },
   },
-  // ── react-router-dom shim ────────────────────────────────────────
-  // The trader landing pages import a couple of helpers from
-  // react-router-dom, but we don't actually ship react-router. The
-  // shim at src/landing/router-shim.tsx re-exports Link / NavLink /
-  // useLocation / etc. on top of next/navigation so the landing JSX
-  // doesn't need to be rewritten.
-  //
-  // Previous wallet-related webpack tweaks (alias stubs for
-  // @coinbase/wallet-sdk, @base-org/account, @safe-global, @metamask/sdk;
-  // fallbacks for valtio/vanilla; client-only React de-dup alias) were
-  // removed with the wallet-integration purge — wagmi / RainbowKit /
-  // viem / ethers / siwe are no longer installed so nothing pulls
-  // those packages into the bundle anymore.
-  webpack: (config) => {
-    config.resolve.alias = {
-      ...(config.resolve.alias || {}),
-      'react-router-dom': path.resolve(__dirname, 'src/landing/router-shim.tsx'),
-    };
-    return config;
-  },
-  /* Turbopack ignores the webpack hook above — duplicate the alias here so
-     `next dev --turbo` also resolves react-router-dom to our local shim. */
-  turbopack: {
-    resolveAlias: {
-      'react-router-dom': './src/landing/router-shim.tsx',
-    },
-  },
+  // Previous webpack tweaks (react-router-dom shim for the old landing
+  // pages; wallet-related alias stubs for @coinbase/wallet-sdk,
+  // @base-org/account, @safe-global, @metamask/sdk; fallbacks for
+  // valtio/vanilla; client-only React de-dup alias) were all removed —
+  // nothing imports react-router-dom any more and the shim file
+  // (src/landing/router-shim.tsx) no longer exists.
   /** Set NEXT_PUBLIC_APP_VERSION at Docker build so each deploy gets new `_next/static` hashes. */
   generateBuildId: async () => {
     const v = process.env.NEXT_PUBLIC_APP_VERSION?.trim();

@@ -57,7 +57,10 @@ export default function KYCPage() {
     const win = window.open('about:blank', '_blank');
     try {
       const token = adminApi.getToken();
+      // credentials: 'include' — auth is the HttpOnly fx_admin cookie; without
+      // it this breaks the moment the API base is a different origin.
       const res = await fetch(`${getAdminApiBase()}/kyc/file/${docId}`, {
+        credentials: 'include',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error(res.status === 404 ? 'File not found' : `Error ${res.status}`);

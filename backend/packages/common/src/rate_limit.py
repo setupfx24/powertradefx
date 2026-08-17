@@ -40,10 +40,19 @@ def _parse_one_ip(raw: str) -> str | None:
 
 
 def client_ip_for_inet(request: Request) -> str | None:
-    """Return a value PostgreSQL INET accepts, or None."""
+    """Return a value PostgreSQL INET accepts, or None.
+
+    Trust model: our nginx sets `X-Forwarded-For $proxy_add_x_forwarded_for`,
+    i.e. it APPENDS its own $remote_addr (the real client, after the
+    Cloudflare real_ip rewrite) to whatever the client/CDN already sent.
+    The RIGHTMOST entry is therefore the only one our infrastructure
+    vouches for; everything left of it is attacker-controllable input.
+    Taking the first entry (the old behaviour) let anyone evade per-IP
+    rate limits and poison ip_logs with a spoofed header.
+    """
     ff = request.headers.get("x-forwarded-for") or request.headers.get("X-Forwarded-For")
     if ff:
-        for part in ff.split(","):
+        for part in reversed(ff.split(",")):
             got = _parse_one_ip(part)
             if got:
                 return got

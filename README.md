@@ -66,9 +66,10 @@ set -a && source .env && set +a
   backups/uploads-2026-05-02_0300.tar.gz
 ```
 
-**Full disaster-recovery runbook (rebuild on a fresh VPS in ~30 min):** see
-[`docs/disaster-recovery.md`](docs/disaster-recovery.md). Practice it once
-a quarter on a throwaway VPS — untested backups are no backups.
+**Disaster recovery:** rebuild = fresh VPS + clone repo + restore `.env` from
+the password manager + `scripts/restore.sh` with the latest offsite dumps +
+`deploy.sh`. Practice it once a quarter on a throwaway VPS — untested backups
+are no backups. (A step-by-step runbook has not been written yet.)
 
 Configure retention + offsite via the `BACKUP_*` vars in `.env` (see
 `.env.example`). The `.env` itself is **not** part of the backup blob —

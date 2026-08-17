@@ -7,9 +7,16 @@ from packages.common.src.database import get_db
 from dependencies import require_permission
 from packages.common.src.models import User
 from packages.common.src.admin_schemas import FundRequest, CreditRequest
-from services import user_service
+from services import fund_approval_service, user_service
 
 router = APIRouter(prefix="/users", tags=["Users"])
+
+
+def _needs_second_approval(admin: User) -> bool:
+    """Two-person rule: fund moves by anyone below super_admin are staged
+    in fund_move_approvals for a second admin to execute (see
+    services/fund_approval_service.py). Super admins execute directly."""
+    return admin.role != "super_admin"
 
 
 @router.get("")
@@ -46,9 +53,14 @@ async def add_fund(
     admin: User = Depends(require_permission("users.add_fund")),
     db: AsyncSession = Depends(get_db),
 ):
+    ip = request.client.host if request.client else None
+    if _needs_second_approval(admin):
+        return await fund_approval_service.request_move(
+            "add_fund", user_id, body, admin, ip, db,
+        )
     return await user_service.add_fund(
         user_id=user_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=ip, db=db,
     )
 
 
@@ -60,9 +72,14 @@ async def deduct_fund(
     admin: User = Depends(require_permission("users.deduct_fund")),
     db: AsyncSession = Depends(get_db),
 ):
+    ip = request.client.host if request.client else None
+    if _needs_second_approval(admin):
+        return await fund_approval_service.request_move(
+            "deduct_fund", user_id, body, admin, ip, db,
+        )
     return await user_service.deduct_fund(
         user_id=user_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=ip, db=db,
     )
 
 
@@ -74,9 +91,14 @@ async def give_credit(
     admin: User = Depends(require_permission("users.add_fund")),
     db: AsyncSession = Depends(get_db),
 ):
+    ip = request.client.host if request.client else None
+    if _needs_second_approval(admin):
+        return await fund_approval_service.request_move(
+            "give_credit", user_id, body, admin, ip, db,
+        )
     return await user_service.give_credit(
         user_id=user_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=ip, db=db,
     )
 
 
@@ -92,9 +114,14 @@ async def take_credit(
     admin: User = Depends(require_permission("users.deduct_fund")),
     db: AsyncSession = Depends(get_db),
 ):
+    ip = request.client.host if request.client else None
+    if _needs_second_approval(admin):
+        return await fund_approval_service.request_move(
+            "take_credit", user_id, body, admin, ip, db,
+        )
     return await user_service.take_credit(
         user_id=user_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=ip, db=db,
     )
 
 

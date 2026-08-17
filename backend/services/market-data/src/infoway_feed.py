@@ -35,6 +35,9 @@ CRYPTO_INFOWAY_CODES: Dict[str, str] = {
     "LTCUSD": "LTCUSDT",
     "XRPUSD": "XRPUSDT",
     "SOLUSD": "SOLUSDT",
+    "ADAUSD": "ADAUSDT",
+    "BNBUSD": "BNBUSDT",
+    "DOGEUSD": "DOGEUSDT",
 }
 
 # Infoway may use alternate product codes vs our DB symbols.
@@ -43,6 +46,12 @@ INFOWAY_SYMBOL_ALIASES: Dict[str, str] = {
     "XTIUSD": "USOIL",
     "WTIUSD": "USOIL",
     "CLUSD": "USOIL",
+    # Brent aliases → our UKOIL instrument
+    "XBRUSD": "UKOIL",
+    "BRNUSD": "UKOIL",
+    # Natural gas aliases → our NATGAS instrument
+    "XNGUSD": "NATGAS",
+    "NGAS": "NATGAS",
 }
 
 

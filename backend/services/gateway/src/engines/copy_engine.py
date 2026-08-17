@@ -175,7 +175,7 @@ class CopyTradeEngine:
                         # computed live via EXISTS — never the denormalised
                         # master.followers_count counter. That counter drifts
                         # out of sync (double-decrements on stop/withdraw, admin
-                        # resets to 0, legacy backfills — see fix_pending_copies.py
+                        # resets to 0, legacy backfills — see backend/ops-scripts/fix_pending_copies.py
                         # and the "actual count from allocations, not stale
                         # counter" notes in every read path). When it drifts to 0
                         # while a follower is still active, the old query skipped

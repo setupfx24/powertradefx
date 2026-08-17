@@ -68,12 +68,14 @@ encrypt_inplace "$DUMP"
 
 # ─── 2. Uploads (KYC + manual deposit screenshots) ─────────────────────
 UPLOADS="$DEST/uploads-$STAMP.tar.gz"
-if [[ -d "$COMPOSE_DIR/uploads" ]]; then
+# The compose bind mount is ./backend/uploads:/app/uploads — the files
+# live under backend/uploads on the host, not a repo-root uploads/.
+if [[ -d "$COMPOSE_DIR/backend/uploads" ]]; then
   log "archiving uploads → $UPLOADS"
-  tar czf "$UPLOADS" -C "$COMPOSE_DIR" uploads
+  tar czf "$UPLOADS" -C "$COMPOSE_DIR/backend" uploads
   encrypt_inplace "$UPLOADS"
 else
-  log "no uploads/ directory — skipping"
+  log "no backend/uploads/ directory — skipping"
 fi
 
 # ─── 3. TimescaleDB (separate DB, separate dump) ──────────────────────

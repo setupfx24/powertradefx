@@ -25,6 +25,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { label: 'Users', href: '/users', icon: Users, perm: 'users.view' },
+  { label: 'Fund Approvals', href: '/fund-approvals', icon: ShieldCheck, perm: 'users.view' },
   {
     label: 'Identity verification',
     href: '/kyc',
@@ -78,8 +79,11 @@ export default function AdminSidebar({
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<string[]>(['Config', 'Business']);
-  const [permissions, setPermissions] = useState<string[]>(['*']);
-  const [employeeRole, setEmployeeRole] = useState<string>('super_admin');
+  // Start with NO permissions so a restricted employee never sees the full
+  // nav flash (or keep it permanently if /auth/me fails). AdminLayout gates
+  // the pages themselves; this only controls nav visibility.
+  const [permissions, setPermissions] = useState<string[]>([]);
+  const [employeeRole, setEmployeeRole] = useState<string>('');
 
   // Track viewport so the desktop "collapse" state never hides labels in the
   // mobile drawer (the drawer is always full-width on phones).

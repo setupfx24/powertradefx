@@ -19,7 +19,10 @@ LOG="/var/log/powertradefx-backup.log"
 # 03:00 server time, daily. Source .env so BACKUP_* + POSTGRES_USER are
 # visible to the script. Append output to a rotated log so cron failures
 # are diagnosable.
-LINE="0 3 * * * set -a; source $COMPOSE_DIR/.env; set +a; $SCRIPT >> $LOG 2>&1"
+# NOTE: cron runs jobs with /bin/sh (dash on Debian/Ubuntu), where
+# `source` is not a builtin — wrap in an explicit bash -c and use the
+# POSIX `.` so the job doesn't die before backup.sh even starts.
+LINE="0 3 * * * /bin/bash -c 'set -a; . $COMPOSE_DIR/.env; set +a; $SCRIPT' >> $LOG 2>&1"
 
 # Strip any prior powertradefx line, then append the new one.
 ( crontab -l 2>/dev/null | grep -v -F "$SCRIPT"; echo "$LINE" ) | crontab -

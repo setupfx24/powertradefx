@@ -33,7 +33,12 @@ import { NextResponse, type NextRequest } from 'next/server';
  * the proxy route which would already have ingested the JSON body.
  */
 
-const TRADE_PREFIXES = ['/trading/terminal'];
+// Paths that must live on the trade subdomain. /auth/* is here so
+// credentials are only ever typed on trade.powertradefx.com — the apex
+// stays a marketing surface with no login form (audit C1: an XSS on a
+// marketing page must not sit next to the password field). Top-level
+// navigations redirect; RSC prefetches are exempted below as usual.
+const TRADE_PREFIXES = ['/trading/terminal', '/auth'];
 const NEUTRAL_PREFIXES = ['/api/', '/_next/', '/s/', '/static/', '/images/'];
 const NEUTRAL_EXACT = new Set<string>(['/favicon.ico', '/robots.txt', '/sitemap.xml']);
 

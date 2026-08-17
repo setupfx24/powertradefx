@@ -326,8 +326,16 @@ export default function UsersPage() {
       } else if (modalType !== 'add-fund' && modalAccountId) {
         payload.account_id = modalAccountId;
       }
-      await adminApi.post(`/users/${modalUser.id}/${modalType}`, payload);
-      toast.success(`${FUND_LABELS[modalType as FundAction]} successful`);
+      const res = await adminApi.post<{ status?: string; message?: string }>(
+        `/users/${modalUser.id}/${modalType}`, payload,
+      );
+      if (res.status === 'pending_approval') {
+        // Two-person rule: non-super-admin moves are staged for a second
+        // admin to approve on the Fund Approvals page.
+        toast.success(res.message || 'Sent for approval by a second admin');
+      } else {
+        toast.success(`${FUND_LABELS[modalType as FundAction]} successful`);
+      }
       closeModal();
       fetchUsers();
     } catch (e) {

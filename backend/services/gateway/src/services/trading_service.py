@@ -381,10 +381,14 @@ async def place_order(
                 pos_side = pos.side.value if hasattr(pos.side, 'value') else str(pos.side)
                 cp = p_bid if pos_side == "buy" else p_ask
                 cs = pos.instrument.contract_size if pos.instrument else Decimal("100000")
-                if pos_side == "buy":
-                    unrealized_pnl += (cp - pos.open_price) * pos.lots * cs
-                else:
-                    unrealized_pnl += (pos.open_price - cp) * pos.lots * cs
+                # calc_pnl_live converts quote-currency P&L to the account
+                # currency (JPY/cross pairs) — the raw price-diff formula the
+                # margin check used before left free margin off by the cross
+                # rate, unlike every other P&L path.
+                unrealized_pnl += await calc_pnl_live(
+                    pos.side, pos.open_price, cp, pos.lots, cs,
+                    instrument=pos.instrument,
+                )
         real_equity = (account.balance or Decimal("0")) + (account.credit or Decimal("0")) + unrealized_pnl
         real_free_margin = real_equity - (account.margin_used or Decimal("0"))
 
@@ -973,6 +977,14 @@ async def close_position(position_id: UUID, req, user_id: UUID, db: AsyncSession
         raise HTTPException(status_code=400, detail="No price available")
 
     tick = json.loads(tick_data)
+    # Same stale-quote guard as the open path (get_current_price), the SL/TP
+    # engine, the b-book matcher and the risk engine — a manual close during
+    # a feed outage must not book P&L at a price the market left minutes ago.
+    if is_tick_stale(tick):
+        raise HTTPException(
+            status_code=400,
+            detail=f"No live price for {pos.instrument.symbol} right now — market data is reconnecting. Please try again in a few seconds.",
+        )
     sv = side_val(pos.side)
     c_bid = Decimal(str(tick["bid"]))
     c_ask = Decimal(str(tick["ask"]))

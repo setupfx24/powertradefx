@@ -19,6 +19,7 @@ from routes import (
     admin_audit_logs,
     deposit_wallets,
     notifications,
+    fund_approvals,
 )
 
 app_settings = get_settings()
@@ -115,6 +116,32 @@ app.add_middleware(
 
 add_middleware_stack(app)
 
+_UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+@app.middleware("http")
+async def csrf_origin_guard(request: Request, call_next):
+    """CSRF defence for cookie-authenticated mutations.
+
+    SameSite=strict on fx_admin blocks cross-SITE requests, but not
+    cross-ORIGIN same-site ones — trade.powertradefx.com and the apex
+    share the registrable domain, so XSS there could form-POST here with
+    the cookie attached. Browsers send Origin on every POST, so a
+    present-but-unlisted Origin is rejected. Absent Origin is allowed:
+    that's the admin-frontend Next proxy (which strips Origin and does
+    its own same-origin check) or a non-browser client, where an ambient
+    cookie can't be riding a forged cross-site request. Bearer-only
+    requests are exempt — no ambient credential, no CSRF.
+    """
+    if request.method in _UNSAFE_METHODS and request.cookies.get("fx_admin"):
+        origin = request.headers.get("origin")
+        if origin and origin not in _cors_origins:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Cross-origin request blocked"},
+            )
+    return await call_next(request)
+
 
 @app.exception_handler(Exception)
 async def unhandled_exception(request: Request, exc: Exception):
@@ -152,6 +179,7 @@ app.include_router(user_audit_logs.router, prefix=prefix)
 app.include_router(admin_audit_logs.router, prefix=prefix)
 app.include_router(deposit_wallets.router, prefix=prefix)
 app.include_router(notifications.router, prefix=prefix)
+app.include_router(fund_approvals.router, prefix=prefix)
 
 
 @app.get("/health")

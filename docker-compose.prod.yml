@@ -19,7 +19,10 @@ services:
 
   # ── Backend services — restart policy + localhost-only ports ──
   admin-api:
-    ports:
+    # !override — compose merges `ports` lists by concatenation, so without
+    # it the base file's 0.0.0.0 binding would ALSO be published in prod,
+    # exposing the API on the origin IP past Cloudflare/nginx/fail2ban.
+    ports: !override
       - "127.0.0.1:8003:8001"
     restart: always
     environment:
@@ -30,22 +33,21 @@ services:
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "2"]
 
   gateway:
-    ports:
+    ports: !override
       - "127.0.0.1:8002:8000"
     restart: always
     environment:
-      # powertradefx.com is the apex marketing host and ALSO serves the
-      # auth pages (see frontend/trader/src/middleware.ts file header) —
-      # so a login POST from /auth/login on the apex carries
-      # Origin: https://powertradefx.com and gateway must accept it.
-      # Removing the apex broke login entirely (403 "Origin not allowed").
+      # /auth/* on the apex now 307s to trade.powertradefx.com (see
+      # frontend/trader/src/middleware.ts TRADE_PREFIXES), so credentials
+      # are only typed on the trade host — the C1 audit TODO.
       #
-      # The C1 audit risk this re-enables — XSS on the marketing site
-      # pivoting to credentialed API calls — is mitigated properly by
-      # moving the auth flow off the apex (TODO: redirect /auth/* on
-      # powertradefx.com to trade.powertradefx.com so the apex no longer
-      # needs gateway access). Until that's done we keep parity with
-      # the pre-audit allow-list.
+      # The apex must STAY in this list for now: CORS_ORIGINS also feeds
+      # _check_ws_origin (WS handshake allow-list) and assert_same_origin,
+      # and the apex still serves the authenticated app pages (both hosts
+      # deliberately serve all pages — see the middleware.ts file header
+      # for the RSC/cached-308 incidents that forced that). Dropping the
+      # apex here would kill /ws/prices for every apex-hosted session.
+      # It can come out only when the apex stops serving app pages.
       CORS_ORIGINS: https://powertradefx.com,https://trade.powertradefx.com,https://admin.powertradefx.com
       COOKIE_DOMAIN: .powertradefx.com
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
@@ -80,7 +82,7 @@ services:
         # only browser-injected wallets (MetaMask, OKX) work; the WalletConnect
         # mobile-deeplink path (Trust Wallet etc.) is disabled.
         NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: ${NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID:-}
-    ports:
+    ports: !override
       - "127.0.0.1:3012:3000"
     environment:
       INTERNAL_API_URL: http://gateway:8000/api/v1
@@ -97,7 +99,7 @@ services:
     build:
       context: ./frontend/admin
       dockerfile: Dockerfile
-    ports:
+    ports: !override
       - "127.0.0.1:3013:3001"
     environment:
       ADMIN_API_PROXY_TARGET: http://admin-api:8001

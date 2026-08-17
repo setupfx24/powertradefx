@@ -13,6 +13,7 @@ const PATH_PERMS: [prefix: string, perm: string][] = [
   ['/admin-audit-logs', 'audit_logs.view'],
   ['/account-types', 'config.view'],
   ['/audit-logs', 'audit_logs.view'],
+  ['/fund-approvals', 'users.view'],
   ['/transactions', 'deposits.view'],
   ['/employees', '_super_admin'],
   ['/analytics', 'analytics.view'],

@@ -91,11 +91,13 @@ services:
       WALLET_UPLOAD_ROOT: /app/uploads/wallet
       BANK_QR_UPLOAD_DIR: /app/uploads/qr
       KYC_UPLOAD_ROOT: /app/uploads/kyc
+    # Source-code bind mounts live in docker-compose.override.yml (dev
+    # only). Prod runs the code baked into the image — otherwise
+    # deploy.sh's `git reset --hard` hot-swaps code under running
+    # processes before migrations/rebuilds. Only uploads/ stays mounted
+    # (persistent user files).
     volumes:
-      - ./backend/services/admin:/app
-      - ./backend/packages/common:/app/packages/common
       - ./backend/uploads:/app/uploads
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
 
   gateway:
     build:
@@ -116,8 +118,6 @@ services:
       WALLET_UPLOAD_ROOT: /app/uploads/wallet
       KYC_UPLOAD_ROOT: /app/uploads/kyc
     volumes:
-      - ./backend/services/gateway:/app/services/gateway
-      - ./backend/packages:/app/packages
       - ./backend/uploads:/app/uploads
 
   market-data:
@@ -136,10 +136,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - ./backend/services/market-data:/app/services/market_data
-      - ./backend/packages:/app/packages
-
   b-book-engine:
     build:
       context: .
@@ -152,10 +148,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - ./backend/services/b-book-engine:/app/services/b_book_engine
-      - ./backend/packages:/app/packages
-
   risk-engine:
     build:
       context: .
@@ -168,10 +160,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - ./backend/services/risk-engine:/app/services/risk_engine
-      - ./backend/packages:/app/packages
-
   # Trader frontend (port 3000) — RESTART ALONE IS NOT ENOUGH. Rebuild the image or the browser keeps old JS:
   #   PowerShell:  $env:APP_VERSION=(Get-Date -Format 'yyyyMMdd-HHmmss'); docker compose build --no-cache trader-frontend; docker compose up -d trader-frontend
   #   Bash:        APP_VERSION=$(date +%Y%m%d-%H%M%S) docker compose build --no-cache trader-frontend && docker compose up -d trader-frontend

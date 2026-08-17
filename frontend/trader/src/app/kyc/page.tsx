@@ -53,7 +53,7 @@ function StatusBadge({ status, kind = 'user' }: { status: string; kind?: 'user' 
   const s = normalizeKycStatus(status);
   if (s === 'pending' && kind === 'document') {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/100/10 border border-amber-500/25 text-amber-400 text-[10px] font-semibold">
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/25 text-amber-400 text-[10px] font-semibold">
         <Clock size={10} strokeWidth={2.5} />
         Pending
       </span>
@@ -69,7 +69,7 @@ function StatusBadge({ status, kind = 'user' }: { status: string; kind?: 'user' 
   }
   if (s === 'submitted' || s === 'under_review') {
     return (
-      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/100/10 border border-amber-500/25 text-amber-400 text-xs font-semibold">
+      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/25 text-amber-400 text-xs font-semibold">
         <Clock size={11} strokeWidth={2.5} />
         Under Review
       </span>
@@ -77,14 +77,14 @@ function StatusBadge({ status, kind = 'user' }: { status: string; kind?: 'user' 
   }
   if (s === 'rejected' || s === 'failed') {
     return (
-      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-500/100/10 border border-red-500/25 text-red-400 text-xs font-semibold">
+      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/25 text-red-400 text-xs font-semibold">
         <XCircle size={11} strokeWidth={2.5} />
         Rejected
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/100/10 border border-amber-500/30 text-amber-400 text-xs font-semibold">
+    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold">
       <Clock size={11} strokeWidth={2.5} />
       Not Started
     </span>

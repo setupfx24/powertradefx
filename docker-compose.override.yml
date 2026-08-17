@@ -16,9 +16,18 @@ x-dev-cookie-env: &dev-cookie-env
   CORS_ORIGINS: "http://localhost:3010,http://localhost:3011,http://localhost:3000,http://localhost:3001"
 
 services:
+  # Source-code bind mounts + --reload are DEV ONLY. The base compose no
+  # longer mounts source, so prod runs the code baked into the image and
+  # deploy.sh's `git reset --hard` can't hot-swap code under running
+  # processes. These mounts restore live-edit iteration locally.
   gateway:
     ports: !override
       - "8002:8000"
+    volumes:
+      - ./backend/services/gateway:/app/services/gateway
+      - ./backend/packages:/app/packages
+      - ./backend/uploads:/app/uploads
+    command: ["uvicorn", "services.gateway.src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     environment:
       <<: *dev-cookie-env
       # The trader app is published on host port 3010 locally (not 3000), so
@@ -27,6 +36,11 @@ services:
       TRADER_APP_URL: "http://localhost:3010"
 
   admin-api:
+    volumes:
+      - ./backend/services/admin:/app
+      - ./backend/packages/common:/app/packages/common
+      - ./backend/uploads:/app/uploads
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
     environment:
       <<: *dev-cookie-env
       # Keep the base-compose admin overrides intact (anchor only adds keys).
@@ -46,12 +60,21 @@ services:
   # forced the simulator and is removed.)
   market-data:
     restart: unless-stopped
+    volumes:
+      - ./backend/services/market-data:/app/services/market_data
+      - ./backend/packages:/app/packages
 
   # Long-running trade workers — auto-recover instead of silently dying.
   b-book-engine:
     restart: unless-stopped
+    volumes:
+      - ./backend/services/b-book-engine:/app/services/b_book_engine
+      - ./backend/packages:/app/packages
   risk-engine:
     restart: unless-stopped
+    volumes:
+      - ./backend/services/risk-engine:/app/services/risk_engine
+      - ./backend/packages:/app/packages
 
   # The gateway is published on host port 8002 here (8000 is taken). The
   # browser can't proxy WebSockets through Next.js, so it connects to the

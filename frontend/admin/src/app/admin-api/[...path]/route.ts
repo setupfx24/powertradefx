@@ -19,7 +19,32 @@ async function segmentsFromParams(params: Promise<{ path?: string[] }>): Promise
   return p.path ?? [];
 }
 
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/**
+ * CSRF guard. The fx_admin cookie is SameSite=strict, which blocks
+ * cross-SITE requests but not cross-ORIGIN same-site ones — a script on
+ * trade.powertradefx.com (same registrable domain) could form-POST here
+ * with the cookie attached. Browsers send Origin on every POST, so any
+ * mutation whose Origin isn't this host is forged. Absent Origin =
+ * non-browser client (no ambient-cookie CSRF vector) — allowed.
+ */
+function isCrossOriginMutation(req: NextRequest): boolean {
+  if (!UNSAFE_METHODS.has(req.method.toUpperCase())) return false;
+  const origin = req.headers.get('origin');
+  if (!origin) return false;
+  try {
+    return new URL(origin).host !== req.nextUrl.host;
+  } catch {
+    return true;
+  }
+}
+
 async function proxy(req: NextRequest, segments: string[]): Promise<NextResponse> {
+  if (isCrossOriginMutation(req)) {
+    return NextResponse.json({ detail: 'Cross-origin request blocked' }, { status: 403 });
+  }
+
   const sub = segments.length ? segments.join('/') : '';
   const path = sub ? `api/v1/admin/${sub}` : 'api/v1/admin';
   const targetUrl = `${adminApiOrigin()}/${path}${req.nextUrl.search}`;

@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime
 from functools import wraps
@@ -15,6 +16,7 @@ from packages.common.src.models import User, Employee
 
 security = HTTPBearer()
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 EMPLOYEE_ROLE_PERMISSIONS = {
     "super_admin": {"*"},
@@ -135,9 +137,18 @@ def require_permission(permission: str):
         )
         employee = result.scalar_one_or_none()
         if employee is None:
-            # role="admin" user with no employee record = legacy full admin.
-            if admin.role == "admin":
-                return admin
+            # A role="admin" user with no employees row used to be treated as
+            # a "legacy full admin" and bypassed every permission check — any
+            # path that created an admin user without an employee record
+            # silently granted god mode. Deny now; log loudly so a genuinely
+            # legacy account is easy to diagnose and fix (a super_admin can
+            # recreate it from the Employees page, which writes both rows).
+            logger.warning(
+                "admin user %s (role=admin) has no active employees row — "
+                "denied '%s'. Create an employee record for this account "
+                "via the Employees page to restore access.",
+                admin.id, permission,
+            )
         else:
             role_perms = EMPLOYEE_ROLE_PERMISSIONS.get(employee.role, set())
             extra = set(employee.extra_permissions or [])

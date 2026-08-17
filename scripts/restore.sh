@@ -67,6 +67,11 @@ for i in $(seq 1 30); do
   sleep 1
 done
 
+# Pre-initialise so the EXIT trap never hits an unbound variable under
+# `set -u` — otherwise the trap dies and the decrypted dumps (PII,
+# password hashes) are left behind in /tmp.
+TMP_TS=""
+TMP_UP=""
 TMP_PG=$(mktemp --suffix=.sql.gz)
 trap 'rm -f "$TMP_PG" "$TMP_TS" "$TMP_UP"' EXIT
 decrypt_to "$DUMP" "$TMP_PG"
@@ -96,8 +101,11 @@ fi
 if [[ -n "$UPLOADS" ]]; then
   TMP_UP=$(mktemp --suffix=.tar.gz)
   decrypt_to "$UPLOADS" "$TMP_UP"
-  echo "[restore] extracting (decrypted) $UPLOADS → $COMPOSE_DIR"
-  tar xzf "$TMP_UP" -C "$COMPOSE_DIR"
+  # Archives contain a top-level uploads/ dir; the live location is
+  # backend/uploads (the compose bind mount), so extract under backend/.
+  echo "[restore] extracting (decrypted) $UPLOADS → $COMPOSE_DIR/backend"
+  mkdir -p "$COMPOSE_DIR/backend"
+  tar xzf "$TMP_UP" -C "$COMPOSE_DIR/backend"
 fi
 
 echo

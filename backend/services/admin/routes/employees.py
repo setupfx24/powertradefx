@@ -17,6 +17,10 @@ router = APIRouter(prefix="/employees", tags=["Employees"])
 # with require_permission() call sites across the admin backend.
 PERMISSION_CATALOG = {
     "Users":       ["users.view", "users.add_fund", "users.deduct_fund", "users.ban", "users.block_trading", "users.kill_switch", "users.impersonate", "users.delete"],
+    # funds.approve = execute/reject a colleague's staged fund move
+    # (two-person rule). Deliberately NOT in any default role — grant it
+    # explicitly, and to different people than users.add_fund/deduct_fund.
+    "Funds":       ["funds.approve"],
     "KYC":         ["kyc.view", "kyc.manage"],
     "Deposits":    ["deposits.view", "deposits.approve", "deposits.reject"],
     "Withdrawals": ["withdrawals.view", "withdrawals.approve", "withdrawals.reject"],
