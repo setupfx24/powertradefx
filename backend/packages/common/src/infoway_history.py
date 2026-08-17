@@ -34,6 +34,7 @@ _TF_TO_KLINETYPE: dict[str, int] = {
 _CRYPTO_CODES: dict[str, str] = {
     "BTCUSD": "BTCUSDT", "ETHUSD": "ETHUSDT", "LTCUSD": "LTCUSDT",
     "XRPUSD": "XRPUSDT", "SOLUSD": "SOLUSDT",
+    "ADAUSD": "ADAUSDT", "BNBUSD": "BNBUSDT", "DOGEUSD": "DOGEUSDT",
 }
 # Non-crypto aliases: our symbol → Infoway code.
 _ALIAS_CODES: dict[str, str] = {
