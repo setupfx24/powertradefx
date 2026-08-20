@@ -33,11 +33,34 @@ function isCrossOriginMutation(req: NextRequest): boolean {
   if (!UNSAFE_METHODS.has(req.method.toUpperCase())) return false;
   const origin = req.headers.get('origin');
   if (!origin) return false;
+
+  let originHost: string;
   try {
-    return new URL(origin).host !== req.nextUrl.host;
+    originHost = new URL(origin).host.toLowerCase();
   } catch {
-    return true;
+    return true; // unparseable Origin — not something a real browser sends
   }
+
+  // Which host is "us"? NOT req.nextUrl.host — behind nginx that resolves to
+  // the container's internal bind address (localhost:3001), so every genuine
+  // same-origin login was rejected with 403. nginx forwards the real public
+  // host as `Host` (proxy_set_header Host $host), so that is authoritative;
+  // x-forwarded-host covers proxies that rewrite Host instead.
+  const selfHosts = new Set<string>();
+  const add = (raw?: string | null) => {
+    if (!raw) return;
+    for (const part of raw.split(',')) {
+      // Strip the default ports so :443 never mismatches a bare hostname.
+      const h = part.trim().toLowerCase().replace(/:(?:80|443)$/, '');
+      if (h) selfHosts.add(h);
+    }
+  };
+  add(req.headers.get('x-forwarded-host'));
+  add(req.headers.get('host'));
+  add(req.nextUrl.host);
+  add(process.env.ADMIN_PUBLIC_HOST); // explicit override if ever needed
+
+  return !selfHosts.has(originHost.replace(/:(?:80|443)$/, ''));
 }
 
 async function proxy(req: NextRequest, segments: string[]): Promise<NextResponse> {
