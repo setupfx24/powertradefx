@@ -78,7 +78,7 @@ export default function GlobalError({
             href="/"
             style={{
               display: 'inline-block',
-              background: '#2563EB', // --brand-600; global-error can render before stylesheets load
+              background: '#FA5600', // --brand-600; global-error can render before stylesheets load
               color: '#ffffff',
               fontWeight: 600,
               padding: '12px 24px',

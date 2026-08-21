@@ -241,6 +241,18 @@ export const FullScreenSignup = ({ mode = 'signup' }: FullScreenSignupProps) => 
         />
       </div>
 
+      {/* The vignette above only darkens the CENTRE, so the top band is where
+          the dot matrix is at full strength — and that is exactly where the
+          bar's small type sits. This scrim gives it a ground to read against.
+          Deliberately taller than the 64px bar and faded out at the bottom:
+          sized to the bar it would draw a hard horizontal edge across the
+          backdrop, which reads as a mis-rendered header. z-[5] puts it above
+          the backdrop (z-auto) and below the bar (z-10). */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 z-[5] h-28 bg-gradient-to-b from-black via-black/90 to-transparent"
+      />
+
       {/* Top bar */}
       <header className="relative z-10 h-16 flex items-center justify-between px-5 sm:px-8">
         {/* The lockup already carries the name, so it replaces the old tile +
@@ -264,7 +276,9 @@ export const FullScreenSignup = ({ mode = 'signup' }: FullScreenSignupProps) => 
         </Link>
         {/* The mode switch lives here, to the side, on every breakpoint —
             only the prompt text drops away on narrow screens. */}
-        <div className="flex items-center gap-3 text-sm text-gray-400">
+        {/* gray-300 rather than gray-400: even over the scrim this is the
+            smallest type on the page, and the dots still show through. */}
+        <div className="flex items-center gap-3 text-sm text-gray-300">
           <span className="hidden sm:inline">{copy.switchPrompt}</span>
           <Link
             href={copy.switchHref}
@@ -453,13 +467,29 @@ export const FullScreenSignup = ({ mode = 'signup' }: FullScreenSignupProps) => 
             )}
           </div>
 
-          <p className="text-center text-xs text-gray-500 mt-6 leading-relaxed">
-            By continuing you agree to our{' '}
-            <Link href="/terms" className="text-gray-300 hover:text-accent underline underline-offset-2">Terms</Link>{' '}
-            and{' '}
-            <Link href="/privacy" className="text-gray-300 hover:text-accent underline underline-offset-2">Privacy Policy</Link>.
-            Trading involves significant risk.
-          </p>
+          {/* Same problem as the top bar, one line lower: this sits below the
+              card, outside the vignette's reach, so it lands on the dot matrix
+              at full strength. A halo alone was not enough at 12px, so it also
+              gets its own ground — a radial fade rather than a box, so there
+              is no edge to notice. `isolate` keeps the -z-10 scrim inside this
+              wrapper instead of letting it slip behind the page background. */}
+          <div className="relative isolate mt-6">
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute -inset-x-8 -inset-y-4 -z-10"
+              style={{
+                background:
+                  'radial-gradient(58% 100% at 50% 50%, rgba(0,0,0,0.94) 0%, rgba(0,0,0,0.78) 52%, rgba(0,0,0,0) 100%)',
+              }}
+            />
+            <p className="text-center text-xs text-gray-400 leading-relaxed [text-shadow:0_1px_3px_rgb(0_0_0)]">
+              By continuing you agree to our{' '}
+              <Link href="/terms" className="text-gray-300 hover:text-accent underline underline-offset-2">Terms</Link>{' '}
+              and{' '}
+              <Link href="/privacy" className="text-gray-300 hover:text-accent underline underline-offset-2">Privacy Policy</Link>.
+              Trading involves significant risk.
+            </p>
+          </div>
         </div>
       </main>
     </div>

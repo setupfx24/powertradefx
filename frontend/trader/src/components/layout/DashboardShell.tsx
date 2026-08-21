@@ -21,6 +21,7 @@ import {
   type MutableRefObject, type ReactNode,
 } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { Archivo, IBM_Plex_Mono } from 'next/font/google';
 import { Bell, ChevronDown, LogOut, Moon, MoreHorizontal, Search, Sun } from 'lucide-react';
@@ -194,12 +195,21 @@ export default function DashboardShell({
       <div className={cn('desk', fontUi.variable, fontNum.variable, className)}>
         {/* ── Row 1: navbar ─────────────────────────────────────────── */}
         <nav className="dk-nav">
+          {/* The lockup already CONTAINS the wordmark, so it replaces both
+              the mark and the type — rendering the old <span> beside it
+              would print the brand name twice. Sized by height in CSS
+              (.dk-brand-logo); `sizes` stops next/image shipping a 1536px
+              variant for a ~150px box. Same treatment as PortalNav. */}
           <Link href="/dashboard" className="dk-brand" aria-label="PowerTradeFX home">
-            <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
-              <rect width="32" height="32" rx="7" />
-              <path fillRule="evenodd" d="M11 6.5 H19.2 C23.3 6.5 26.2 9.3 26.2 13.2 C26.2 17.1 23.3 19.9 19.2 19.9 H15.2 V25.5 H11 Z M15.2 10.2 V16.2 H18.9 C20.9 16.2 22 15 22 13.2 C22 11.4 20.9 10.2 18.9 10.2 Z" style={{ fill: 'var(--ink)' }} />
-            </svg>
-            <span>PowerTrade<em>FX</em></span>
+            <Image
+              className="dk-brand-logo"
+              src="/portal/logo.png"
+              alt="PowerTradeFX"
+              width={1536}
+              height={236}
+              sizes="170px"
+              priority
+            />
           </Link>
 
           <div className="dk-links">

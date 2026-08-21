@@ -23,8 +23,15 @@
   --ink: #ede7dc;
   --ink-2: #9ea5a8;
   --muted: #6c7378;
-  --amber: #e8913c;
-  --teal: #2e6b72;
+  /* Brand duotone. `--amber` is the SECONDARY and carries almost every
+     accent here, nearly all of it 10.5px uppercase on a near-black
+     ground: #FB9A04 clears 8:1 there, where the primary manages ~4:1 and
+     would make the small labels a squint. The primary is the fill/marker
+     colour instead, where contrast is not carrying text.
+     `--flame` replaces the old `--teal` — the cool half of the original
+     duotone is gone now that the palette is two warm brand hues. */
+  --amber: #fb9a04;
+  --flame: #fa5600;
   --hair: rgba(237, 231, 220, 0.13);
 
   --display: var(--label-display), 'Syne', system-ui, sans-serif;
@@ -118,7 +125,7 @@
 .btn:hover,
 .btn:focus-visible {
   color: var(--amber);
-  border-color: rgba(232, 145, 60, 0.55);
+  border-color: rgba(251, 154, 4, 0.55);
 }
 
 .btnQuiet {
@@ -388,7 +395,7 @@
   position: absolute;
   inset: -2px;
   z-index: 1;
-  background: linear-gradient(122deg, var(--amber) 0%, transparent 46%, var(--teal) 100%);
+  background: linear-gradient(122deg, var(--amber) 0%, transparent 46%, var(--flame) 100%);
   mix-blend-mode: overlay;
   opacity: 0.5;
   pointer-events: none;
@@ -448,12 +455,12 @@
 
 .dotA {
   background: var(--amber);
-  box-shadow: 0 0 14px 2px rgba(232, 145, 60, 0.75);
+  box-shadow: 0 0 14px 2px rgba(251, 154, 4, 0.75);
 }
 
 .dotB {
-  background: var(--teal);
-  box-shadow: 0 0 14px 2px rgba(46, 107, 114, 0.85);
+  background: var(--flame);
+  box-shadow: 0 0 14px 2px rgba(250, 86, 0, 0.85);
 }
 
 /* The portal title. Grows and tightens at the same time while its two
@@ -571,17 +578,17 @@
   background:
     radial-gradient(
       46% 58% at 93% 40%,
-      rgba(232, 145, 60, 0.30) 0%,
-      rgba(232, 145, 60, 0.17) 28%,
-      rgba(232, 145, 60, 0.07) 52%,
-      rgba(232, 145, 60, 0.02) 68%,
+      rgba(251, 154, 4, 0.30) 0%,
+      rgba(251, 154, 4, 0.17) 28%,
+      rgba(251, 154, 4, 0.07) 52%,
+      rgba(251, 154, 4, 0.02) 68%,
       transparent 80%
     ),
     radial-gradient(
       54% 64% at 104% 76%,
-      rgba(46, 107, 114, 0.36) 0%,
-      rgba(46, 107, 114, 0.17) 34%,
-      rgba(46, 107, 114, 0.05) 58%,
+      rgba(250, 86, 0, 0.36) 0%,
+      rgba(250, 86, 0, 0.17) 34%,
+      rgba(250, 86, 0, 0.05) 58%,
       transparent 76%
     );
   pointer-events: none;
@@ -735,7 +742,7 @@
 .deckArrow:hover,
 .deckArrow:focus-visible {
   color: var(--amber);
-  border-color: rgba(232, 145, 60, 0.55);
+  border-color: rgba(251, 154, 4, 0.55);
   background: rgba(10, 12, 14, 0.85);
 }
 
@@ -1006,7 +1013,7 @@
 }
 
 .status {
-  color: var(--teal);
+  color: var(--flame);
   font-weight: 500;
 }
 
@@ -1075,12 +1082,12 @@
   z-index: -1;
   background: radial-gradient(
     108% 116% at 50% 104%,
-    rgba(232, 145, 60, 0.72) 0%,
-    rgba(232, 145, 60, 0.52) 16%,
-    rgba(232, 145, 60, 0.3) 33%,
-    rgba(232, 145, 60, 0.145) 49%,
-    rgba(232, 145, 60, 0.06) 65%,
-    rgba(232, 145, 60, 0.018) 79%,
+    rgba(251, 154, 4, 0.72) 0%,
+    rgba(251, 154, 4, 0.52) 16%,
+    rgba(251, 154, 4, 0.3) 33%,
+    rgba(251, 154, 4, 0.145) 49%,
+    rgba(251, 154, 4, 0.06) 65%,
+    rgba(251, 154, 4, 0.018) 79%,
     transparent 92%
   );
   pointer-events: none;
@@ -1136,7 +1143,7 @@
   width: 18px;
   height: 18px;
   margin: 0 -6px 0 2px;
-  border: 1px solid rgba(232, 145, 60, 0.45);
+  border: 1px solid rgba(251, 154, 4, 0.45);
   border-radius: 6px;
   color: var(--amber);
   font-size: 12px;
@@ -1146,7 +1153,7 @@
 
 .btn:hover .btnPlus,
 .btn:focus-visible .btnPlus {
-  border-color: rgba(232, 145, 60, 0.85);
+  border-color: rgba(251, 154, 4, 0.85);
   transform: rotate(90deg);
 }
 
@@ -1258,7 +1265,7 @@
 
 .mailInput:focus,
 [data-theme] .mailInput:focus {
-  border-color: rgba(232, 145, 60, 0.55);
+  border-color: rgba(251, 154, 4, 0.55);
   background: rgba(237, 231, 220, 0.07);
   box-shadow: none;
 }

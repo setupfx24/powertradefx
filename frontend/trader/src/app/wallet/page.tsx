@@ -614,7 +614,7 @@ function WalletPageContent() {
       currency: 'INR',
       name: 'PowerTradeFX',
       description: `Deposit ${deposit.id.slice(0, 8)}`,
-      theme: { color: '#2563EB' }, // --brand-600; Razorpay iframe can't read our CSS vars
+      theme: { color: '#FA5600' }, // --brand-600; Razorpay iframe can't read our CSS vars
       handler: async (resp: Record<string, string>) => {
         try {
           await api.post('/wallet/deposit/razorpay/verify', {
@@ -704,7 +704,7 @@ function WalletPageContent() {
       name: 'PowerTradeFX',
       description: `Deposit ${deposit.id.slice(0, 8)}`,
       prefill: {},
-      theme: { color: '#2563EB' }, // --brand-600; Razorpay iframe can't read our CSS vars
+      theme: { color: '#FA5600' }, // --brand-600; Razorpay iframe can't read our CSS vars
       handler: async (resp: Record<string, string>) => {
         // Verify the signature server-side so the row credits via the
         // same locked path the webhook uses. Webhook will also catch

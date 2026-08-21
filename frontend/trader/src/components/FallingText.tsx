@@ -36,9 +36,16 @@
  *  6. The IntersectionObserver entry is optional-chained; this project
  *     runs noUncheckedIndexedAccess.
  *
- * Still upstream behaviour worth knowing: the update loop runs on an
- * unthrottled requestAnimationFrame that is never cancelled, so it keeps
- * ticking until the component unmounts.
+ *  7. Scrolling. Matter's Mouse binds preventDefault-ing wheel and touch
+ *     handlers to the container, which stopped the page scrolling over
+ *     this fold entirely; those five listeners are detached. And the
+ *     simulation now SUSPENDS once every word is asleep instead of
+ *     running a rAF, a physics Runner and a canvas repaint for the rest
+ *     of the session. Both are why this section used to stick.
+ *
+ *  8. Upstream stepped the engine inside the rAF while ALSO running a
+ *     Runner over it, so the sim advanced twice per frame. The Runner
+ *     owns stepping; the loop only mirrors positions onto the DOM.
  */
 
 import { useRef, useState, useEffect, useMemo } from 'react';
@@ -127,7 +134,10 @@ const FallingText: React.FC<FallingTextProps> = ({
 
     if (width <= 0 || height <= 0) return;
 
-    const engine = Engine.create();
+    /* enableSleeping lets a body that has come to rest drop out of the
+       solver. Without it every word is integrated forever, and the loop
+       below has no way to know the animation has finished. */
+    const engine = Engine.create({ enableSleeping: true });
     engine.world.gravity.y = gravity;
 
     const render = Render.create({
@@ -168,6 +178,38 @@ const FallingText: React.FC<FallingTextProps> = ({
     });
 
     const mouse = Mouse.create(containerRef.current);
+
+    /* THE SCROLL FIX. Matter's Mouse.setElement binds wheel and touch
+       handlers to this element, and its own mousewheel/mousemove handlers
+       call event.preventDefault() unconditionally. That is a non-passive
+       wheel listener over a full-width fold, so the page simply stops
+       scrolling while the pointer is anywhere over this section, and a
+       touch-drag on mobile is swallowed the same way.
+       Nothing here reads mouse.wheelDelta, and dragging a word is a
+       pointer affordance rather than a touch one, so all five come off.
+       mousedown/mousemove/mouseup stay bound, which is what keeps the
+       words draggable with a mouse.
+       The handlers are assigned by Matter at runtime but absent from
+       @types/matter-js, hence the local shape. */
+    const bound = mouse as unknown as {
+      element: HTMLElement;
+      mousedown: (e: Event) => void;
+      mousemove: (e: Event) => void;
+      mouseup: (e: Event) => void;
+      mousewheel: (e: Event) => void;
+    };
+    /* The event is 'wheel' in matter-js 0.20 (bound with passive:false).
+       'mousewheel'/'DOMMouseScroll' are the pre-0.20 names and are kept
+       only so a version bump in either direction still lands — removing a
+       listener that was never added is a no-op. Getting this name wrong is
+       silent: the removal does nothing and the page stays stuck. */
+    bound.element.removeEventListener('wheel', bound.mousewheel);
+    bound.element.removeEventListener('mousewheel', bound.mousewheel);
+    bound.element.removeEventListener('DOMMouseScroll', bound.mousewheel);
+    bound.element.removeEventListener('touchstart', bound.mousedown);
+    bound.element.removeEventListener('touchmove', bound.mousemove);
+    bound.element.removeEventListener('touchend', bound.mouseup);
+
     const mouseConstraint = MouseConstraint.create(engine, {
       mouse,
       constraint: { stiffness: mouseConstraintStiffness, render: { visible: false } },
@@ -184,25 +226,66 @@ const FallingText: React.FC<FallingTextProps> = ({
     ]);
 
     const runner = Runner.create();
-    Runner.run(runner, engine);
-    Render.run(render);
+    const host = containerRef.current;
 
-    /* Upstream never cancelled this. Tracked so teardown can stop it
-       instead of leaving a rAF loop running against a dead engine. */
     let frame = 0;
-    const updateLoop = () => {
+    let awake = false;
+
+    const syncPositions = () => {
       wordBodies.forEach(({ body, elem }) => {
         const { x, y } = body.position;
         elem.style.left = `${x}px`;
         elem.style.top = `${y}px`;
         elem.style.transform = `translate(-50%, -50%) rotate(${body.angle}rad)`;
       });
-      Matter.Engine.update(engine);
-      frame = requestAnimationFrame(updateLoop);
     };
-    updateLoop();
+
+    /* Upstream stepped the engine HERE as well as running a Runner over
+       it, so every frame advanced the simulation twice: double the CPU,
+       and the words fell at twice the intended speed. The Runner owns the
+       stepping now and this loop only mirrors body positions onto the DOM. */
+    const tick = () => {
+      syncPositions();
+
+      /* Once every word is asleep the fold is finished and nothing will
+         move again until someone grabs a word. Suspending here is the
+         other half of the scroll fix: upstream left an unthrottled rAF,
+         a physics Runner and a canvas repaint all running for the rest of
+         the session, competing with the scroll on every single frame. */
+      if (wordBodies.every(({ body }) => body.isSleeping)) {
+        syncPositions();
+        frame = 0;
+        awake = false;
+        Render.stop(render);
+        Runner.stop(runner);
+        return;
+      }
+
+      frame = requestAnimationFrame(tick);
+    };
+
+    const wake = () => {
+      if (awake) return;
+      awake = true;
+      /* Clear the sleep flags BEFORE the loop restarts. The MouseConstraint
+         only picks a body up during the engine's beforeUpdate, which has
+         not run yet at pointerdown — so without this the first tick would
+         still see every body asleep, suspend again immediately, and the
+         drag would move nothing. Untouched words simply settle back. */
+      wordBodies.forEach(({ body }) => Matter.Sleeping.set(body, false));
+      Runner.run(runner, engine);
+      Render.run(render);
+      frame = requestAnimationFrame(tick);
+    };
+
+    wake();
+
+    /* Grabbing a word wakes the bodies via the MouseConstraint, so the
+       loop has to come back with them or the drag would move nothing. */
+    host.addEventListener('pointerdown', wake);
 
     return () => {
+      host.removeEventListener('pointerdown', wake);
       if (frame) cancelAnimationFrame(frame);
       Render.stop(render);
       Runner.stop(runner);

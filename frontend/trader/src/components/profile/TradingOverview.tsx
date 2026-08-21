@@ -27,7 +27,7 @@ import type { CalendarDayCell, TradingDashboardData } from '@/lib/trading-dashbo
 import { getTradingDashboardMock } from '@/lib/trading-dashboard';
 import TradingJournalSection from '@/components/profile/TradingJournalSection';
 
-const NEON = '#2563EB'; // --brand-600 (SVG presentation attrs can't read CSS vars)
+const NEON = '#FA5600'; // --brand-600 (SVG presentation attrs can't read CSS vars)
 const RED = '#FF4D4D';
 const CARD = 'var(--bg-card)';
 const BORDER = 'var(--border-primary)';

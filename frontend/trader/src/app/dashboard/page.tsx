@@ -10,7 +10,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Inbox } from 'lucide-react';
+import { Activity, Briefcase, Inbox, PieChart, Scale, ShieldCheck, TrendingUp, Wallet } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import api from '@/lib/api/client';
 import DashboardShell, { useDesk, type DeskAccount, type DeskTick } from '@/components/layout/DashboardShell';
 
@@ -73,7 +74,7 @@ export default function OverviewPage() {
 }
 
 function Overview() {
-  const { account, latencyMs, refreshAccounts } = useDesk();
+  const { account, refreshAccounts } = useDesk();
   const reduced = useReducedMotion();
 
   /* positions + activity */
@@ -133,13 +134,6 @@ function Overview() {
   return (
     <>
       {/* 1 ── context strip */}
-      <div className="dk-ctx">
-        <b>Overview</b>
-        <span className="sep" />
-        <span>{positions.length} open position{positions.length === 1 ? '' : 's'}</span>
-        <span className="sep" />
-        <span>feed <span className="num">{latencyMs}ms</span></span>
-      </div>
 
       {/* 2 ── hero row */}
       <div className="dk-hero">
@@ -157,29 +151,29 @@ function Overview() {
       </div>
 
       {/* 3 ── KPI strip */}
-      <div className="dk-kpis dk-panel" style={{ animationDelay: '180ms' }}>
-        <Kpi label="Balance" value={Number(account?.balance ?? 0)} money reduced={reduced} />
-        <Kpi label="Equity" value={equity} money reduced={reduced} />
-        <Kpi label="Free margin" value={Number(account?.free_margin ?? 0)} money reduced={reduced} />
-        <KpiPl label="Open P/L" value={openPl} flat={isFlat} reduced={reduced} />
-        <KpiText label="Leverage" text={account ? `1:${account.leverage}` : '—'} />
+      <div className="dk-kpis" style={{ animationDelay: '180ms' }}>
+        <Kpi label="Balance" value={Number(account?.balance ?? 0)} money reduced={reduced} icon={Wallet} />
+        <Kpi label="Equity" value={equity} money reduced={reduced} icon={PieChart} />
+        <Kpi label="Free margin" value={Number(account?.free_margin ?? 0)} money reduced={reduced} icon={ShieldCheck} />
+        <KpiPl label="Open P/L" value={openPl} flat={isFlat} reduced={reduced} icon={TrendingUp} />
+        <KpiText label="Leverage" text={account ? `1:${account.leverage}` : '—'} icon={Scale} />
       </div>
 
       {/* 4 ── body row */}
-      <div className="dk-body dk-body-solo">
-        <div className="dk-col">
-          <section className="dk-panel" style={{ animationDelay: '270ms' }}>
-            <div className="dk-head">
-              <p className="dk-eyebrow">Open positions</p>
-              <a className="dk-link-sm" href="/trading/terminal">Terminal →</a>
-            </div>
-            <PositionsTable rows={positions} />
-          </section>
-          <section className="dk-panel" style={{ animationDelay: '360ms' }}>
-            <p className="dk-eyebrow">Activity</p>
-            <ActivityLog rows={activity} />
-          </section>
-        </div>
+      <div className="dk-body dk-body-split">
+        <section className="dk-panel" style={{ animationDelay: '270ms' }}>
+          <div className="dk-head">
+            <p className="dk-eyebrow"><Briefcase size={15} strokeWidth={1.6} />Open positions</p>
+            <a className="dk-link-sm" href="/trading/terminal">Terminal →</a>
+          </div>
+          <PositionsTable rows={positions} />
+        </section>
+        <section className="dk-panel" style={{ animationDelay: '360ms' }}>
+          <div className="dk-head">
+            <p className="dk-eyebrow"><Activity size={15} strokeWidth={1.6} />Activity</p>
+          </div>
+          <ActivityLog rows={activity} />
+        </section>
       </div>
     </>
   );
@@ -275,34 +269,53 @@ function SmoothDraw({ reduced }: { reduced: boolean }) {
 
 /* ── KPI pieces ─────────────────────────────────────────────────────── */
 
-function Kpi({ label, value, money, reduced }: { label: string; value: number; money?: boolean; reduced: boolean }) {
+function Kpi({ label, value, money, reduced, icon }: { label: string; value: number; money?: boolean; reduced: boolean; icon: LucideIcon }) {
   const shown = useAnimatedNumber(value, reduced);
   return (
     <div className="dk-kpi">
-      <span>{label}</span>
-      <b className="num">{money ? usd(shown) : Math.round(shown)}</b>
+      <div className="dk-kpi-text">
+        <span>{label}</span>
+        <b className="num">{money ? usd(shown) : Math.round(shown)}</b>
+      </div>
+      <KpiIcon icon={icon} />
     </div>
   );
 }
 
-function KpiPl({ label, value, flat, reduced }: { label: string; value: number; flat: boolean; reduced: boolean }) {
+function KpiPl({ label, value, flat, reduced, icon }: { label: string; value: number; flat: boolean; reduced: boolean; icon: LucideIcon }) {
   const shown = useAnimatedNumber(flat ? 0 : value, reduced);
   return (
     <div className="dk-kpi">
-      <span>{label}</span>
-      <b className={`num ${flat ? '' : value >= 0 ? 'dk-pl-up' : 'dk-pl-dn'}`}>
-        {flat ? 'Flat' : `${value >= 0 ? '+' : ''}${usd(shown)}`}
-      </b>
+      <div className="dk-kpi-text">
+        <span>{label}</span>
+        <b className={`num ${flat ? '' : value >= 0 ? 'dk-pl-up' : 'dk-pl-dn'}`}>
+          {flat ? 'Flat' : `${value >= 0 ? '+' : ''}${usd(shown)}`}
+        </b>
+      </div>
+      <KpiIcon icon={icon} />
     </div>
   );
 }
 
-function KpiText({ label, text }: { label: string; text: string }) {
+function KpiText({ label, text, icon }: { label: string; text: string; icon: LucideIcon }) {
   return (
     <div className="dk-kpi">
-      <span>{label}</span>
-      <b className="num">{text}</b>
+      <div className="dk-kpi-text">
+        <span>{label}</span>
+        <b className="num">{text}</b>
+      </div>
+      <KpiIcon icon={icon} />
     </div>
+  );
+}
+
+/** The rounded tile at the right of each KPI card. Decorative — the figure
+ *  beside it already carries the meaning, so it is hidden from AT. */
+function KpiIcon({ icon: Icon }: { icon: LucideIcon }) {
+  return (
+    <span className="dk-kpi-icon" aria-hidden="true">
+      <Icon size={18} strokeWidth={1.6} />
+    </span>
   );
 }
 
@@ -312,7 +325,7 @@ function PositionsTable({ rows }: { rows: PositionRow[] }) {
   if (rows.length === 0) {
     return (
       <div className="dk-empty">
-        <Inbox size={26} strokeWidth={1.4} />
+        <Inbox size={48} strokeWidth={1.2} />
         <b>No open positions</b>
         <span>Use the order ticket to place your first trade, or open the full terminal.</span>
       </div>
@@ -341,7 +354,15 @@ function PositionsTable({ rows }: { rows: PositionRow[] }) {
 }
 
 function ActivityLog({ rows }: { rows: ActivityRow[] }) {
-  if (rows.length === 0) return <div className="dk-empty"><b>No account activity yet</b></div>;
+  if (rows.length === 0) {
+    return (
+      <div className="dk-empty">
+        <Activity size={48} strokeWidth={1.2} />
+        <b>No account activity yet</b>
+        <span>Your account activity will appear here.</span>
+      </div>
+    );
+  }
   return (
     <ul className="dk-log">
       {rows.map((r) => (

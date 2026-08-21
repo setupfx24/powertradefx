@@ -134,7 +134,16 @@ const config: Config = {
         'container':      '1280px',
       },
       /* `boxShadow` is declared ONCE below at the bottom of `extend`. */
-      borderRadius: { sm: '4px', DEFAULT: '4px', md: '6px', lg: '8px', xl: '12px', '2xl': '16px', '3xl': '24px' },
+      /* Three values, seven names. The names all stay so no component
+         changes — `rounded-3xl` still compiles — but the scale now has
+         three steps instead of seven near-identical ones, which is what
+         made surfaces look subtly mismatched next to each other.
+         6 control · 10 card · 16 panel/modal. */
+      borderRadius: {
+        sm: '6px', DEFAULT: '6px', md: '6px',
+        lg: '10px', xl: '10px',
+        '2xl': '16px', '3xl': '16px',
+      },
       spacing: {
         '0.5': '2px', '1': '4px', '1.5': '6px', '2': '8px', '3': '12px',
         '4': '16px', '5': '20px', '6': '24px', '8': '32px', '10': '40px',
@@ -168,29 +177,17 @@ const config: Config = {
         slideDown: { '0%': { opacity: '0', transform: 'translateY(-8px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
         flashBlue: { '0%': { backgroundColor: 'rgba(41,98,255,0.22)' }, '100%': { backgroundColor: 'transparent' } },
         flashRed: { '0%': { backgroundColor: 'rgba(239,68,68,0.2)' }, '100%': { backgroundColor: 'transparent' } },
-        glowPulse: { '0%, 100%': { boxShadow: '0 0 20px rgba(99,102,241,0.18)' }, '50%': { boxShadow: '0 0 40px rgba(99,102,241,0.32)' } },
+        glowPulse: { '0%, 100%': { boxShadow: '0 2px 6px rgba(0,0,0,0.25)' }, '50%': { boxShadow: '0 2px 6px rgba(0,0,0,0.25)' } },
         float: { '0%, 100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-10px)' } },
         shimmer: { '0%': { backgroundPosition: '-200% 0' }, '100%': { backgroundPosition: '200% 0' } },
         walletNeonTabGlow: {
-          '0%, 100%': {
-            boxShadow:
-              '0 -1px 20px rgba(99, 102, 241, 0.22), 0 0 32px rgba(99, 102, 241, 0.12), inset 0 0 24px rgba(99, 102, 241, 0.04)',
-          },
-          '50%': {
-            boxShadow:
-              '0 -1px 36px rgba(99, 102, 241, 0.45), 0 0 52px rgba(99, 102, 241, 0.22), inset 0 0 32px rgba(99, 102, 241, 0.08)',
-          },
+          '0%, 100%': { boxShadow: '0 2px 6px rgba(0,0,0,0.25)' },
+          '50%': { boxShadow: '0 2px 6px rgba(0,0,0,0.25)' },
         },
         /** Deposit / Withdraw main tabs — stronger pulsing glow */
         walletMainTabGlow: {
-          '0%, 100%': {
-            boxShadow:
-              '0 -6px 40px rgba(99, 102, 241, 0.38), 0 0 56px rgba(99, 102, 241, 0.2), inset 0 1px 0 rgba(99, 102, 241, 0.14)',
-          },
-          '50%': {
-            boxShadow:
-              '0 -10px 64px rgba(99, 102, 241, 0.62), 0 0 88px rgba(99, 102, 241, 0.32), inset 0 1px 0 rgba(99, 102, 241, 0.22)',
-          },
+          '0%, 100%': { boxShadow: '0 2px 6px rgba(0,0,0,0.25)' },
+          '50%': { boxShadow: '0 2px 6px rgba(0,0,0,0.25)' },
         },
         walletMainTabText: {
           '0%': { opacity: '0.5', transform: 'scale(0.92) translateY(4px)' },
@@ -211,18 +208,25 @@ const config: Config = {
       },
       /* All elevation tokens live HERE — keep boxShadow as a single
          block; a second one silently overrides the first. */
+      /* One depth scale, three steps, all pure black — a shadow says how
+         far a surface is off the page and nothing else.
+         The `glow-*` / `neon-*` entries were coloured halos from the old
+         neon look; they are now plain depth. Names are kept so nothing
+         has to be edited at the call sites, and anything that wants
+         emphasis should use the accent border/background rather than a
+         coloured bloom. */
       boxShadow: {
-        'modal':         '0 8px 32px rgba(0,0,0,0.6)',
-        'dropdown':      '0 4px 16px rgba(0,0,0,0.4)',
-        'glass':         '0 8px 32px 0 rgba(0,0,0,0.37)',
-        'glass-sm':      '0 4px 16px 0 rgba(0,0,0,0.25)',
-        'glass-lg':      '0 16px 48px 0 rgba(0,0,0,0.5)',
-        'inner-light':   'inset 0 1px 0 0 rgba(255,255,255,0.05)',
-        'skeu':          'inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -1px 0 rgba(0,0,0,0.2), 0 2px 8px rgba(0,0,0,0.3)',
-        'glow-blue':     '0 0 20px rgba(41,98,255,0.28), 0 0 60px rgba(41,98,255,0.1)',
-        'glow-red':      '0 0 20px rgba(239,68,68,0.3), 0 0 60px rgba(239,68,68,0.1)',
-        'neon-green-sm': '0 0 20px rgba(99, 102, 241, 0.25), 0 0 48px rgba(99, 102, 241, 0.08)',
-        'neon-green-lg': '0 0 28px rgba(99, 102, 241, 0.4), 0 0 64px rgba(99, 102, 241, 0.15)',
+        'modal':         '0 12px 32px rgba(0,0,0,0.45)',
+        'dropdown':      '0 6px 16px rgba(0,0,0,0.35)',
+        'glass':         '0 6px 16px rgba(0,0,0,0.35)',
+        'glass-sm':      '0 2px 6px rgba(0,0,0,0.25)',
+        'glass-lg':      '0 12px 32px rgba(0,0,0,0.45)',
+        'inner-light':   'inset 0 1px 0 0 rgba(255,255,255,0.04)',
+        'skeu':          'inset 0 1px 0 rgba(255,255,255,0.06), 0 2px 6px rgba(0,0,0,0.25)',
+        'glow-blue':     '0 2px 6px rgba(0,0,0,0.25)',
+        'glow-red':      '0 2px 6px rgba(0,0,0,0.25)',
+        'neon-green-sm': '0 2px 6px rgba(0,0,0,0.25)',
+        'neon-green-lg': '0 6px 16px rgba(0,0,0,0.35)',
       },
     },
   },

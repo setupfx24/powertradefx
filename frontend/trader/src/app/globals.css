@@ -12,57 +12,18 @@
  * Re-theming the platform = editing this block, nothing else.
  * Values are RGB triplets so Tailwind can compose alpha:
  *   text-accent/60 -> rgb(var(--accent-rgb) / 0.6)
+ *
+ * This block used to be pasted THREE times (gold, gold, electric blue).
+ * Same-specificity :root rules mean the last one silently won, so the
+ * two above it were dead weight that made the file read as gold while
+ * the app rendered blue. One block now — if you re-theme, edit here.
  * ================================================================ */
 :root {
-  --brand-gold-500: 245 158 11; /* #F59E0B highlight / dark-theme pop */
-  --brand-gold-600: 217 119 6;  /* #D97706 dark-theme accent */
-  --brand-gold-700: 180 83 9;   /* #B45309 light-theme accent (AA on white) */
-  --brand-gold-800: 146 64 14;  /* #92400E hover / pressed */
-
-  /* Semantic accent - light default; the dark block overrides the
-   * triplets, and everything downstream follows automatically. */
-  --accent-rgb: var(--brand-gold-700);
-  --accent-hover-rgb: var(--brand-gold-800);
-  --accent-bright-rgb: var(--brand-gold-500);
-  --accent-bright: rgb(var(--accent-bright-rgb));
-}
-
-/* ================================================================
- * BRAND PRIMITIVES - the ONLY place brand hues exist as numbers.
- * Every theme block below derives its semantic --accent* tokens
- * from these; tailwind.config.ts maps the `accent` utilities onto
- * the semantic tokens; components use ONLY utilities / var()s.
- * Re-theming the platform = editing this block, nothing else.
- * Values are RGB triplets so Tailwind can compose alpha:
- *   text-accent/60 -> rgb(var(--accent-rgb) / 0.6)
- * ================================================================ */
-:root {
-  --brand-gold-500: 245 158 11; /* #F59E0B highlight / dark-theme pop */
-  --brand-gold-600: 217 119 6;  /* #D97706 dark-theme accent */
-  --brand-gold-700: 180 83 9;   /* #B45309 light-theme accent (AA on white) */
-  --brand-gold-800: 146 64 14;  /* #92400E hover / pressed */
-
-  /* Semantic accent - light default; the dark block overrides the
-   * triplets, and everything downstream follows automatically. */
-  --accent-rgb: var(--brand-gold-700);
-  --accent-hover-rgb: var(--brand-gold-800);
-  --accent-bright-rgb: var(--brand-gold-500);
-  --accent-bright: rgb(var(--accent-bright-rgb));
-}
-
-/* ================================================================
- * BRAND PRIMITIVES (electric blue) - the ONLY place brand hues exist as numbers.
- * Every theme block below derives its semantic --accent* tokens
- * from these; tailwind.config.ts maps the `accent` utilities onto
- * the semantic tokens; components use ONLY utilities / var()s.
- * Re-theming the platform = editing this block, nothing else.
- * Values are RGB triplets so Tailwind can compose alpha:
- *   text-accent/60 -> rgb(var(--accent-rgb) / 0.6)
- * ================================================================ */
-:root {
-  --brand-500: 59 130 246;  /* #3B82F6 highlight / dark-theme accent */
-  --brand-600: 37 99 235;   /* #2563EB light-theme accent (AA on white) */
-  --brand-700: 29 78 216;   /* #1D4ED8 hover / pressed */
+  /* Brand: primary #FA5600, secondary #FB9A04. */
+  --brand-500: 251 154 4;   /* #FB9A04 secondary - highlight / pop */
+  --brand-600: 250 86 0;    /* #FA5600 primary */
+  --brand-700: 199 66 0;    /* #C74200 hover / pressed */
+  --brand-800: 148 49 0;    /* #943100 deep pressed */
 
   /* Semantic accent - light default; the dark block overrides the
    * triplets, and everything downstream follows automatically. */
@@ -72,12 +33,15 @@
   --accent-bright: rgb(var(--accent-bright-rgb));
 
   /* Liquid-metal hero shader colors (read by components/ui/liquid-metal-hero) */
-  --hero-metal-back: #0A0D14;  /* deep ink behind the metal flow */
-  --hero-metal-tint: #D6E4FF;  /* icy blue-white metal bands */
+  --hero-metal-back: #140A05;  /* deep ink behind the metal flow */
+  --hero-metal-tint: #FFE0C2;  /* warm metal bands */
 
   /* Trade-side semantics as RGB triplets so Tailwind buy/sell utilities
-   * can compose alpha (bg-buy/10). App default: blue buy / red sell.
-   * The trading terminal (.term-theme) overrides these to green/red. */
+   * can compose alpha (bg-buy/10). Buy stays a distinct BLUE on purpose:
+   * making it brand-orange would put the buy button, the sell button and
+   * every accent in the same hue family, and a trader reads side by
+   * colour before they read the label. The terminal (.term-theme)
+   * overrides these to green/red. */
   --buy-rgb: 30 102 245;        /* #1E66F5 */
   --buy-light-rgb: 91 140 255;  /* #5B8CFF */
   --buy-dark-rgb: 13 63 163;    /* #0D3FA3 */
@@ -152,15 +116,12 @@
 /* ======================================= */
 
 [data-theme="dark"], .theme-dark {
-  /* Dark surfaces take the brighter gold so accents keep their pop. */
-  --accent-rgb: var(--brand-gold-600);
-  --accent-hover-rgb: var(--brand-gold-700);
-  /* Dark surfaces take the brighter gold so accents keep their pop. */
-  --accent-rgb: var(--brand-gold-600);
-  --accent-hover-rgb: var(--brand-gold-700);
-  /* Dark surfaces take the brighter blue so accents keep their pop. */
-  --accent-rgb: var(--brand-500);
-  --accent-hover-rgb: var(--brand-600);
+  /* Dark surfaces keep the primary as the accent and fall back to the
+     secondary for hover, so an accent gets BRIGHTER on hover against a
+     dark ground rather than sinking into it. (Was three stacked copies
+     of this override — gold, gold, blue — where only the last applied.) */
+  --accent-rgb: var(--brand-600);
+  --accent-hover-rgb: var(--brand-500);
   --bg-page: #050707;
   --bg-base: #0a0a0a;
   --bg-primary: #0a0a0a;
@@ -193,11 +154,11 @@
   --input-bg: #111111;
   --input-border: #1f1f1f;
   --input-shadow: inset 0 2px 6px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(0,0,0,0.2), 0 1px 0 rgba(255,255,255,0.02);
-  --input-focus-border: rgba(99, 102, 241, 0.55);
-  --input-focus-shadow: inset 0 2px 6px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(99, 102, 241, 0.12), 0 0 0 3px rgba(99, 102, 241, 0.12);
+  --input-focus-border: rgba(250, 86, 0, 0.55);
+  --input-focus-shadow: inset 0 2px 6px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(250, 86, 0, 0.12), 0 0 0 3px rgba(250, 86, 0, 0.12);
   --input-placeholder: #555555;
 
-  --selection-bg: rgba(99, 102, 241, 0.22);
+  --selection-bg: rgba(250, 86, 0, 0.22);
 
   --noise-opacity: 0.012;
   --emboss-bg: rgba(0, 0, 0, 0.5);
@@ -206,7 +167,7 @@
   /* react-hot-toast — always dark surface (readable on charts + light UI) */
   --toast-bg: #111111;
   --toast-fg: #f0f0f0;
-  --toast-border: rgba(99, 102, 241, 0.28);
+  --toast-border: rgba(250, 86, 0, 0.28);
 
   /* Colored stat-card surfaces. The trader/admin UIs lean heavily on
    * gradient stat cards (Total Balance, Bonus, Trade Now, etc.).
@@ -499,12 +460,12 @@
   --scrollbar-hover: #3a3a3a;
   --input-bg: #111111;
   --input-border: #1f1f1f;
-  --input-focus-border: rgba(99, 102, 241, 0.55);
-  --input-focus-shadow: inset 0 2px 6px rgba(0,0,0,0.5), 0 0 0 3px rgba(99, 102, 241, 0.12);
-  --selection-bg: rgba(99, 102, 241, 0.22);
+  --input-focus-border: rgba(250, 86, 0, 0.55);
+  --input-focus-shadow: inset 0 2px 6px rgba(0,0,0,0.5), 0 0 0 3px rgba(250, 86, 0, 0.12);
+  --selection-bg: rgba(250, 86, 0, 0.22);
   --toast-bg: #111111;
   --toast-fg: #f0f0f0;
-  --toast-border: rgba(99, 102, 241, 0.28);
+  --toast-border: rgba(250, 86, 0, 0.28);
   color-scheme: dark;
 }
 
@@ -572,7 +533,7 @@ html, body {
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--scrollbar-track); }
-::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 6px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
 /* Removes light “seam” where vertical + horizontal scrollbars meet */
 ::-webkit-scrollbar-corner {
@@ -598,7 +559,7 @@ html {
 }
 .dashboard-main-scroll::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
-  border-radius: 4px;
+  border-radius: 6px;
 }
 .dashboard-main-scroll::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-hover);
@@ -847,7 +808,7 @@ html {
 
 .flash-blue { animation: flashAccent 0.15s ease-out; }
 .flash-red { animation: flashRed 0.15s ease-out; }
-@keyframes flashAccent { 0% { background-color: rgba(99,102,241,0.22); } 100% { background-color: transparent; } }
+@keyframes flashAccent { 0% { background-color: rgba(250, 86, 0,0.22); } 100% { background-color: transparent; } }
 @keyframes flashRed { 0% { background-color: rgba(239,68,68,0.2); } 100% { background-color: transparent; } }
 
 /* react-hot-toast — library defaults are washed-out white squares; reskin
@@ -882,7 +843,7 @@ html {
   color: var(--toast-fg) !important;
   border: 1px solid var(--toast-border) !important;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3) !important;
-  border-radius: 12px !important;
+  border-radius: 10px !important;
   padding: 12px 16px !important;
   min-height: 44px;
   min-width: 0 !important;
@@ -941,8 +902,8 @@ html {
 
 /* Sidebar icon glow pulse */
 @keyframes iconGlowPulse {
-  0%, 100% { filter: drop-shadow(0 0 4px rgba(99,102,241,0.15)); }
-  50%      { filter: drop-shadow(0 0 10px rgba(99,102,241,0.55)); }
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(250, 86, 0,0.15)); }
+  50%      { filter: drop-shadow(0 0 10px rgba(250, 86, 0,0.55)); }
 }
 .sidebar-icon-glow {
   animation: iconGlowPulse 2.5s ease-in-out infinite;
@@ -982,7 +943,7 @@ html {
   }
   .sidebar-scroll::-webkit-scrollbar-thumb {
     background: var(--scrollbar-thumb);
-    border-radius: 4px;
+    border-radius: 6px;
   }
   .sidebar-scroll::-webkit-scrollbar-thumb:hover {
     background: var(--scrollbar-hover);
@@ -1014,7 +975,7 @@ html {
     background: var(--input-bg);
     border: 1px solid var(--input-border);
     color: var(--text-primary);
-    border-radius: 8px;
+    border-radius: 10px;
     padding: 10px 14px;
     font-size: 13px;
     font-family: inherit;
@@ -1113,8 +1074,8 @@ html {
     box-shadow: none !important;
   }
   .accounts-native-select:focus {
-    border-color: rgba(99, 102, 241, 0.55) !important;
-    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2) !important;
+    border-color: rgba(250, 86, 0, 0.55) !important;
+    box-shadow: 0 0 0 2px rgba(250, 86, 0, 0.2) !important;
   }
   .accounts-native-select option {
     background-color: var(--bg-secondary);
@@ -1160,13 +1121,13 @@ html {
 .desk {
   --ink:#0A0D14; --panel:#111725; --panel-2:#161D2D; --raise:#1C2436;
   --line:#212A3C; --line-2:#2E3950;
-  --accent:#3D7DFF; --accent-dim:#24427F;
+  --accent:#FA5600; --accent-dim:#7A2E06;
   --up:#28D293; --down:#FF5D6C;
   --text:#E9EEF7; --muted:#8792A8; --faint:#5A6478;
   --on-accent:#FFFFFF;
   /* shadow the app accent triplet so any tailwind accent utility that
    * leaks into the desk subtree matches the desk accent */
-  --accent-rgb: 61 125 255;
+  --accent-rgb: 250 86 0;
   background:var(--ink); color:var(--text);
   font-family:var(--f-ui),'Archivo',system-ui,sans-serif; font-size:14px;
   min-height:100dvh; display:flex; flex-direction:column;
@@ -1179,11 +1140,11 @@ html {
 [data-theme="light"] .desk {
   --ink:#F4F6FB; --panel:#FFFFFF; --panel-2:#EEF2F8; --raise:#FFFFFF;
   --line:#E2E8F2; --line-2:#CBD5E4;
-  --accent:#2563EB; --accent-dim:#BFD3FA;
+  --accent:#FA5600; --accent-dim:#FFD9C2;
   --up:#0FA97B; --down:#E5484D;
   --text:#0B1220; --muted:#4E5A70; --faint:#8792A8;
   --on-accent:#FFFFFF;
-  --accent-rgb: 37 99 235;
+  --accent-rgb: 250 86 0;
 }
 
 /* ── Row 1: top navbar (58px) ── */
@@ -1191,6 +1152,14 @@ html {
   gap:18px; padding:0 18px; background:var(--panel); border-bottom:1px solid var(--line); }
 .dk-brand { display:flex; align-items:center; gap:9px; font-weight:800; font-size:17px;
   letter-spacing:-.02em; color:var(--text); }
+/* Height only, `width:auto` — the lockup is roughly 6.5:1, so pinning
+   both axes would squash it, and width:auto is also what stops next/image
+   warning about a modified dimension. 22px sits the lockup on the same
+   optical line the 26px mark + 17px type used to occupy in the 58px bar. */
+.dk-brand-logo { display:block; height:22px; width:auto; }
+/* The old square mark + `PowerTrade<em>FX</em>` type it used to colour are
+   gone — the image carries its own brand colour. Kept only in case the
+   type mark is ever restored. */
 .dk-brand svg rect { fill:var(--accent); }
 .dk-brand em { font-style:normal; color:var(--accent); }
 .dk-links { display:flex; align-items:stretch; gap:2px; height:100%; margin:0 auto; }
@@ -1202,9 +1171,9 @@ html {
   height:2px; background:var(--accent); }
 .dk-more { position:relative; }
 .dk-more-menu { position:absolute; top:calc(100% + 6px); right:0; min-width:190px; z-index:60;
-  background:var(--panel-2); border:1px solid var(--line-2); border-radius:12px; padding:6px;
+  background:var(--panel-2); border:1px solid var(--line-2); border-radius: 10px; padding:6px;
   box-shadow:0 18px 50px rgba(0,0,0,.55); list-style:none; }
-.dk-more-menu a { display:block; padding:8px 11px; border-radius:8px; color:var(--muted);
+.dk-more-menu a { display:block; padding:8px 11px; border-radius: 10px; color:var(--muted);
   font-size:13px; font-weight:500; }
 .dk-more-menu a:hover { background:var(--raise); color:var(--text); }
 .dk-right { display:flex; align-items:center; gap:10px; }
@@ -1213,74 +1182,103 @@ html {
   border:1px solid var(--line); color:var(--text); border-radius:999px; padding:7px 12px;
   cursor:pointer; font:inherit; font-size:12px; }
 .dk-pill-menu { position:absolute; top:calc(100% + 8px); left:0; z-index:60; min-width:270px;
-  background:var(--panel-2); border:1px solid var(--line-2); border-radius:12px; padding:6px;
+  background:var(--panel-2); border:1px solid var(--line-2); border-radius: 10px; padding:6px;
   list-style:none; box-shadow:0 18px 50px rgba(0,0,0,.55); }
 .dk-pill-menu button { display:flex; align-items:center; gap:9px; width:100%; padding:8px 10px;
-  border-radius:8px; background:none; border:0; color:var(--text); cursor:pointer; font:inherit; font-size:12px; }
+  border-radius: 10px; background:none; border:0; color:var(--text); cursor:pointer; font:inherit; font-size:12px; }
 .dk-pill-menu button:hover { background:var(--raise); }
 .dk-pill-menu .dk-dim { margin-left:auto; color:var(--faint); }
-.dk-tag { font-size:9px; font-weight:800; letter-spacing:.09em; padding:2px 6px; border-radius:5px;
+.dk-tag { font-size:9px; font-weight:800; letter-spacing:.09em; padding:2px 6px; border-radius: 6px;
   background:var(--accent-dim); color:var(--on-accent); }
 .dk-search { display:flex; align-items:center; gap:8px; background:var(--panel-2);
-  border:1px solid var(--line); border-radius:10px; padding:0 10px; color:var(--faint); width:210px; }
+  border:1px solid var(--line); border-radius: 10px; padding:0 10px; color:var(--faint); width:210px; }
 .dk-search input, [data-theme] .dk-search input { flex:1; min-width:0; background:none; border:0; box-shadow:none;
   color:var(--text); padding:8px 0; font:inherit; font-size:12px; outline:none; }
 .dk-search input::placeholder, [data-theme] .dk-search input::placeholder { color:var(--faint); }
-.dk-search kbd { font-size:9px; border:1px solid var(--line-2); border-radius:4px; padding:1px 5px;
+.dk-search kbd { font-size:9px; border:1px solid var(--line-2); border-radius: 6px; padding:1px 5px;
   color:var(--muted); }
 .dk-clock { font-size:11px; color:var(--muted); letter-spacing:.05em; white-space:nowrap; }
 .dk-bell { position:relative; background:var(--panel-2); border:1px solid var(--line);
-  color:var(--muted); border-radius:9px; padding:8px; cursor:pointer; display:flex; }
+  color:var(--muted); border-radius: 10px; padding:8px; cursor:pointer; display:flex; }
 .dk-bell:hover { color:var(--text); border-color:var(--line-2); }
 .dk-bell i { position:absolute; top:6px; right:6px; width:6px; height:6px; border-radius:99px;
   background:var(--accent); }
 .dk-cta { background:var(--accent); color:var(--on-accent); font-weight:700; font-size:13px;
-  border-radius:10px; padding:8px 17px; }
+  border-radius: 10px; padding:8px 17px; }
 .dk-cta:hover { filter:brightness(1.1); }
 .dk-avatar { width:32px; height:32px; border-radius:99px; background:var(--raise);
   border:1px solid var(--line-2); color:var(--text); display:flex; align-items:center;
   justify-content:center; font-size:11px; font-weight:700; }
 
 /* ── layout + panels ── */
-.dk-wrap { width:100%; max-width:1560px; margin:0 auto; padding:16px 18px 26px; flex:1; }
-.dk-panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px;
+.dk-wrap { width:100%; max-width:1560px; margin:0 auto; padding:18px 20px 30px; flex:1; }
+/* MINIMALIST PASS (dashboard only — every class below is used solely by
+   app/dashboard/page.tsx; the shell's dk-nav/dk-brand/dk-cta set is
+   untouched, so the other ten pages on DashboardShell are unaffected).
+   Panels separate by ground and spacing rather than by an outline. */
+.dk-panel { background:var(--panel); border:1px solid var(--line); border-radius: 12px; padding:20px 22px;
   animation:dkIn .5s cubic-bezier(.22,1,.36,1) both; }
 @keyframes dkIn { from { opacity:0; transform:translateY(12px);} to { opacity:1; transform:none;} }
-.dk-eyebrow { font-size:10px; font-weight:800; letter-spacing:.16em; text-transform:uppercase;
-  color:var(--muted); margin-bottom:7px; }
+.dk-eyebrow { display:flex; align-items:center; gap:8px; font-size:10px; font-weight:700;
+  letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin-bottom:10px; }
+.dk-eyebrow svg { color:var(--muted); flex:0 0 auto; }
 .dk-ctx { display:flex; align-items:center; gap:14px; padding:2px 2px 12px; color:var(--faint);
   font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
 .dk-ctx b { color:var(--text); letter-spacing:.14em; }
 .dk-ctx .sep { width:1px; height:12px; background:var(--line-2); }
 .dk-hero { display:grid; grid-template-columns:1fr; gap:14px; }
-.dk-kpis { display:grid; grid-template-columns:repeat(5,1fr); margin-top:14px; padding:0; }
-.dk-kpi { padding:14px 16px; border-right:1px solid var(--line); display:flex; flex-direction:column; gap:4px; }
-.dk-kpi:last-child { border-right:0; }
+/* Five standalone cards, per the reference — the wrapper is a plain grid,
+   so each .dk-kpi carries its own border rather than the strip being one
+   panel cut up by vertical rules. */
+.dk-kpis { display:grid; grid-template-columns:repeat(5,1fr); gap:14px; margin-top:14px; padding:0; }
+.dk-kpi { background:var(--panel); border:1px solid var(--line); border-radius: 12px;
+  padding:16px 18px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.dk-kpi-text { display:flex; flex-direction:column; gap:5px; min-width:0; }
 .dk-kpi span { font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
-.dk-kpi b { font-size:18px; font-weight:600; color:var(--text); }
-.dk-body { display:grid; grid-template-columns:1.62fr 1fr; gap:14px; margin-top:14px; align-items:start; }
+.dk-kpi b { font-size:19px; font-weight:600; color:var(--text); }
+.dk-kpi-icon { flex:0 0 auto; display:grid; place-items:center; width:38px; height:38px;
+  border-radius:10px; background:var(--panel-2); border:1px solid var(--line); color:var(--muted); }
+
+/* Below this the five cards cannot hold a figure and a 38px tile side by
+   side without the figures truncating; the tile is decorative, so it goes
+   first, then the row wraps to two rows of cards. */
+@media (max-width: 1240px) {
+  .dk-kpi-icon { display:none; }
+}
+@media (max-width: 920px) {
+  .dk-kpis { grid-template-columns:repeat(2,1fr); }
+}
+.dk-body { display:grid; grid-template-columns:1.62fr 1fr; gap:20px; margin-top:20px; align-items:start; }
 .dk-body-solo { grid-template-columns:1fr; }
-.dk-col { display:flex; flex-direction:column; gap:14px; min-width:0; }
+/* Two equal panels, as the reference lays them out. They stack on narrow
+   screens rather than squeezing two empty states side by side. */
+.dk-body-split { grid-template-columns:repeat(2,1fr); gap:14px; margin-top:14px; }
+@media (max-width: 920px) {
+  .dk-body-split { grid-template-columns:1fr; }
+}
+.dk-col { display:flex; flex-direction:column; gap:20px; min-width:0; }
 .dk-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
 .dk-link-sm { color:var(--accent); font-size:12px; font-weight:600; }
 
 /* ── equity panel ── */
 .dk-equity { font-size:44px; font-weight:600; line-height:1.04; color:var(--text); letter-spacing:-.01em; }
 .dk-chip { display:inline-flex; align-items:center; gap:6px; margin-top:6px; font-size:12px;
-  font-weight:700; border-radius:8px; padding:3px 9px; }
+  font-weight:700; border-radius: 10px; padding:3px 9px; }
 .dk-chip.up { background:rgba(40,210,147,.12); color:var(--up); }
 .dk-chip.dn { background:rgba(255,93,108,.12); color:var(--down); }
 .dk-chip.flat { background:var(--raise); color:var(--muted); }
 .dk-tfs { display:flex; gap:3px; background:var(--panel-2); border:1px solid var(--line);
-  border-radius:9px; padding:3px; }
+  border-radius: 10px; padding:3px; }
 .dk-tfs button { border:0; background:none; color:var(--muted); font:inherit; font-size:10px;
-  font-weight:800; padding:4px 9px; border-radius:6px; cursor:pointer; }
+  font-weight:800; padding:4px 9px; border-radius: 6px; cursor:pointer; }
 .dk-tfs button.is-on { background:var(--accent-dim); color:var(--on-accent); }
 .dk-chart { width:100%; height:180px; margin-top:12px; display:block; }
 .dk-hl { display:flex; justify-content:space-between; margin-top:8px; font-size:11px; color:var(--faint); }
 .dk-hl b { color:var(--muted); font-weight:600; }
+/* The pulsing glow on the equity line was the only thing moving on an
+   otherwise still page, which kept pulling the eye. Held steady instead. */
 @keyframes dkPulse { 0%,100% { opacity:.25; } 50% { opacity:.6; } }
-.dk-edge-halo { animation:dkPulse 2.2s ease-in-out infinite; }
+.dk-edge-halo { opacity:.32; }
 
 /* ── table / log / empty ── */
 .dk-table { width:100%; border-collapse:collapse; margin-top:6px; font-size:13px; }
@@ -1289,12 +1287,13 @@ html {
 .dk-table td { padding:10px 8px; border-bottom:1px solid var(--line); }
 .dk-table tr:last-child td { border-bottom:0; }
 .dk-table .r { text-align:right; }
-.dk-side-b { font-size:9px; font-weight:800; padding:2px 7px; border-radius:5px;
+.dk-side-b { font-size:9px; font-weight:800; padding:2px 7px; border-radius: 6px;
   background:var(--raise); color:var(--muted); letter-spacing:.06em; }
 .dk-pl-up { color:var(--up); } .dk-pl-dn { color:var(--down); }
-.dk-empty { display:flex; flex-direction:column; align-items:center; gap:8px; padding:30px 10px;
-  color:var(--faint); font-size:13px; text-align:center; }
-.dk-empty svg { color:var(--line-2); }
+.dk-empty { display:flex; flex-direction:column; align-items:center; gap:10px; padding:52px 16px;
+  color:var(--faint); font-size:13px; line-height:1.55; text-align:center; }
+.dk-empty svg { color:var(--line-2); margin-bottom:4px; }
+.dk-empty b { font-size:15px; }
 .dk-empty b { color:var(--muted); font-weight:600; }
 .dk-log { list-style:none; margin-top:4px; }
 .dk-log li { display:flex; align-items:baseline; gap:10px; padding:8px 2px; border-top:1px solid var(--line);
@@ -1332,7 +1331,7 @@ html {
      clipped by it. Fixed positioning escapes the scroll container —
      render the More menu as a bottom sheet instead. */
   .dk-more-menu { position:fixed; top:auto; bottom:0; left:0; right:0;
-    min-width:0; max-height:60vh; overflow-y:auto; border-radius:14px 14px 0 0;
+    min-width:0; max-height:60vh; overflow-y:auto; border-radius: 10px 14px 0 0;
     padding:8px 10px calc(8px + env(safe-area-inset-bottom)); }
   .dk-right { margin-left:auto; flex:1 1 auto; min-width:0; justify-content:flex-end; gap:8px; }
   .dk-pill { min-width:0; }
@@ -1407,7 +1406,7 @@ html {
 /* ── mobile responsiveness pass (showcase) ─────────────────────────── */
 @media (max-width:1024px) {
   .cx-copy { background:rgba(5,8,15,.62); border:1px solid rgba(255,255,255,.07);
-    border-radius:14px; padding:16px 18px; backdrop-filter:blur(6px); }
+    border-radius: 10px; padding:16px 18px; backdrop-filter:blur(6px); }
 }
 @media (max-width:639px) {
   .cx-wrap { height:220vh; }

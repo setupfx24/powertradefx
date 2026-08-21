@@ -122,7 +122,7 @@ export default function EconomicNewsPage() {
                   >
                     <Icon className="w-4 h-4 shrink-0" />
                     {active ? (
-                      <span className="relative inline-block animate-wallet-main-tab-text drop-shadow-[0_0_20px_rgba(99,102,241,0.7)]">
+                      <span className="relative inline-block animate-wallet-main-tab-text">
                         {label}
                       </span>
                     ) : (

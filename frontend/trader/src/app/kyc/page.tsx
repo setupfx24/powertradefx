@@ -326,7 +326,7 @@ export default function KycPage() {
                   <button
                     type="button"
                     onClick={openForm}
-                    className="inline-flex items-center justify-center gap-2 w-full sm:w-auto min-w-[240px] px-8 py-3.5 rounded-xl text-sm font-bold border-2 border-accent bg-accent text-black hover:brightness-110 transition-all shadow-[0_0_24px_rgba(99,102,241,0.35)]"
+                    className="inline-flex items-center justify-center gap-2 w-full sm:w-auto min-w-[240px] px-8 py-3.5 rounded-xl text-sm font-bold border-2 border-accent bg-accent text-black hover:brightness-110 transition-all"
                   >
                     <ShieldCheck size={18} strokeWidth={2.5} />
                     {isRejected ? 'Re-submit KYC' : 'Start KYC Verification'}
@@ -586,7 +586,7 @@ export default function KycPage() {
                 type="button"
                 onClick={() => void handleSubmit()}
                 disabled={submitting}
-                className="w-full py-3.5 rounded-xl border-2 border-accent bg-accent hover:brightness-110 disabled:opacity-60 text-black font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(99,102,241,0.25)]"
+                className="w-full py-3.5 rounded-xl border-2 border-accent bg-accent hover:brightness-110 disabled:opacity-60 text-black font-bold text-sm transition-all flex items-center justify-center gap-2"
               >
                 {submitting ? (
                   <>

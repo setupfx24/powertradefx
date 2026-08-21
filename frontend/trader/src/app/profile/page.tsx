@@ -322,7 +322,7 @@ export default function ProfilePage() {
                   >
                     <Icon size={14} className="shrink-0 opacity-90" />
                     {active ? (
-                      <span className="relative inline-block animate-wallet-main-tab-text drop-shadow-[0_0_16px_rgba(99,102,241,0.6)] truncate">
+                      <span className="relative inline-block animate-wallet-main-tab-text truncate">
                         {t.label}
                       </span>
                     ) : (

@@ -4,7 +4,7 @@ import { BookOpen, BarChart3, DollarSign, Info, PieChart, TrendingUp, Wallet } f
 import { clsx } from 'clsx';
 import type { TradingJournalBlock } from '@/lib/trading-dashboard';
 
-const NEON = '#2563EB'; // --brand-600 (SVG presentation attrs can't read CSS vars)
+const NEON = '#FA5600'; // --brand-600 (SVG presentation attrs can't read CSS vars)
 const CARD = 'var(--bg-card)';
 const BORDER = 'var(--border-primary)';
 

@@ -12,7 +12,7 @@ export default function manifest(): MetadataRoute.Manifest {
     start_url: '/',
     display: 'standalone',
     background_color: '#0A0D14', // matches the app's dark ink
-    theme_color: '#2563EB', // --brand-600; manifest requires a literal (parsed without CSS)
+    theme_color: '#FA5600', // --brand-600; manifest requires a literal (parsed without CSS)
     /* All three are the same FX badge, cut from public/portal/fevicon.png.
        `/icon.png` and `/apple-icon.png` are served by the App Router file
        convention (src/app/icon.png, src/app/apple-icon.png); the 192 is a
