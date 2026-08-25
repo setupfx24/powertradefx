@@ -307,7 +307,7 @@ export default function AccountsPage() {
       <div className="page-main w-full space-y-6">
         <div className="animate-wallet-fund-enter-lg">
           <div className="space-y-5">
-              <h1 className="font-display text-3xl font-bold tracking-tight text-text-primary">Accounts</h1>
+              <h1 className="font-display text-2xl font-bold tracking-tight text-text-primary">Accounts</h1>
 
               {/* Filter / action bar */}
               <div className="flex flex-wrap items-center gap-3">

@@ -1216,7 +1216,7 @@ html {
    app/dashboard/page.tsx; the shell's dk-nav/dk-brand/dk-cta set is
    untouched, so the other ten pages on DashboardShell are unaffected).
    Panels separate by ground and spacing rather than by an outline. */
-.dk-panel { background:var(--panel); border:1px solid var(--line); border-radius: 12px; padding:20px 22px;
+.dk-panel { background:var(--panel); border:1px solid var(--line); border-radius: 10px; padding:20px 22px;
   animation:dkIn .5s cubic-bezier(.22,1,.36,1) both; }
 @keyframes dkIn { from { opacity:0; transform:translateY(12px);} to { opacity:1; transform:none;} }
 .dk-eyebrow { display:flex; align-items:center; gap:8px; font-size:10px; font-weight:700;
@@ -1231,7 +1231,7 @@ html {
    so each .dk-kpi carries its own border rather than the strip being one
    panel cut up by vertical rules. */
 .dk-kpis { display:grid; grid-template-columns:repeat(5,1fr); gap:14px; margin-top:14px; padding:0; }
-.dk-kpi { background:var(--panel); border:1px solid var(--line); border-radius: 12px;
+.dk-kpi { background:var(--panel); border:1px solid var(--line); border-radius: 10px;
   padding:16px 18px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .dk-kpi-text { display:flex; flex-direction:column; gap:5px; min-width:0; }
 .dk-kpi span { font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }

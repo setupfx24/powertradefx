@@ -1256,7 +1256,7 @@ function SocialPageInner() {
               aria-hidden
             />
             <div className="relative z-10 px-3 sm:px-6 py-3 sm:py-8">
-              <h1 className="text-base sm:text-3xl font-bold text-text-primary mb-1 sm:mb-2 leading-tight">
+              <h1 className="text-base sm:text-2xl font-bold text-text-primary mb-1 sm:mb-2 leading-tight">
                 Copy Trading
               </h1>
               <p className="text-xs sm:text-sm text-text-secondary max-w-2xl hidden sm:block">

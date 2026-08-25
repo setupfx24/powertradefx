@@ -139,10 +139,16 @@ const config: Config = {
          three steps instead of seven near-identical ones, which is what
          made surfaces look subtly mismatched next to each other.
          6 control · 10 card · 16 panel/modal. */
+      /* Two steps on purpose, not five. `rounded-lg` and `rounded-xl` were
+         already the same 10px, but `rounded-2xl` sat at 16px and appears on
+         ten of the signed-in tabs, so a single screen could show 6, 10 and
+         16px card corners at once — the main thing that made the app read as
+         unfinished. Everything card-sized is now 10px and only small controls
+         (chips, inputs, badges) stay at 6px. Pills keep using rounded-full. */
       borderRadius: {
         sm: '6px', DEFAULT: '6px', md: '6px',
         lg: '10px', xl: '10px',
-        '2xl': '16px', '3xl': '16px',
+        '2xl': '10px', '3xl': '10px',
       },
       spacing: {
         '0.5': '2px', '1': '4px', '1.5': '6px', '2': '8px', '3': '12px',
