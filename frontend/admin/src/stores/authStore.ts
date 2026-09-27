@@ -31,7 +31,12 @@ interface AuthState {
   admin: Admin | null;
   isAuthenticated: boolean;
   isInitialized: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  /**
+   * Sign in. Throws `ApiError` (from `@/lib/api`) on failure; the login
+   * page branches on `err.code` (`mfa_required`, `mfa_invalid`, …) and
+   * `err.status` (429 lockout). `totpCode` is only sent when supplied.
+   */
+  login: (email: string, password: string, totpCode?: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshAdminProfile: () => Promise<boolean>;
 }
@@ -41,16 +46,20 @@ export const useAuthStore = create<AuthState>()((set) => ({
   isAuthenticated: false,
   isInitialized: false,
 
-  login: async (email: string, password: string) => {
+  login: async (email: string, password: string, totpCode?: string) => {
     // Server sets the HttpOnly admin cookie on this request. We don't
     // touch the access_token in the JSON response — it's only there
     // for legacy script clients and is intentionally ignored here.
+    const body: { email: string; password: string; totp_code?: string } = { email, password };
+    const code = totpCode?.trim();
+    if (code) body.totp_code = code;
+
     const res = await adminApi.post<{
       admin_id: string;
       role: string;
       first_name: string | null;
       last_name: string | null;
-    }>('/auth/login', { email, password });
+    }>('/auth/login', body);
 
     const admin: Admin = {
       id: res.admin_id,

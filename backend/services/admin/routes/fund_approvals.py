@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dependencies import require_permission
 from packages.common.src.database import get_db
 from packages.common.src.models import User
+from packages.common.src.rate_limit import client_ip_for_inet
 from services import fund_approval_service
 
 router = APIRouter(prefix="/fund-approvals", tags=["Fund Approvals"])
@@ -39,7 +40,7 @@ async def approve_fund_move(
 ):
     return await fund_approval_service.approve(
         approval_id=approval_id, admin=admin,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -53,5 +54,5 @@ async def reject_fund_move(
 ):
     return await fund_approval_service.reject(
         approval_id=approval_id, reason=body.reason, admin=admin,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )

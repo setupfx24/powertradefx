@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.common.src.database import get_db
 from dependencies import require_permission
 from packages.common.src.models import User
+from packages.common.src.rate_limit import client_ip_for_inet
 from services import kyc_service
 
 router = APIRouter(prefix="/kyc", tags=["KYC"])
@@ -65,7 +66,7 @@ async def approve_kyc(
     """Approve user KYC"""
     return await kyc_service.approve_kyc(
         user_id=user_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -80,7 +81,7 @@ async def reject_kyc(
     """Reject user KYC"""
     return await kyc_service.reject_kyc(
         user_id=user_id, reason=body.reason, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 

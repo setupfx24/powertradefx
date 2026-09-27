@@ -1,32 +1,110 @@
-"""Admin Auth Service — login, refresh, me."""
+"""Admin Auth Service — login (password + MFA), refresh, password change, me.
+
+Controls implemented here and the threat each one addresses:
+
+* Constant-time credential check — unknown email and wrong password cost
+  the same bcrypt work and return the same 401, so response timing cannot
+  be used to enumerate which addresses are admin accounts.
+* MFA after the password — TOTP / backup-code is only requested once the
+  password verified, so the MFA prompt itself never leaks whether an
+  email exists or has 2FA enrolled.
+* Password-fingerprinted JWTs — every token carries `pwd` (see
+  ``dependencies.password_fingerprint``) so a password rotation revokes
+  all outstanding sessions, including via /auth/refresh.
+* Per-account lockout — credential/MFA failures are surfaced as
+  ``AdminAuthFailure`` so the route can count them against the account
+  (IP-independent) without counting benign outcomes such as
+  "MFA code required".
+"""
+from __future__ import annotations
+
 import logging
+import re
+import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import jwt
+import pyotp
 from fastapi import HTTPException, status
 from sqlalchemy import select, func
 from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.common.src.auth import verify_password
+from packages.common.src.auth import hash_password, verify_password
 from packages.common.src.config import get_settings
-from packages.common.src.models import User, Employee
-from packages.common.src.admin_schemas import AdminLoginRequest, AdminLoginResponse, AdminRefreshRequest
-from dependencies import EMPLOYEE_ROLE_PERMISSIONS
+from packages.common.src.models import User, Employee, TwoFactorBackupCode
+from packages.common.src.admin_schemas import AdminLoginRequest, AdminLoginResponse
+from dependencies import (
+    EMPLOYEE_ROLE_PERMISSIONS,
+    ADMIN_JWT_ISSUER,
+    password_fingerprint,
+    decode_admin_token,
+    assert_token_matches_password,
+)
 
 logger = logging.getLogger("uvicorn.error")
 settings = get_settings()
 
+# Roles that may sign in to the admin API at all.
+_ADMIN_ROLES = ("admin", "super_admin")
 
-def create_admin_token(admin_id: str, role: str) -> str:
+# Minimum admin password length. Admin accounts can move money, so the
+# bar is higher than the trader-side 8.
+ADMIN_MIN_PASSWORD_LENGTH = 12
+
+# Precomputed bcrypt hash of a random secret, used as the comparison
+# target when the email is unknown (or the row has no password, e.g. an
+# OAuth-only user). Verifying against it costs the same as a real check,
+# so the "no such account" path takes as long as the "wrong password"
+# path. Generated once per process; the plaintext is discarded.
+_DUMMY_PASSWORD_HASH: str = hash_password(secrets.token_urlsafe(32))
+
+
+class AdminAuthFailure(HTTPException):
+    """A sign-in attempt that should count towards the per-account
+    lockout: wrong password, unknown email, or wrong MFA code. Outcomes
+    that are NOT guesses (MFA code merely missing, inactive account,
+    database unavailable) raise plain ``HTTPException`` and are not
+    counted, otherwise a legitimate operator could be locked out by the
+    normal two-step MFA dance."""
+
+
+def _invalid_credentials() -> AdminAuthFailure:
+    return AdminAuthFailure(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+
+# ─── Token minting ────────────────────────────────────────────────────────
+
+def create_admin_token(
+    admin_id: str,
+    role: str,
+    password_hash: str | None,
+    extra_claims: Optional[dict] = None,
+) -> str:
+    """Mint an admin JWT.
+
+    Claims: ``admin_id``, ``role``, ``type=admin``, ``iss`` (checked on
+    decode so tokens for other audiences signed with a shared secret are
+    refused), ``jti`` (unique per token; enables a future denylist),
+    ``pwd`` (password fingerprint — rotating the password invalidates
+    the token), ``iat``/``exp``. ``extra_claims`` lets the impersonation
+    flow add ``employee_role`` / ``impersonated_by`` without minting its
+    own unfingerprinted token.
+    """
     now = datetime.now(timezone.utc)
     expire = now + timedelta(hours=settings.ADMIN_JWT_EXPIRY_HOURS)
     payload = {
+        **(extra_claims or {}),
         "admin_id": admin_id,
         "role": str(role),
         "type": "admin",
-        "exp": expire,
+        "iss": ADMIN_JWT_ISSUER,
+        "jti": uuid.uuid4().hex,
+        "pwd": password_fingerprint(password_hash),
         "iat": now,
+        "exp": expire,
     }
     try:
         return jwt.encode(payload, settings.ADMIN_JWT_SECRET, algorithm=settings.ADMIN_JWT_ALGORITHM)
@@ -38,16 +116,128 @@ def create_admin_token(admin_id: str, role: str) -> str:
         ) from e
 
 
+def _login_response(admin: User) -> AdminLoginResponse:
+    return AdminLoginResponse(
+        access_token=create_admin_token(str(admin.id), admin.role, admin.password_hash),
+        admin_id=str(admin.id),
+        role=admin.role,
+        first_name=admin.first_name,
+        last_name=admin.last_name,
+    )
+
+
+# ─── MFA ─────────────────────────────────────────────────────────────────
+
+_CODE_SEPARATORS = re.compile(r"[\s\-]+")
+
+
+def _normalise_mfa_code(raw: str | None) -> str:
+    """Strip whitespace/dashes and upper-case so '123 456', '12345-67890'
+    and 'abcde fghij' all compare cleanly."""
+    return _CODE_SEPARATORS.sub("", raw or "").strip().upper()
+
+
+async def _consume_backup_code(user_id: uuid.UUID, code: str, db: AsyncSession) -> bool:
+    """bcrypt-verify ``code`` against every unused backup code for the
+    user; on a match mark that row used (single-use) and return True.
+    Mirrors the trader-side ``consume_2fa_backup_code``: the loop always
+    runs over the full set so timing does not reveal how many codes
+    remain. Backup codes are stored hashed in their display form
+    (XXXXX-XXXXX), so a 10-char bare code is re-hyphenated first."""
+    candidate = code
+    if len(candidate) == 10 and "-" not in candidate:
+        candidate = f"{candidate[:5]}-{candidate[5:]}"
+    if not candidate:
+        return False
+    rows = (
+        await db.execute(
+            select(TwoFactorBackupCode).where(
+                TwoFactorBackupCode.user_id == user_id,
+                TwoFactorBackupCode.used_at.is_(None),
+            )
+        )
+    ).scalars().all()
+    matched: TwoFactorBackupCode | None = None
+    for row in rows:
+        if verify_password(candidate, row.code_hash):
+            matched = row  # keep looping — roughly constant time
+    if matched is None:
+        return False
+    matched.used_at = datetime.now(timezone.utc)
+    await db.commit()
+    return True
+
+
+async def _verify_second_factor(admin: User, totp_code: str | None, db: AsyncSession) -> None:
+    """Enforce MFA for an admin whose PASSWORD HAS ALREADY BEEN VERIFIED.
+
+    Ordering matters: calling this before the password check would turn
+    the MFA prompt into an oracle for "this email is an admin with 2FA".
+    Accepts a 6-digit TOTP (``valid_window=1`` = one 30 s step of clock
+    drift either side) or a one-time backup code, which is burned on use.
+    """
+    if admin.two_factor_enabled:
+        secret = (admin.two_factor_secret or "").strip()
+        if not secret:
+            # Enabled flag with no secret can only come from a broken
+            # enrolment; fail closed rather than silently skipping MFA.
+            logger.error("admin %s has two_factor_enabled but no secret", admin.id)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "mfa_misconfigured",
+                    "message": "Two-factor authentication is misconfigured for this account. Contact support.",
+                },
+            )
+        code = _normalise_mfa_code(totp_code)
+        if not code:
+            # Not a guess: the client simply has not asked the user yet.
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"code": "mfa_required", "message": "Two-factor authentication code required"},
+            )
+        ok = False
+        if len(code) == 6 and code.isdigit():
+            ok = pyotp.TOTP(secret).verify(code, valid_window=1)
+        if not ok:
+            ok = await _consume_backup_code(admin.id, code, db)
+        if not ok:
+            raise AdminAuthFailure(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"code": "mfa_invalid", "message": "Invalid two-factor code"},
+            )
+        return
+
+    if settings.ADMIN_MFA_REQUIRED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "mfa_enrolment_required",
+                "message": "Two-factor authentication must be enabled on this account before signing in",
+            },
+        )
+
+
+# ─── Login ───────────────────────────────────────────────────────────────
+
+def normalise_admin_email(email: str | None) -> str:
+    """Canonical form used both for the DB lookup and the per-account
+    lockout key, so 'Admin@X.com ' and 'admin@x.com' share one bucket."""
+    return (email or "").strip().lower()
+
+
 async def admin_login(body: AdminLoginRequest, db: AsyncSession) -> AdminLoginResponse:
-    email_norm = (body.email or "").strip().lower()
+    """Password (+ MFA) sign-in. Raises ``AdminAuthFailure`` for outcomes
+    that count as a failed guess; see the class docstring."""
+    email_norm = normalise_admin_email(body.email)
     if not email_norm:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        raise _invalid_credentials()
 
     try:
         result = await db.execute(
             select(User).where(
                 func.lower(User.email) == email_norm,
-                User.role.in_(["admin", "super_admin"]),
+                User.role.in_(_ADMIN_ROLES),
             )
         )
     except (OperationalError, DBAPIError) as e:
@@ -56,29 +246,29 @@ async def admin_login(body: AdminLoginRequest, db: AsyncSession) -> AdminLoginRe
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database unavailable",
         ) from e
-
     admin = result.scalar_one_or_none()
 
-    if admin is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    # Always pay for one bcrypt verification. Unknown email and password-
+    # less rows compare against the dummy hash so the failure path is
+    # timing-indistinguishable from a wrong password on a real account.
+    if admin is None or not admin.password_hash:
+        verify_password(body.password, _DUMMY_PASSWORD_HASH)
+        raise _invalid_credentials()
+    if not verify_password(body.password, admin.password_hash):
+        raise _invalid_credentials()
 
-    password_ok = verify_password(body.password, admin.password_hash)
-    if not password_ok:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-
+    # Only AFTER the password is right may the response reveal anything
+    # account-specific (status, MFA state).
     if admin.status != "active":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is not active")
 
-    token = create_admin_token(str(admin.id), admin.role)
+    await _verify_second_factor(admin, body.totp_code, db)
 
-    return AdminLoginResponse(
-        access_token=token,
-        admin_id=str(admin.id),
-        role=admin.role,
-        first_name=admin.first_name,
-        last_name=admin.last_name,
-    )
+    logger.info("admin login ok: admin_id=%s role=%s", admin.id, admin.role)
+    return _login_response(admin)
 
+
+# ─── Refresh ─────────────────────────────────────────────────────────────
 
 # How long past its `exp` a token may still be exchanged for a fresh one.
 # Refresh accepts expired tokens on purpose (the SPA renews after an idle
@@ -87,34 +277,35 @@ async def admin_login(body: AdminLoginRequest, db: AsyncSession) -> AdminLoginRe
 ADMIN_REFRESH_GRACE_HOURS = 24
 
 
-async def admin_refresh(body: AdminRefreshRequest, db: AsyncSession) -> AdminLoginResponse:
+async def admin_refresh(token: str | None, db: AsyncSession) -> AdminLoginResponse:
+    """Exchange a valid-or-recently-expired admin token for a fresh one.
+
+    The token comes from the fx_admin cookie (SPA) or the request body
+    (legacy clients) — the route decides which. The same issuer and
+    password-fingerprint checks as ``get_current_admin`` apply, so a
+    refresh can never resurrect a session after a password change.
+    """
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    payload = decode_admin_token(token, verify_exp=False)
+    exp = payload.get("exp")
+    if exp is not None:
+        expired_for = datetime.now(timezone.utc).timestamp() - float(exp)
+        if expired_for > ADMIN_REFRESH_GRACE_HOURS * 3600:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session expired — please log in again",
+            )
     try:
-        payload = jwt.decode(
-            body.access_token,
-            settings.ADMIN_JWT_SECRET,
-            algorithms=[settings.ADMIN_JWT_ALGORITHM],
-            options={"verify_exp": False},
-        )
-        if payload.get("type") != "admin":
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
-
-        exp = payload.get("exp")
-        if exp is not None:
-            expired_for = datetime.now(timezone.utc).timestamp() - float(exp)
-            if expired_for > ADMIN_REFRESH_GRACE_HOURS * 3600:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Session expired — please log in again",
-                )
-
-        admin_id = payload.get("admin_id")
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        admin_uuid = uuid.UUID(str(payload["admin_id"]))
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
 
     result = await db.execute(
         select(User).where(
-            User.id == admin_id,
-            User.role.in_(["admin", "super_admin"]),
+            User.id == admin_uuid,
+            User.role.in_(_ADMIN_ROLES),
             User.status == "active",
         )
     )
@@ -122,26 +313,46 @@ async def admin_refresh(body: AdminRefreshRequest, db: AsyncSession) -> AdminLog
     if admin is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin not found")
 
-    token = create_admin_token(str(admin.id), admin.role)
-    return AdminLoginResponse(
-        access_token=token,
-        admin_id=str(admin.id),
-        role=admin.role,
-        first_name=admin.first_name,
-        last_name=admin.last_name,
-    )
+    assert_token_matches_password(payload, admin)
+    return _login_response(admin)
 
 
-async def change_admin_password(admin: User, current_password: str, new_password: str, db: AsyncSession) -> dict:
+# ─── Password change ─────────────────────────────────────────────────────
+
+async def change_admin_password(
+    admin: User,
+    current_password: str,
+    new_password: str,
+    db: AsyncSession,
+) -> AdminLoginResponse:
+    """Rotate the admin's password.
+
+    Because every session token is bound to the password hash, this
+    implicitly revokes all other sessions for the account (stolen cookie,
+    forgotten shared machine). The CURRENT session would be revoked too,
+    so a fresh token fingerprinted against the new hash is returned for
+    the route to set as the cookie — the caller keeps working, everyone
+    else is signed out.
+    """
     if not verify_password(current_password, admin.password_hash):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
-    if len(new_password) < 8:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New password must be at least 8 characters")
-    from packages.common.src.auth import hash_password
+    if len(new_password) < ADMIN_MIN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"New password must be at least {ADMIN_MIN_PASSWORD_LENGTH} characters",
+        )
+    if new_password == current_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must differ from the current password",
+        )
     admin.password_hash = hash_password(new_password)
     await db.commit()
-    return {"message": "Password changed successfully"}
+    logger.info("admin password changed: admin_id=%s (all other sessions revoked)", admin.id)
+    return _login_response(admin)
 
+
+# ─── Me ──────────────────────────────────────────────────────────────────
 
 async def get_admin_me(admin: User, db: AsyncSession) -> dict:
     employee_role = None
@@ -167,4 +378,5 @@ async def get_admin_me(admin: User, db: AsyncSession) -> dict:
         "role": admin.role,
         "employee_role": employee_role,
         "permissions": list(permissions),
+        "two_factor_enabled": bool(admin.two_factor_enabled),
     }

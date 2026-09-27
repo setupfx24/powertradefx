@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     ADMIN_JWT_SECRET: str = "admin-secret-change-in-production"
     ADMIN_JWT_ALGORITHM: str = "HS256"
     ADMIN_JWT_EXPIRY_HOURS: int = 8
+    # When True, every admin/super_admin account must have TOTP enrolled
+    # (users.two_factor_enabled) before /auth/login will issue a session;
+    # un-enrolled accounts get 403 {"code": "mfa_enrolment_required"}.
+    # Default False so existing deployments keep working until every
+    # operator has enrolled.
+    ADMIN_MFA_REQUIRED: bool = False
 
     ADMIN_EMAIL: str = "admin@powertradefx.com"
     # Initial seed password for the super-admin row created by the

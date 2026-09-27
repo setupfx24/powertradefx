@@ -9,6 +9,7 @@ from packages.common.src.models import User
 from packages.common.src.admin_schemas import (
     MLMConfigIn, UpdateIBCommissionIn, RejectIBIn, IBCommissionPlanIn,
 )
+from packages.common.src.rate_limit import client_ip_for_inet
 from services import business_service
 
 router = APIRouter(prefix="/business", tags=["Business"])
@@ -36,7 +37,7 @@ async def approve_ib_application(
 ):
     return await business_service.approve_ib_application(
         app_id=app_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -49,7 +50,7 @@ async def reject_ib_application(
 ):
     return await business_service.reject_ib_application(
         app_id=app_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -73,7 +74,7 @@ async def update_ib_commission(
 ):
     return await business_service.update_ib_commission(
         agent_id=agent_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -87,7 +88,7 @@ async def reject_active_ib(
 ):
     return await business_service.reject_active_ib(
         agent_id=agent_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -108,7 +109,7 @@ async def create_commission_plan(
 ):
     return await business_service.create_commission_plan(
         body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -122,7 +123,7 @@ async def update_commission_plan(
 ):
     return await business_service.update_commission_plan(
         plan_id=plan_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -135,7 +136,7 @@ async def delete_commission_plan(
 ):
     return await business_service.delete_commission_plan(
         plan_id=plan_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -156,7 +157,7 @@ async def update_mlm_config(
 ):
     return await business_service.update_mlm_config(
         body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -230,7 +231,7 @@ async def set_parent_ib(
     parent_id = uuid.UUID(body.parent_ib_id) if body.parent_ib_id else None
     return await business_service.set_parent_ib(
         ib_id=agent_id, parent_ib_id=parent_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -244,7 +245,7 @@ async def move_user_to_ib(
 ):
     return await business_service.move_user_to_ib(
         user_id=user_id, new_ib_id=uuid.UUID(body.new_ib_id), admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -272,7 +273,7 @@ async def approve_sub_broker(
 ):
     return await business_service.approve_sub_broker(
         app_id=app_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -285,7 +286,7 @@ async def reject_sub_broker(
 ):
     return await business_service.reject_sub_broker(
         app_id=app_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -324,5 +325,5 @@ async def delete_master(
     trading account balance back to the master user's main wallet."""
     return await business_service.delete_master(
         master_id=master_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )

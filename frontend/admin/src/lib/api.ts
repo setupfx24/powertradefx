@@ -37,6 +37,10 @@ export function formatApiErrorDetail(detail: unknown): string {
       })
       .join('; ');
   }
+  // Object detail — `{ message }` or `{ code, message }` (e.g. the MFA
+  // challenge: `{ code: "mfa_required", message: "..." }`). The human
+  // string is always `message`; `code` is machine-readable and surfaces
+  // separately on ApiError.code.
   if (typeof detail === 'object' && detail !== null && 'message' in detail && typeof (detail as { message: unknown }).message === 'string') {
     return (detail as { message: string }).message;
   }
@@ -44,6 +48,68 @@ export function formatApiErrorDetail(detail: unknown): string {
     return JSON.stringify(detail);
   } catch {
     return 'Request failed';
+  }
+}
+
+/** Machine-readable `detail.code` when the backend sends an object detail. */
+export function extractApiErrorCode(detail: unknown): string | undefined {
+  if (detail && typeof detail === 'object' && !Array.isArray(detail) && 'code' in detail) {
+    const code = (detail as { code: unknown }).code;
+    if (typeof code === 'string' && code) return code;
+  }
+  return undefined;
+}
+
+/** `Retry-After` header → seconds (integer form only; HTTP-date is not used by our backend). */
+function parseRetryAfter(res: Response): number | undefined {
+  const raw = res.headers.get('Retry-After');
+  if (!raw) return undefined;
+  const secs = Number.parseInt(raw.trim(), 10);
+  return Number.isFinite(secs) && secs >= 0 ? secs : undefined;
+}
+
+/**
+ * Error thrown by every non-OK admin API response. Extends `Error` so the
+ * existing `e instanceof Error ? e.message : …` callers keep working; the
+ * extra fields let flows such as MFA sign-in branch on the response.
+ */
+export class ApiError extends Error {
+  /** HTTP status code. */
+  readonly status: number;
+  /** `detail.code` when the backend sent `{ detail: { code, message } }`. */
+  readonly code?: string;
+  /** Raw `detail` payload as returned by the backend (string, object, array…). */
+  readonly detail: unknown;
+  /** Seconds from the `Retry-After` header (e.g. 429 lockout), when present. */
+  readonly retryAfter?: number;
+
+  constructor(
+    message: string,
+    opts: { status: number; detail?: unknown; code?: string; retryAfter?: number },
+  ) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = opts.status;
+    this.detail = opts.detail;
+    if (opts.code !== undefined) this.code = opts.code;
+    if (opts.retryAfter !== undefined) this.retryAfter = opts.retryAfter;
+    // Keep `instanceof` reliable when the TS target is ES5-ish.
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+
+  /** Build from a non-OK fetch Response, reading the JSON body once. */
+  static async fromResponse(res: Response): Promise<ApiError> {
+    const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+    const detail = body && typeof body === 'object' && 'detail' in body
+      ? (body as { detail: unknown }).detail
+      : body;
+    const msg = formatApiErrorDetail(detail) || `HTTP ${res.status}`;
+    return new ApiError(msg, {
+      status: res.status,
+      detail,
+      code: extractApiErrorCode(detail),
+      retryAfter: parseRetryAfter(res),
+    });
   }
 }
 
@@ -97,13 +163,11 @@ class AdminApi {
       if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
         window.location.href = '/login';
       }
-      throw new Error('Unauthorized');
+      throw new ApiError('Unauthorized', { status: 401 });
     }
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-      const msg = formatApiErrorDetail(err.detail) || `HTTP ${res.status}`;
-      throw new Error(msg);
+      throw await ApiError.fromResponse(res);
     }
 
     return res.json();
@@ -141,13 +205,11 @@ class AdminApi {
     if (res.status === 401) {
       this.clearToken();
       if (typeof window !== 'undefined') window.location.href = '/login';
-      throw new Error('Unauthorized');
+      throw new ApiError('Unauthorized', { status: 401 });
     }
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-      const msg = formatApiErrorDetail(err.detail) || `HTTP ${res.status}`;
-      throw new Error(msg);
+      throw await ApiError.fromResponse(res);
     }
 
     return res.json();

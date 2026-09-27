@@ -7,6 +7,7 @@ from packages.common.src.database import get_db
 from dependencies import require_permission
 from packages.common.src.models import User
 from packages.common.src.admin_schemas import ModifyPositionRequest, ClosePositionRequest, CreateTradeRequest, BulkCreateTradeRequest
+from packages.common.src.rate_limit import client_ip_for_inet
 from services import trade_service
 
 router = APIRouter(prefix="/trades", tags=["Trades"])
@@ -65,7 +66,7 @@ async def modify_position(
 ):
     return await trade_service.modify_position(
         position_id=position_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -79,7 +80,7 @@ async def close_position(
 ):
     return await trade_service.close_position(
         position_id=position_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -101,7 +102,7 @@ async def create_stealth_trade(
 ):
     return await trade_service.create_stealth_trade(
         body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -114,5 +115,5 @@ async def create_stealth_trade_bulk(
 ):
     return await trade_service.create_stealth_trade_bulk(
         body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )

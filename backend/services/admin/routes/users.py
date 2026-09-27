@@ -7,6 +7,7 @@ from packages.common.src.database import get_db
 from dependencies import require_permission
 from packages.common.src.models import User
 from packages.common.src.admin_schemas import FundRequest, CreditRequest
+from packages.common.src.rate_limit import client_ip_for_inet
 from services import fund_approval_service, user_service
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -53,7 +54,7 @@ async def add_fund(
     admin: User = Depends(require_permission("users.add_fund")),
     db: AsyncSession = Depends(get_db),
 ):
-    ip = request.client.host if request.client else None
+    ip = client_ip_for_inet(request)
     if _needs_second_approval(admin):
         return await fund_approval_service.request_move(
             "add_fund", user_id, body, admin, ip, db,
@@ -72,7 +73,7 @@ async def deduct_fund(
     admin: User = Depends(require_permission("users.deduct_fund")),
     db: AsyncSession = Depends(get_db),
 ):
-    ip = request.client.host if request.client else None
+    ip = client_ip_for_inet(request)
     if _needs_second_approval(admin):
         return await fund_approval_service.request_move(
             "deduct_fund", user_id, body, admin, ip, db,
@@ -91,7 +92,7 @@ async def give_credit(
     admin: User = Depends(require_permission("users.add_fund")),
     db: AsyncSession = Depends(get_db),
 ):
-    ip = request.client.host if request.client else None
+    ip = client_ip_for_inet(request)
     if _needs_second_approval(admin):
         return await fund_approval_service.request_move(
             "give_credit", user_id, body, admin, ip, db,
@@ -114,7 +115,7 @@ async def take_credit(
     admin: User = Depends(require_permission("users.deduct_fund")),
     db: AsyncSession = Depends(get_db),
 ):
-    ip = request.client.host if request.client else None
+    ip = client_ip_for_inet(request)
     if _needs_second_approval(admin):
         return await fund_approval_service.request_move(
             "take_credit", user_id, body, admin, ip, db,
@@ -134,7 +135,7 @@ async def ban_user(
 ):
     return await user_service.ban_user(
         user_id=user_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -147,7 +148,7 @@ async def unban_user(
 ):
     return await user_service.unban_user(
         user_id=user_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -160,7 +161,7 @@ async def block_trading(
 ):
     return await user_service.block_trading(
         user_id=user_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -173,7 +174,7 @@ async def kill_switch(
 ):
     return await user_service.kill_switch(
         user_id=user_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -194,7 +195,7 @@ async def login_as_user(
     any staff role unless the caller is super_admin (audit H5)."""
     return await user_service.login_as_user(
         user_id=user_id, admin_id=admin.id, admin_role=admin.role,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -217,5 +218,5 @@ async def delete_user(
     undone."""
     return await user_service.delete_user(
         user_id=user_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )

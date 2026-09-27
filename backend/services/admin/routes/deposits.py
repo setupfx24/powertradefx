@@ -8,6 +8,7 @@ from packages.common.src.database import get_db
 from dependencies import require_permission
 from packages.common.src.models import User
 from packages.common.src.admin_schemas import RejectRequest
+from packages.common.src.rate_limit import client_ip_for_inet
 from services import deposit_service
 
 
@@ -80,7 +81,7 @@ async def approve_deposit(
 ):
     return await deposit_service.approve_deposit(
         deposit_id=deposit_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -101,7 +102,7 @@ async def set_deposit_payment_link(
         payment_link=body.payment_link,
         message=body.message,
         admin_id=admin.id,
-        ip_address=request.client.host if request.client else None,
+        ip_address=client_ip_for_inet(request),
         db=db,
     )
 
@@ -133,7 +134,7 @@ async def approve_deposit_with_razorpay(
     return await deposit_service.approve_with_razorpay(
         deposit_id=deposit_id,
         admin_id=admin.id,
-        ip_address=request.client.host if request.client else None,
+        ip_address=client_ip_for_inet(request),
         db=db,
         amount_override=amount,
     )
@@ -149,7 +150,7 @@ async def reject_deposit(
 ):
     return await deposit_service.reject_deposit(
         deposit_id=deposit_id, reason=body.reason, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -162,7 +163,7 @@ async def approve_withdrawal(
 ):
     return await deposit_service.approve_withdrawal(
         withdrawal_id=withdrawal_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -176,7 +177,7 @@ async def reject_withdrawal(
 ):
     return await deposit_service.reject_withdrawal(
         withdrawal_id=withdrawal_id, reason=body.reason, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -196,7 +197,7 @@ async def mark_withdrawal_paid(
         tx_hash=body.tx_hash,
         notes=body.notes,
         admin_id=admin.id,
-        ip_address=request.client.host if request.client else None,
+        ip_address=client_ip_for_inet(request),
         db=db,
     )
 

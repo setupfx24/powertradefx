@@ -103,4 +103,9 @@ services:
       - "127.0.0.1:3013:3001"
     environment:
       ADMIN_API_PROXY_TARGET: http://admin-api:8001
+      # CSRF allowlist for the /admin-api proxy. Explicit and authoritative in
+      # production: mutations whose Origin is not listed here are refused, so a
+      # script on any other powertradefx.com host (same site, so SameSite=strict
+      # does not help) cannot ride the admin session cookie.
+      ADMIN_ALLOWED_ORIGINS: https://admin.powertradefx.com
     restart: always
