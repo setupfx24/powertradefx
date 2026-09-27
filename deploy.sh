@@ -81,7 +81,21 @@ fi
 
 if [ $NEEDS_NGINX -eq 1 ]; then
   echo "▶ Reloading nginx…"
-  sudo cp deploy/nginx/powertradefx.conf /etc/nginx/sites-available/powertradefx.conf
+  # Debian-style hosts use sites-available; RHEL-style hosts (the current
+  # server) only have conf.d. Detect, or override with NGINX_CONF_DIR.
+  NGINX_CONF_DIR="${NGINX_CONF_DIR:-}"
+  if [ -z "$NGINX_CONF_DIR" ]; then
+    if [ -d /etc/nginx/sites-available ]; then
+      NGINX_CONF_DIR=/etc/nginx/sites-available
+    elif [ -d /etc/nginx/conf.d ]; then
+      NGINX_CONF_DIR=/etc/nginx/conf.d
+    else
+      echo "⚠️  Cannot find an nginx config directory; set NGINX_CONF_DIR." >&2
+      exit 1
+    fi
+  fi
+  echo "  → $NGINX_CONF_DIR/powertradefx.conf"
+  sudo cp deploy/nginx/powertradefx.conf "$NGINX_CONF_DIR/powertradefx.conf"
   # cloudflare-real-ip.conf is dropped into conf.d once at install time;
   # we re-copy it on each deploy so edits to the file flow through.
   if [ -f deploy/nginx/cloudflare-real-ip.conf ]; then
