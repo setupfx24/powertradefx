@@ -175,7 +175,14 @@ async def _verify_second_factor(admin: User, totp_code: str | None, db: AsyncSes
     the MFA prompt into an oracle for "this email is an admin with 2FA".
     Accepts a 6-digit TOTP (``valid_window=1`` = one 30 s step of clock
     drift either side) or a one-time backup code, which is burned on use.
+
+    ``ADMIN_MFA_ENABLED`` is the master switch: while it is off (the
+    default until the flow is verified in production) no second factor
+    is requested for anyone, and ``ADMIN_MFA_REQUIRED`` is ignored.
     """
+    if not settings.ADMIN_MFA_ENABLED:
+        return
+
     if admin.two_factor_enabled:
         secret = (admin.two_factor_secret or "").strip()
         if not secret:
