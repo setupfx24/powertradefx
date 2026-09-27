@@ -205,9 +205,16 @@ function TradingViewChartInner({
         loading_screen: { backgroundColor: theme === 'dark' ? '#0b0e11' : '#ffffff' },
         disabled_features: ['use_localstorage_for_settings', 'symbol_search_hot_key'],
         enabled_features: ['hide_left_toolbar_by_default'],
-        overrides: theme === 'dark'
-          ? { 'paneProperties.background': '#0b0e11', 'paneProperties.backgroundType': 'solid', 'scalesProperties.textColor': '#b7bdc6' }
-          : {},
+        overrides: {
+          // Candle-close countdown next to the last price on the axis. It
+          // follows the active timeframe (client request: "candle time" when
+          // switching intervals). use_localstorage_for_settings is disabled
+          // above, so this override applies on every load.
+          'mainSeriesProperties.showCountdown': true,
+          ...(theme === 'dark'
+            ? { 'paneProperties.background': '#0b0e11', 'paneProperties.backgroundType': 'solid', 'scalesProperties.textColor': '#b7bdc6' }
+            : {}),
+        },
       });
       try {
         widgetRef.current.onChartReady(() => {

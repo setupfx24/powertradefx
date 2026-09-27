@@ -16,6 +16,19 @@ import OrderPanelSymbolPicker from '@/components/trading/OrderPanelSymbolPicker'
 
 type OrderSide = 'buy' | 'sell';
 type OrderType = 'market' | 'pending';
+type PendingKind = 'limit' | 'stop' | 'stop_limit';
+
+const ORDER_TAB_LABEL: Record<OrderType, string> = {
+  market: 'Market',
+  pending: 'Limit / Stop',
+};
+const PENDING_KINDS: readonly PendingKind[] = ['limit', 'stop', 'stop_limit'];
+
+/** MT5-style name for a pending order, e.g. "Buy Limit", "Sell Stop-Limit". */
+function pendingKindLabel(side: 'buy' | 'sell', kind: PendingKind): string {
+  const s = side === 'buy' ? 'Buy' : 'Sell';
+  return kind === 'limit' ? `${s} Limit` : kind === 'stop' ? `${s} Stop` : `${s} Stop-Limit`;
+}
 
 export default function OrderPanel({
   onOrderPlaced,
@@ -52,7 +65,7 @@ export default function OrderPanel({
 
   const [side, setSide] = useState<OrderSide>('buy');
   const [orderTab, setOrderTab] = useState<OrderType>('market');
-  const [pendingKind, setPendingKind] = useState<'limit' | 'stop' | 'stop_limit'>('limit');
+  const [pendingKind, setPendingKind] = useState<PendingKind>('limit');
   const [triggerPrice, setTriggerPrice] = useState('');
   const [stopLimitPrice, setStopLimitPrice] = useState('');
   const [lots, setLots] = useState('0.01');
@@ -113,6 +126,16 @@ export default function OrderPanel({
         }
         return true;
       })();
+
+  /** Submit button wording: "Buy" at market, "Buy Limit" / "Sell Stop" …
+   *  for pending; the price shown is the trigger the order will rest at,
+   *  not the current quote. */
+  const submitAction = orderTab === 'market'
+    ? (side === 'buy' ? 'Buy' : 'Sell')
+    : pendingKindLabel(side, pendingKind);
+  const submitPrice = orderTab === 'market'
+    ? execPrice
+    : (() => { const t = parseFloat(triggerPrice); return Number.isFinite(t) && t > 0 ? t : 0; })();
 
   useEffect(() => {
     const unsub = wsManager.onStatusChange(setWsStatus);
@@ -474,7 +497,8 @@ export default function OrderPanel({
           )}
         >
           <div className={pad}>
-          {/* Market / Pending tabs */}
+          {/* Market / Limit-Stop tabs. The pending tab is labelled by what it
+              contains (MT5 users look for "limit" / "stop", not "pending"). */}
           <div className="flex rounded-md overflow-hidden bg-bg-secondary border border-border-primary">
             {(['market', 'pending'] as const).map((t) => (
               <button
@@ -491,7 +515,7 @@ export default function OrderPanel({
                       : '2px solid transparent',
                 }}
               >
-                {t}
+                {ORDER_TAB_LABEL[t]}
               </button>
             ))}
           </div>
@@ -691,11 +715,8 @@ export default function OrderPanel({
                   Pending type
                 </span>
                 <div className="grid grid-cols-3 rounded-md overflow-hidden border border-border-primary bg-bg-secondary">
-                  {([
-                    { k: 'limit' as const, label: 'Limit' },
-                    { k: 'stop' as const, label: 'Stop' },
-                    { k: 'stop_limit' as const, label: 'Stop-Limit' },
-                  ]).map(({ k, label }) => {
+                  {PENDING_KINDS.map((k) => {
+                    const label = pendingKindLabel(side, k);
                     const active = pendingKind === k;
                     return (
                       <button
@@ -849,10 +870,10 @@ export default function OrderPanel({
                   boxShadow: side === 'buy' ? '0 4px 20px rgb(var(--buy-rgb) / 0.25)' : '0 4px 20px rgb(var(--sell-rgb) / 0.25)',
                 }}
               >
-                {`${side === 'buy' ? 'Buy' : 'Sell'} ${lotsNum} ${selectedSymbol}`}
-                {execPrice > 0 && (
+                {`${submitAction} ${lotsNum} ${selectedSymbol}`}
+                {submitPrice > 0 && (
                   <span className="ml-2 font-mono font-bold tabular-nums opacity-85 normal-case">
-                    @ {execPrice.toFixed(digits)}
+                    @ {submitPrice.toFixed(digits)}
                   </span>
                 )}
               </button>
@@ -918,10 +939,10 @@ export default function OrderPanel({
                 boxShadow: side === 'buy' ? '0 2px 12px rgb(var(--buy-rgb) / 0.25)' : '0 2px 12px rgb(var(--sell-rgb) / 0.25)',
               }}
             >
-              {`${side === 'buy' ? 'Buy' : 'Sell'} ${lotsNum} ${selectedSymbol}`}
-              {execPrice > 0 && (
+              {`${submitAction} ${lotsNum} ${selectedSymbol}`}
+              {submitPrice > 0 && (
                 <span className="ml-1.5 font-mono font-bold tabular-nums opacity-85 normal-case">
-                  @ {execPrice.toFixed(digits)}
+                  @ {submitPrice.toFixed(digits)}
                 </span>
               )}
             </button>
