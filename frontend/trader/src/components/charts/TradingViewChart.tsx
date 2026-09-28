@@ -420,7 +420,7 @@ function TradingViewChartInner({
     // entry lines they differ: the line is the brand accent while the label
     // tracks P&L (profit green / loss red / grey). SL/TP/pending omit
     // textColor → it falls back to the line colour.
-    type Desired = { key: string; price: number; color: string; textColor?: string; text: string; dashed: boolean; pnl?: number };
+    type Desired = { key: string; price: number; color: string; textColor?: string; text: string; dashed: boolean; pnl?: number; showPrice?: boolean };
     const desired: Desired[] = [];
 
     // ── Open positions: entry line labelled with LIVE P&L, coloured by P&L
@@ -441,10 +441,13 @@ function TradingViewChartInner({
       // Line colour = brand accent (entry); label colour by P&L.
       desired.push({
         key: p.id, price: entry, color: ENTRY_COLOR, textColor: pnlColor(pnl),
-        // Live P&L rendered as the TV shape's OWN label — TradingView pins it
-        // exactly on the entry price (right axis), so it can never drift.
-        text: `${p.side.toUpperCase()} ${lots}  ${pnlStr} (${pctStr})`,
-        dashed: false, pnl,
+        // Live P&L rendered as the TV shape's OWN label, pinned on the line.
+        // The entry price is part of the text and the right-axis tag is OFF:
+        // TradingView shoves an axis tag up/down to dodge the live-price tag,
+        // so a tag reading 83,200 floated above a line that WAS at 83,200 and
+        // read as a misplaced fill (client report, 2026-09-28).
+        text: `${p.side.toUpperCase()} ${lots} @ ${fp(entry)}  ${pnlStr} (${pctStr})`,
+        dashed: false, pnl, showPrice: false,
       });
       // SL/TP labels PROJECT the realized outcome if price reaches that level,
       // so they must show NET P&L — computePnlAt returns gross, but the close
@@ -480,14 +483,14 @@ function TradingViewChartInner({
         desired.push({ key: `ord-${o.id}-tp`, price: Number(o.take_profit), color: TP_COLOR, text: `TP ${fp(Number(o.take_profit))}`, dashed: true });
     }
 
-    const shapeOpts = (text: string, lineColor: string, textColor: string, dashed: boolean) => ({
+    const shapeOpts = (text: string, lineColor: string, textColor: string, dashed: boolean, showPrice = true) => ({
       shape: 'horizontal_line',
       text,
       lock: true, disableSelection: true, disableSave: true, disableUndo: true,
       overrides: {
         linecolor: lineColor, linestyle: dashed ? 2 : 0, linewidth: dashed ? 1 : 2,
         showLabel: true, textcolor: textColor, fontsize: 11, bold: true,
-        horzLabelsAlign: 'right', vertLabelsAlign: 'middle', showPrice: true,
+        horzLabelsAlign: 'right', vertLabelsAlign: 'middle', showPrice,
       },
     });
 
@@ -514,7 +517,7 @@ function TradingViewChartInner({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const entry: any = { id: null, price: d.price, creating: true, text: d.text, color: d.color, textColor: d.textColor ?? d.color, pnl: d.pnl ?? null, propAt: now };
         linesRef.current.set(d.key, entry);
-        Promise.resolve(chart.createShape({ time: anchorTime, price: d.price }, shapeOpts(d.text, d.color, d.textColor ?? d.color, d.dashed)))
+        Promise.resolve(chart.createShape({ time: anchorTime, price: d.price }, shapeOpts(d.text, d.color, d.textColor ?? d.color, d.dashed, d.showPrice ?? true)))
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .then((id: any) => {
             if (linesRef.current.get(d.key) === entry) { entry.id = id; entry.creating = false; }
