@@ -269,7 +269,7 @@ const ScrollExpand: React.FC<ScrollExpandProps> = ({
             {media}
             <div
               ref={scrimRef}
-              className="absolute inset-0 opacity-0 pointer-events-none bg-[linear-gradient(to_top,rgba(0,0,0,0.75),rgba(0,0,0,0.1)_45%,rgba(0,0,0,0.35))]"
+              className="absolute inset-0 opacity-0 pointer-events-none bg-gradient-to-t from-black/75 via-black/10 via-45% to-black/35"
             />
             {children ? (
               <div
@@ -283,7 +283,7 @@ const ScrollExpand: React.FC<ScrollExpandProps> = ({
           {title ? (
             <div
               ref={titleRef}
-              className="absolute inset-0 flex items-center justify-center m-0 px-[6%] text-center font-bold leading-none tracking-[-0.03em] text-white [font-size:var(--se-title-size)] [text-shadow:0_2px_24px_rgba(0,0,0,0.45)] pointer-events-none [will-change:opacity,transform]"
+              className="absolute inset-0 flex items-center justify-center m-0 px-[6%] text-center font-bold leading-none tracking-[-0.03em] text-text-on-accent [font-size:var(--se-title-size)] [text-shadow:var(--shadow-md)] pointer-events-none [will-change:opacity,transform]"
             >
               {title}
             </div>
@@ -291,7 +291,7 @@ const ScrollExpand: React.FC<ScrollExpandProps> = ({
           {scrollHint ? (
             <div
               ref={hintRef}
-              className="absolute inset-x-0 bottom-5 text-center text-[0.8125rem] tracking-[0.02em] text-white/55 pointer-events-none [will-change:opacity,transform]"
+              className="absolute inset-x-0 bottom-5 text-center text-base tracking-[0.02em] text-text-on-accent/55 pointer-events-none [will-change:opacity,transform]"
             >
               {scrollHint}
             </div>

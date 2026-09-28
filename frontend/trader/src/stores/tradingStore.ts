@@ -13,6 +13,9 @@ export interface TickData {
   ts_ms?: number;
   // True when the quote is a stale-refresher republish (dead upstream feed).
   stale?: boolean;
+  // Epoch ms of the last REAL feed tick (only present on stale republishes),
+  // so the UI can say when the price was last updated.
+  last_live_ms?: number;
 }
 
 export interface Position {

@@ -1,22 +1,29 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { clsx } from 'clsx';
+import { useState, useEffect, useCallback, useId, type ChangeEvent } from 'react';
 import toast from 'react-hot-toast';
 import DashboardShell from '@/components/layout/DashboardShell';
 import api, { getApiBase } from '@/lib/api/client';
+import { cn } from '@/lib/utils';
 import {
-  ShieldCheck,
-  Clock,
-  CheckCircle2,
-  XCircle,
-  Upload,
-  FileText,
-  ChevronDown,
-  FileImage,
-  MapPin,
-  X,
-} from 'lucide-react';
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  Input,
+  Modal,
+  PageHeader,
+  Select,
+  Skeleton,
+  Table,
+  TBody,
+  TD,
+  TH,
+  THead,
+  TR,
+} from '@/components/ui';
+import type { BadgeVariant } from '@/components/ui';
+import { ShieldCheck, Check, CheckCircle2, Upload, FileText, FileImage, MapPin } from 'lucide-react';
 
 interface KycDocument {
   id: string;
@@ -51,43 +58,177 @@ function normalizeKycStatus(raw: string) {
 
 function StatusBadge({ status, kind = 'user' }: { status: string; kind?: 'user' | 'document' }) {
   const s = normalizeKycStatus(status);
+  let variant: BadgeVariant = 'neutral';
+  let label = 'Not Started';
   if (s === 'pending' && kind === 'document') {
-    return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/25 text-amber-400 text-[10px] font-semibold">
-        <Clock size={10} strokeWidth={2.5} />
-        Pending
-      </span>
-    );
-  }
-  if (s === 'verified' || s === 'approved') {
-    return (
-      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent/10 border border-accent/25 text-accent text-xs font-semibold">
-        <CheckCircle2 size={11} strokeWidth={2.5} />
-        Approved
-      </span>
-    );
-  }
-  if (s === 'submitted' || s === 'under_review') {
-    return (
-      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/25 text-amber-400 text-xs font-semibold">
-        <Clock size={11} strokeWidth={2.5} />
-        Under Review
-      </span>
-    );
-  }
-  if (s === 'rejected' || s === 'failed') {
-    return (
-      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/25 text-red-400 text-xs font-semibold">
-        <XCircle size={11} strokeWidth={2.5} />
-        Rejected
-      </span>
-    );
+    variant = 'warning';
+    label = 'Pending';
+  } else if (s === 'verified' || s === 'approved') {
+    variant = 'success';
+    label = 'Approved';
+  } else if (s === 'submitted' || s === 'under_review') {
+    variant = 'warning';
+    label = 'Under Review';
+  } else if (s === 'rejected' || s === 'failed') {
+    variant = 'danger';
+    label = 'Rejected';
   }
   return (
-    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold">
-      <Clock size={11} strokeWidth={2.5} />
-      Not Started
-    </span>
+    <Badge variant={variant} dot size={kind === 'document' ? 'sm' : 'md'}>
+      {label}
+    </Badge>
+  );
+}
+
+type FlowStatus = 'not_started' | 'review' | 'rejected' | 'verified';
+type StepState = 'done' | 'current' | 'upcoming' | 'blocked';
+
+const STEP_BADGE: Record<StepState, { variant: BadgeVariant; label: string }> = {
+  done: { variant: 'success', label: 'Done' },
+  current: { variant: 'accent', label: 'In progress' },
+  upcoming: { variant: 'neutral', label: 'Pending' },
+  blocked: { variant: 'danger', label: 'Action needed' },
+};
+
+/** Three-step progress: upload → review → verified. */
+function KycStepper({ status }: { status: FlowStatus }) {
+  const steps: { title: string; desc: string; state: StepState }[] = [
+    {
+      title: 'Upload documents',
+      desc: 'Government ID and proof of address',
+      state: status === 'not_started' ? 'current' : status === 'rejected' ? 'blocked' : 'done',
+    },
+    {
+      title: 'Compliance review',
+      desc: 'Usually 24–48 hours',
+      state: status === 'review' ? 'current' : status === 'verified' ? 'done' : 'upcoming',
+    },
+    {
+      title: 'Verified',
+      desc: 'Deposits, withdrawals and live trading unlocked',
+      state: status === 'verified' ? 'done' : 'upcoming',
+    },
+  ];
+  return (
+    <Card padding="sm">
+      <ol className="grid gap-2 md:grid-cols-3">
+        {steps.map((s, i) => {
+          const badge = STEP_BADGE[s.state];
+          return (
+            <li
+              key={s.title}
+              className={cn('flex items-start gap-3 rounded-md p-3', s.state === 'current' && 'bg-bg-tertiary')}
+              aria-current={s.state === 'current' ? 'step' : undefined}
+            >
+              <span
+                className={cn(
+                  'grid h-7 w-7 shrink-0 place-items-center rounded-full border font-mono text-xs font-bold tabular-nums',
+                  s.state === 'done' && 'border-success bg-success text-text-inverse',
+                  s.state === 'current' && 'border-accent bg-accent text-text-on-accent',
+                  s.state === 'blocked' && 'border-danger text-danger',
+                  s.state === 'upcoming' && 'border-border-primary text-text-tertiary',
+                )}
+              >
+                {s.state === 'done' ? <Check size={14} strokeWidth={3} /> : i + 1}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-text-primary">{s.title}</p>
+                  <Badge size="sm" dot variant={badge.variant}>
+                    {badge.label}
+                  </Badge>
+                </div>
+                <p className="mt-0.5 text-xs text-text-tertiary">{s.desc}</p>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </Card>
+  );
+}
+
+/** Dashed drop-target wrapping a hidden file input. */
+function UploadDropzone({
+  file,
+  accept,
+  onChange,
+  hint,
+  compact,
+}: {
+  file: File | null;
+  accept: string;
+  onChange: (e: ChangeEvent<HTMLInputElement>) => void;
+  hint: string;
+  compact?: boolean;
+}) {
+  const inputId = useId();
+  return (
+    <label
+      htmlFor={inputId}
+      className={cn(
+        'flex w-full cursor-pointer items-center justify-center rounded-lg border-2 border-dashed px-3 transition-colors',
+        compact ? 'min-h-[4rem]' : 'min-h-[5.5rem]',
+        file ? 'border-accent/40 bg-accent/5' : 'border-border-primary bg-card-nested hover:border-border-strong',
+      )}
+    >
+      <input id={inputId} type="file" accept={accept} className="hidden" onChange={onChange} />
+      {file ? (
+        <span className="break-all text-center text-sm font-medium text-accent">{file.name}</span>
+      ) : (
+        <span className="flex flex-col items-center gap-1 py-2 text-center">
+          {!compact && <Upload size={18} className="text-text-tertiary" />}
+          <span className="text-xs text-text-secondary">{hint}</span>
+        </span>
+      )}
+    </label>
+  );
+}
+
+function DocumentsTable({ docs }: { docs: KycDocument[] }) {
+  return (
+    <Table dense>
+      <THead>
+        <TR>
+          <TH>Document</TH>
+          <TH>Submitted</TH>
+          <TH align="right">Status</TH>
+        </TR>
+      </THead>
+      <TBody>
+        {docs.map((doc) => (
+          <TR key={doc.id}>
+            <TD className="capitalize">
+              <span className="inline-flex items-center gap-2">
+                <FileText size={14} className="shrink-0 text-text-tertiary" />
+                {doc.document_type.replace(/_/g, ' ')}
+              </span>
+            </TD>
+            <TD muted>{new Date(doc.created_at).toLocaleDateString()}</TD>
+            <TD align="right">
+              <StatusBadge status={doc.status} kind="document" />
+            </TD>
+          </TR>
+        ))}
+      </TBody>
+    </Table>
+  );
+}
+
+function KycSkeleton() {
+  return (
+    <div className="space-y-4 md:space-y-5" aria-busy="true" aria-label="Loading">
+      <div className="space-y-2">
+        <Skeleton className="h-7 w-48" />
+        <Skeleton className="h-4 w-80 max-w-full" />
+      </div>
+      <Skeleton className="h-20 w-full" />
+      <Card className="space-y-4">
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-11 w-56 max-w-full" />
+      </Card>
+    </div>
   );
 }
 
@@ -194,153 +335,117 @@ export default function KycPage() {
     }
   };
 
-  const inputCls =
-    'w-full bg-bg-input border border-border-primary rounded-xl px-4 py-3 text-text-primary text-sm outline-none focus:border-accent/50 transition-colors placeholder:text-text-tertiary';
-  const selectCls = `${inputCls} appearance-none cursor-pointer`;
-
   if (loading) {
     return (
-      <DashboardShell mainClassName="p-0 flex flex-col min-h-0 overflow-hidden">
-        <div className="flex flex-1 items-center justify-center py-20">
-          <div className="flex flex-col items-center gap-3">
-            <div className="h-8 w-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-            <span className="text-sm text-text-secondary">Loading…</span>
-          </div>
-        </div>
+      <DashboardShell>
+        <KycSkeleton />
       </DashboardShell>
     );
   }
 
+  const flowStatus: FlowStatus = isVerified ? 'verified' : isReview ? 'review' : isRejected ? 'rejected' : 'not_started';
+  const docs = profile?.kyc_documents ?? [];
+  const rejectionReasons = isRejected ? docs.filter((d) => d.rejection_reason) : [];
+
   return (
-    <DashboardShell mainClassName="p-0 flex flex-col min-h-0 overflow-hidden">
-      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-        <div className="w-full px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-24 space-y-5 sm:space-y-6">
-          <section className="relative overflow-hidden rounded-xl border border-border-primary bg-card">
-            <div
-              className="pointer-events-none absolute inset-0 bg-gradient-to-br from-accent/[0.12] via-transparent to-accent/[0.05]"
-              aria-hidden
-            />
-            <div className="relative z-10 px-4 sm:px-6 py-5 sm:py-7">
-              <h1 className="text-xl sm:text-2xl font-bold text-text-primary tracking-tight">KYC Verification</h1>
-              <p className="text-sm text-text-secondary mt-1 max-w-2xl">
-                Complete identity verification to unlock deposits, withdrawals, and live trading — same secure styling as
-                the rest of PowerTradeFX.
-              </p>
-            </div>
-          </section>
+    <DashboardShell>
+      <div className="space-y-4 md:space-y-5">
+        <PageHeader
+          title="KYC Verification"
+          description="Complete identity verification to unlock deposits, withdrawals, and live trading. Your documents are encrypted and reviewed by our compliance team."
+          actions={<StatusBadge status={profile?.kyc_status ?? ''} />}
+        />
+
+        <KycStepper status={flowStatus} />
 
         {/* Approved — full success state */}
         {isVerified && (
-          <div className="rounded-xl border border-border-primary bg-card overflow-hidden ring-1 ring-accent/15">
-            <div className="p-8 md:p-10 text-center space-y-5">
-              <div className="w-20 h-20 rounded-full bg-accent/15 border border-accent/30 flex items-center justify-center mx-auto">
-                <CheckCircle2 className="w-10 h-10 text-accent" strokeWidth={2} />
-              </div>
+          <Card padding="none">
+            <div className="space-y-4 p-8 text-center md:p-10">
+              <span className="mx-auto grid h-16 w-16 place-items-center rounded-full border border-success/30 bg-success/10 text-success">
+                <CheckCircle2 size={32} strokeWidth={2} />
+              </span>
               <div>
-                <StatusBadge status={profile?.kyc_status ?? 'approved'} />
-                <h2 className="text-xl font-bold text-text-primary mt-4">Identity verified</h2>
-                <p className="text-sm text-text-secondary mt-2 max-w-md mx-auto leading-relaxed">
+                <h2 className="text-lg font-semibold text-text-primary">Identity verified</h2>
+                <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-text-secondary">
                   Your account is fully verified. You can deposit, withdraw, and use all live trading features.
                 </p>
               </div>
             </div>
-            {(profile?.kyc_documents?.length ?? 0) > 0 && (
-              <div className="border-t border-border-primary bg-card-nested px-5 py-4">
-                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-3">
+            {docs.length > 0 && (
+              <div className="border-t border-border-secondary">
+                <p className="px-4 pb-1 pt-4 text-xxs font-bold uppercase tracking-[0.12em] text-text-tertiary">
                   Submitted documents
                 </p>
-                <ul className="space-y-2">
-                  {profile!.kyc_documents.map((doc) => (
-                    <li
-                      key={doc.id}
-                      className="flex items-center justify-between gap-3 text-sm text-text-primary py-2 border-b border-border-primary/80 last:border-0"
-                    >
-                      <span className="capitalize">{doc.document_type.replace(/_/g, ' ')}</span>
-                      <StatusBadge status={doc.status} kind="document" />
-                    </li>
-                  ))}
-                </ul>
+                <DocumentsTable docs={docs} />
               </div>
             )}
-          </div>
+          </Card>
         )}
 
         {/* Main flow: not yet approved */}
         {!isVerified && (
           <>
-            <div className="rounded-xl border border-border-primary bg-card overflow-hidden shadow-[0_0_0_1px_rgba(0,0,0,0.2)]">
-              <div className="p-5 md:p-6 border-b border-border-primary flex flex-wrap items-start gap-4">
-                <div className="w-11 h-11 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center shrink-0">
-                  <ShieldCheck size={22} className="text-accent" strokeWidth={2} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-base font-bold text-text-primary">Identity Verification</p>
-                  <p className="text-xs text-text-secondary mt-0.5">
-                    Secure KYC — upload government ID and proof of address
-                  </p>
-                </div>
-                <div className="shrink-0 w-full sm:w-auto flex justify-start sm:justify-end">
-                  <StatusBadge status={profile?.kyc_status ?? ''} />
-                </div>
-              </div>
+            <Card>
+              <CardHeader
+                title="Identity Verification"
+                description="Secure KYC — upload government ID and proof of address"
+                actions={
+                  <span className="grid h-9 w-9 place-items-center rounded-lg border border-accent/20 bg-accent/10 text-accent">
+                    <ShieldCheck size={18} strokeWidth={2} />
+                  </span>
+                }
+              />
 
               {isReview && (
-                <div className="p-6 md:p-8 space-y-4">
-                  <div className="w-full bg-bg-secondary rounded-full h-1.5 overflow-hidden border border-border-primary/80">
-                    <div
-                      className="bg-accent h-full rounded-full animate-pulse opacity-90"
-                      style={{ width: '60%' }}
-                    />
-                  </div>
-                  <p className="text-sm text-text-secondary leading-relaxed">
-                    Your documents are under review. This usually takes <span className="text-text-primary font-medium">24–48 hours</span>.
-                    We&apos;ll notify you when the decision is ready.
-                  </p>
-                </div>
+                <p className="text-sm leading-relaxed text-text-secondary">
+                  Your documents are under review. This usually takes{' '}
+                  <span className="font-medium text-text-primary">24–48 hours</span>. We&apos;ll notify you when the
+                  decision is ready.
+                </p>
               )}
 
-              {isRejected && profile?.kyc_documents?.some((d) => d.rejection_reason) && (
-                <div className="px-5 py-4 border-t border-border-primary bg-red-500/100/5">
-                  <p className="text-xs font-semibold text-red-400 mb-1">Rejection reason</p>
-                  {profile.kyc_documents
-                    .filter((d) => d.rejection_reason)
-                    .map((d) => (
-                      <p key={d.id} className="text-sm text-text-secondary">
-                        {d.rejection_reason}
-                      </p>
-                    ))}
+              {rejectionReasons.length > 0 && (
+                <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2.5">
+                  <p className="mb-1 text-xs font-semibold text-danger">Rejection reason</p>
+                  {rejectionReasons.map((d) => (
+                    <p key={d.id} className="text-sm text-text-secondary">
+                      {d.rejection_reason}
+                    </p>
+                  ))}
                 </div>
               )}
 
               {(isNotStarted || isRejected) && (
-                <div className="p-8 md:p-10 text-center space-y-5">
-                  <div className="w-[4.5rem] h-[4.5rem] rounded-2xl bg-accent/10 border border-accent/25 flex items-center justify-center mx-auto">
-                    <FileImage size={32} className="text-accent" strokeWidth={1.75} />
-                  </div>
+                <div className={cn('space-y-4 py-6 text-center', rejectionReasons.length > 0 && 'mt-4')}>
+                  <span className="mx-auto grid h-16 w-16 place-items-center rounded-lg border border-accent/25 bg-accent/10 text-accent">
+                    <FileImage size={30} strokeWidth={1.75} />
+                  </span>
                   <div>
-                    <h2 className="text-lg font-bold text-text-primary">Start Verification</h2>
-                    <p className="text-sm text-text-secondary mt-2 max-w-sm mx-auto leading-relaxed">
+                    <h2 className="text-lg font-semibold text-text-primary">Start Verification</h2>
+                    <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-text-secondary">
                       Complete a quick identity verification to unlock deposits, withdrawals, and live trading features.
                     </p>
                   </div>
-                  <button
-                    type="button"
+                  <Button
+                    variant="primary"
+                    size="lg"
+                    leftIcon={<ShieldCheck size={18} strokeWidth={2.5} />}
                     onClick={openForm}
-                    className="inline-flex items-center justify-center gap-2 w-full sm:w-auto min-w-[240px] px-8 py-3.5 rounded-xl text-sm font-bold border-2 border-accent bg-accent text-black hover:brightness-110 transition-all"
+                    className="w-full sm:w-auto sm:min-w-[240px]"
                   >
-                    <ShieldCheck size={18} strokeWidth={2.5} />
                     {isRejected ? 'Re-submit KYC' : 'Start KYC Verification'}
-                  </button>
+                  </Button>
                 </div>
               )}
-            </div>
+            </Card>
 
-            {/* Info sections — only before review / same as reference */}
+            {/* Info sections — only before review */}
             {(isNotStarted || isRejected) && (
               <>
-                <div className="rounded-xl border border-border-primary bg-card p-5 md:p-6">
-                  <h3 className="text-sm font-bold text-text-primary mb-5">What You&apos;ll Need</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <Card>
+                  <CardHeader title="What You'll Need" />
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     {[
                       {
                         num: '1',
@@ -355,255 +460,137 @@ export default function KycPage() {
                         Icon: MapPin,
                       },
                     ].map(({ num, title, desc, Icon }) => (
-                      <div key={num} className="text-center md:text-left">
-                        <div className="w-9 h-9 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center mx-auto md:mx-0 mb-3 text-accent text-sm font-bold">
-                          {num}
+                      <Card key={num} nested padding="sm" className="flex items-start gap-3">
+                        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-accent/20 bg-accent/10 text-accent">
+                          <Icon size={18} />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-xxs font-bold uppercase tracking-[0.12em] text-text-tertiary">Step {num}</p>
+                          <p className="text-sm font-semibold text-text-primary">{title}</p>
+                          <p className="mt-1 text-xs leading-relaxed text-text-secondary">{desc}</p>
                         </div>
-                        <div className="flex md:block items-start gap-3 justify-center md:justify-start">
-                          <Icon size={18} className="text-accent shrink-0 md:hidden" />
-                          <div>
-                            <p className="text-sm font-semibold text-text-primary">{title}</p>
-                            <p className="text-xs text-text-secondary mt-1 leading-relaxed">{desc}</p>
-                          </div>
-                        </div>
-                      </div>
+                      </Card>
                     ))}
                   </div>
-                </div>
+                </Card>
 
-                <div className="rounded-xl border border-border-primary bg-card p-5 md:p-6">
-                  <h3 className="text-sm font-bold text-text-primary mb-4">Why Verify?</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <Card>
+                  <CardHeader title="Why Verify?" />
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     {[
                       'Access live trading accounts',
                       'Deposit and withdraw funds',
                       'Higher transaction limits',
                       'Join affiliate program',
                     ].map((item) => (
-                      <div
-                        key={item}
-                        className="flex items-center gap-3 p-3.5 rounded-xl bg-card-nested border border-border-primary"
-                      >
-                        <div className="w-8 h-8 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center shrink-0">
-                          <CheckCircle2 size={16} className="text-accent" strokeWidth={2.5} />
-                        </div>
-                        <span className="text-sm text-text-primary font-medium leading-snug">{item}</span>
-                      </div>
+                      <Card key={item} nested padding="sm" className="flex items-center gap-3">
+                        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-success/20 bg-success/10 text-success">
+                          <CheckCircle2 size={16} strokeWidth={2.5} />
+                        </span>
+                        <span className="text-sm font-medium leading-snug text-text-primary">{item}</span>
+                      </Card>
                     ))}
                   </div>
-                </div>
+                </Card>
               </>
             )}
 
-            {(profile?.kyc_documents?.length ?? 0) > 0 && !isVerified && (
-              <div className="rounded-xl border border-border-primary bg-card overflow-hidden">
-                <div className="px-5 py-3.5 border-b border-border-primary">
-                  <h3 className="text-sm font-bold text-text-primary">Submitted Documents</h3>
-                </div>
-                <ul className="divide-y divide-border-primary">
-                  {profile!.kyc_documents.map((doc) => (
-                    <li key={doc.id} className="px-5 py-3.5 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <FileText size={14} className="text-accent/70 shrink-0" />
-                        <span className="text-sm text-text-primary capitalize truncate">
-                          {doc.document_type.replace(/_/g, ' ')}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <StatusBadge status={doc.status} kind="document" />
-                        <span className="text-[11px] text-text-tertiary">
-                          {new Date(doc.created_at).toLocaleDateString()}
-                        </span>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+            {docs.length > 0 && (
+              <Card padding="none">
+                <CardHeader title="Submitted Documents" className="mb-0 border-b border-border-secondary px-4 py-3 md:px-5" />
+                <DocumentsTable docs={docs} />
+              </Card>
             )}
           </>
         )}
-        </div>
       </div>
 
       {/* Modal: submit form */}
-      {showFormModal && canSubmit && (
-        <div
-          className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="kyc-modal-title"
-        >
-          <button
-            type="button"
-            className="absolute inset-0 bg-bg-base/80 backdrop-blur-sm"
-            aria-label="Close"
-            onClick={() => !submitting && setShowFormModal(false)}
-          />
-          <div className="relative w-full sm:max-w-lg max-h-[92dvh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-border-primary bg-card shadow-2xl sidebar-scroll">
-            <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 py-4 border-b border-border-primary bg-card">
-              <h3 id="kyc-modal-title" className="text-base font-bold text-text-primary">
-                {isRejected ? 'Re-submit documents' : 'Submit documents'}
-              </h3>
-              <button
-                type="button"
-                onClick={() => !submitting && setShowFormModal(false)}
-                className="p-2 rounded-lg text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors"
-                aria-label="Close"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="p-5 space-y-5">
-              <div className="space-y-2">
-                <label className="text-xs text-text-secondary uppercase tracking-wide font-semibold">
-                  Primary document *
-                </label>
-                <div className="relative">
-                  <select
-                    value={docType}
-                    onChange={(e) => setDocType(e.target.value)}
-                    className={selectCls}
-                  >
-                    {DOC_TYPES.slice(0, 6).map((d) => (
-                      <option key={d.value} value={d.value} className="bg-card">
-                        {d.label}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown
-                    size={14}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-text-tertiary pointer-events-none"
-                  />
-                </div>
-                <label
-                  className={clsx(
-                    'flex items-center justify-center gap-2 w-full min-h-[5.5rem] rounded-xl border-2 border-dashed cursor-pointer transition-colors px-3',
-                    file
-                      ? 'border-accent/40 bg-accent/5'
-                      : 'border-border-primary hover:border-border-accent bg-card-nested',
-                  )}
-                >
-                  <input
-                    type="file"
-                    accept=".jpg,.jpeg,.png,.pdf,.webp"
-                    className="hidden"
-                    onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                  />
-                  {file ? (
-                    <span className="text-sm text-accent font-medium break-all text-center">{file.name}</span>
-                  ) : (
-                    <div className="flex flex-col items-center gap-1 text-center py-2">
-                      <Upload size={18} className="text-text-tertiary" />
-                      <span className="text-xs text-text-secondary">
-                        Tap to upload · JPG, PNG, PDF, WEBP · max 10 MB
-                      </span>
-                    </div>
-                  )}
-                </label>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs text-text-secondary uppercase tracking-wide font-semibold">
-                  Secondary document (optional)
-                </label>
-                <div className="relative">
-                  <select
-                    value={docType2}
-                    onChange={(e) => setDocType2(e.target.value)}
-                    className={selectCls}
-                  >
-                    {DOC_TYPES.map((d) => (
-                      <option key={d.value} value={d.value} className="bg-card">
-                        {d.label}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown
-                    size={14}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-text-tertiary pointer-events-none"
-                  />
-                </div>
-                <label
-                  className={clsx(
-                    'flex items-center justify-center w-full min-h-[4rem] rounded-xl border-2 border-dashed cursor-pointer transition-colors',
-                    file2
-                      ? 'border-accent/40 bg-accent/5'
-                      : 'border-border-primary hover:border-border-accent bg-card-nested',
-                  )}
-                >
-                  <input
-                    type="file"
-                    accept=".jpg,.jpeg,.png,.pdf,.webp"
-                    className="hidden"
-                    onChange={(e) => setFile2(e.target.files?.[0] ?? null)}
-                  />
-                  {file2 ? (
-                    <span className="text-xs text-accent font-medium px-2 break-all text-center">{file2.name}</span>
-                  ) : (
-                    <span className="text-xs text-text-secondary">Upload second file (e.g. proof of address)</span>
-                  )}
-                </label>
-              </div>
-
-              <div className="space-y-3">
-                <label className="text-xs text-text-secondary uppercase tracking-wide font-semibold">
-                  Address (optional)
-                </label>
-                <input
-                  type="text"
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  placeholder="Residential address"
-                  className={inputCls}
-                />
-                <div className="grid grid-cols-2 gap-3">
-                  <input
-                    type="text"
-                    value={city}
-                    onChange={(e) => setCity(e.target.value)}
-                    placeholder="City"
-                    className={inputCls}
-                  />
-                  <input
-                    type="text"
-                    value={postal}
-                    onChange={(e) => setPostal(e.target.value)}
-                    placeholder="Postal / ZIP"
-                    className={inputCls}
-                  />
-                </div>
-                <input
-                  type="text"
-                  value={country}
-                  onChange={(e) => setCountry(e.target.value)}
-                  placeholder="Country"
-                  className={inputCls}
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={() => void handleSubmit()}
-                disabled={submitting}
-                className="w-full py-3.5 rounded-xl border-2 border-accent bg-accent hover:brightness-110 disabled:opacity-60 text-black font-bold text-sm transition-all flex items-center justify-center gap-2"
-              >
-                {submitting ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-                    Uploading…
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck size={18} />
-                    Submit for review
-                  </>
-                )}
-              </button>
-            </div>
+      <Modal
+        open={showFormModal && canSubmit}
+        onClose={() => !submitting && setShowFormModal(false)}
+        title={isRejected ? 'Re-submit documents' : 'Submit documents'}
+        width="lg"
+      >
+        <div className="space-y-5">
+          <div className="space-y-2">
+            <Select label="Primary document" required value={docType} onChange={(e) => setDocType(e.target.value)}>
+              {DOC_TYPES.slice(0, 6).map((d) => (
+                <option key={d.value} value={d.value}>
+                  {d.label}
+                </option>
+              ))}
+            </Select>
+            <UploadDropzone
+              file={file}
+              accept=".jpg,.jpeg,.png,.pdf,.webp"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              hint="Tap to upload · JPG, PNG, PDF, WEBP · max 10 MB"
+            />
           </div>
+
+          <div className="space-y-2">
+            <Select label="Secondary document (optional)" value={docType2} onChange={(e) => setDocType2(e.target.value)}>
+              {DOC_TYPES.map((d) => (
+                <option key={d.value} value={d.value}>
+                  {d.label}
+                </option>
+              ))}
+            </Select>
+            <UploadDropzone
+              compact
+              file={file2}
+              accept=".jpg,.jpeg,.png,.pdf,.webp"
+              onChange={(e) => setFile2(e.target.files?.[0] ?? null)}
+              hint="Upload second file (e.g. proof of address)"
+            />
+          </div>
+
+          <div className="space-y-3">
+            <Input
+              label="Address (optional)"
+              type="text"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              placeholder="Residential address"
+            />
+            <div className="grid grid-cols-2 gap-3">
+              <Input
+                aria-label="City"
+                type="text"
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                placeholder="City"
+              />
+              <Input
+                aria-label="Postal / ZIP"
+                type="text"
+                value={postal}
+                onChange={(e) => setPostal(e.target.value)}
+                placeholder="Postal / ZIP"
+              />
+            </div>
+            <Input
+              aria-label="Country"
+              type="text"
+              value={country}
+              onChange={(e) => setCountry(e.target.value)}
+              placeholder="Country"
+            />
+          </div>
+
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            loading={submitting}
+            leftIcon={<ShieldCheck size={18} />}
+            onClick={() => void handleSubmit()}
+          >
+            {submitting ? 'Uploading…' : 'Submit for review'}
+          </Button>
         </div>
-      )}
+      </Modal>
     </DashboardShell>
   );
 }

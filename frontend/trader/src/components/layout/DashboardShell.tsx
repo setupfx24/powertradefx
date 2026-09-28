@@ -219,12 +219,11 @@ export default function DashboardShell({
             <div className="dk-more" ref={moreRef}>
               <button
                 type="button"
-                className={cn('dk-link', MORE.some((m) => pathname?.startsWith(m.href)) && 'is-on')}
-                style={{ background: 'none', border: 0, cursor: 'pointer', height: '100%' }}
+                className={cn('dk-link h-full cursor-pointer border-0 bg-transparent', MORE.some((m) => pathname?.startsWith(m.href)) && 'is-on')}
                 onClick={() => setMoreOpen((o) => !o)}
                 aria-haspopup="menu" aria-expanded={moreOpen}
               >
-                More <MoreHorizontal size={14} style={{ marginLeft: 5 }} />
+                More <MoreHorizontal size={14} className="ml-1" aria-hidden />
               </button>
               {moreOpen && (
                 <ul className="dk-more-menu" role="menu">
@@ -235,7 +234,7 @@ export default function DashboardShell({
                   ))}
                   <li role="none">
                     <a role="menuitem" href="#" onClick={(e) => { e.preventDefault(); void logout(); }}>
-                      <LogOut size={12} style={{ display: 'inline', marginRight: 6 }} />Sign out
+                      <LogOut size={12} className="mr-1.5 inline" aria-hidden />Sign out
                     </a>
                   </li>
                 </ul>

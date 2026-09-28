@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useTradingStore, type InstrumentInfo } from '@/stores/tradingStore';
 import { clsx } from 'clsx';
+import { Input } from '@/components/ui';
 
 function normalizeSegment(raw: string | undefined): string {
   const s = (raw || '').trim();
@@ -67,18 +68,20 @@ export default function OrderPanelSymbolPicker({
   return (
     <div
       className={clsx(
-        'border-b border-border-glass bg-bg-primary/95 flex flex-col min-h-0 max-h-[min(320px,42vh)]',
+        'border-b border-border-primary bg-card flex flex-col min-h-0 max-h-[min(320px,42vh)]',
         className,
       )}
     >
       <div className="shrink-0 px-2 pt-2 pb-1.5">
-        <input
+        <Input
           type="search"
+          size="sm"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search symbols…"
-          className="w-full px-2.5 py-2 rounded-lg border border-border-glass bg-bg-secondary text-xs text-text-primary placeholder:text-text-tertiary font-mono"
+          className="font-mono"
           autoComplete="off"
+          aria-label="Search symbols"
         />
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto px-1 pb-2 space-y-2">
@@ -87,7 +90,7 @@ export default function OrderPanelSymbolPicker({
         ) : (
           grouped.map(([segment, syms]) => (
             <div key={segment}>
-              <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-text-tertiary">
+              <div className="px-2 py-1 text-xxs font-bold uppercase tracking-[0.12em] text-text-tertiary">
                 {segment}
               </div>
               <ul className="space-y-0.5">
@@ -103,12 +106,12 @@ export default function OrderPanelSymbolPicker({
                         className={clsx(
                           'w-full text-left px-2 py-1.5 rounded-md text-xs font-mono transition-colors flex items-center justify-between gap-2',
                           active
-                            ? 'bg-buy/15 text-buy border border-buy/25'
-                            : 'text-text-primary hover:bg-bg-hover border border-transparent',
+                            ? 'bg-accent/15 text-accent'
+                            : 'text-text-primary hover:bg-bg-hover',
                         )}
                       >
                         <span className="truncate font-bold">{sym}</span>
-                        <span className="truncate text-[10px] text-text-tertiary font-normal max-w-[45%]">
+                        <span className="truncate text-xxs text-text-tertiary font-normal max-w-[45%]">
                           {label !== sym ? label : ''}
                         </span>
                       </button>

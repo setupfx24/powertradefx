@@ -22,16 +22,11 @@ import {
   LineChart,
   Target,
 } from 'lucide-react';
-import { clsx } from 'clsx';
+import { cn } from '@/lib/utils';
 import type { CalendarDayCell, TradingDashboardData } from '@/lib/trading-dashboard';
 import { getTradingDashboardMock } from '@/lib/trading-dashboard';
 import TradingJournalSection from '@/components/profile/TradingJournalSection';
-
-const NEON = '#FA5600'; // --brand-600 (SVG presentation attrs can't read CSS vars)
-const RED = '#FF4D4D';
-const CARD = 'var(--bg-card)';
-const BORDER = 'var(--border-primary)';
-void RED;
+import { Button, Card, CardHeader, Segmented, Select } from '@/components/ui';
 
 function fmtUsd(n: number) {
   return new Intl.NumberFormat('en-US', {
@@ -119,16 +114,16 @@ function EquityChart({ points }: { points: { date: string; equityUsd: number }[]
   }, [minY, maxY, pts.length]);
 
   return (
-    <div className="relative w-full overflow-hidden rounded-xl border border-border-primary bg-bg-secondary p-3">
-      <div className="flex flex-wrap items-center gap-3 mb-2 text-[10px] text-text-tertiary">
+    <Card nested padding="sm" className="relative w-full overflow-hidden">
+      <div className="flex flex-wrap items-center gap-3 mb-2 text-xxs text-text-tertiary">
         <span className="flex items-center gap-1">
           <span className="w-2 h-2 rounded-full bg-accent" /> Strong profit
         </span>
         <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full bg-emerald-500/100" /> Small win
+          <span className="w-2 h-2 rounded-full bg-success" /> Small win
         </span>
         <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full bg-red-500/100" /> Losing day
+          <span className="w-2 h-2 rounded-full bg-danger" /> Losing day
         </span>
         <span className="flex items-center gap-1">
           <span className="w-2 h-2 rounded-full bg-text-tertiary" /> Rest
@@ -144,8 +139,8 @@ function EquityChart({ points }: { points: { date: string; equityUsd: number }[]
           const y = pad.t + innerH - ((yv - minY) / (maxY - minY)) * innerH;
           return (
             <g key={i}>
-              <line x1={pad.l} y1={y} x2={w - pad.r} y2={y} stroke="var(--border-primary)" strokeWidth={1} />
-              <text x={4} y={y + 4} fill="var(--text-tertiary)" fontSize={10}>
+              <line x1={pad.l} y1={y} x2={w - pad.r} y2={y} style={{ stroke: 'var(--border-primary)' }} strokeWidth={1} />
+              <text x={4} y={y + 4} style={{ fill: 'var(--text-tertiary)' }} fontSize={10}>
                 ${(yv / 1000).toFixed(0)}k
               </text>
             </g>
@@ -153,30 +148,24 @@ function EquityChart({ points }: { points: { date: string; equityUsd: number }[]
         })}
         <defs>
           <linearGradient id="eqFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={NEON} stopOpacity="0.25" />
-            <stop offset="100%" stopColor={NEON} stopOpacity="0" />
+            <stop offset="0%" style={{ stopColor: 'var(--accent)', stopOpacity: 0.25 }} />
+            <stop offset="100%" style={{ stopColor: 'var(--accent)', stopOpacity: 0 }} />
           </linearGradient>
         </defs>
         {areaD ? <path d={areaD} fill="url(#eqFill)" /> : null}
         {pathD ? (
-          <path
-            d={pathD}
-            fill="none"
-            stroke={NEON}
-            strokeWidth={2}
-            className="drop-shadow-[0_0_8px_rgb(var(--accent-rgb) / 0.35)]"
-          />
+          <path d={pathD} fill="none" style={{ stroke: 'var(--accent)' }} strokeWidth={2} />
         ) : null}
         {hover ? (
           <>
-            <line x1={hover.x} y1={pad.t} x2={hover.x} y2={pad.t + innerH} stroke="var(--text-tertiary)" strokeDasharray="4 4" />
-            <circle cx={hover.x} cy={hover.y} r={5} fill={NEON} />
+            <line x1={hover.x} y1={pad.t} x2={hover.x} y2={pad.t + innerH} style={{ stroke: 'var(--text-tertiary)' }} strokeDasharray="4 4" />
+            <circle cx={hover.x} cy={hover.y} r={5} style={{ fill: 'var(--accent)' }} />
           </>
         ) : null}
       </svg>
       {hover ? (
         <div
-          className="absolute z-10 rounded-lg border border-border-primary bg-card px-3 py-2 text-xs shadow-xl pointer-events-none"
+          className="absolute z-10 rounded-md border border-border-primary bg-card px-3 py-2 text-xs shadow-md pointer-events-none"
           style={{
             left: `clamp(8px, ${(hover.x / w) * 100}%, calc(100% - 160px))`,
             top: 48,
@@ -191,18 +180,27 @@ function EquityChart({ points }: { points: { date: string; equityUsd: number }[]
               return String(hover.label ?? '');
             }
           })()}</div>
-          <div className="font-mono font-semibold text-text-primary">Equity {fmtUsd(hover.v)}</div>
+          <div className="font-mono tabular-nums font-semibold text-text-primary">Equity {fmtUsd(hover.v)}</div>
         </div>
       ) : null}
-    </div>
+    </Card>
   );
 }
+
+type CalView = 'usd' | 'pct' | 'r' | 'trades';
+
+const CAL_VIEWS: { value: CalView; label: string }[] = [
+  { value: 'usd', label: '$' },
+  { value: 'pct', label: '%' },
+  { value: 'r', label: 'R' },
+  { value: 'trades', label: 'T' },
+];
 
 export default function TradingOverview({ data }: { data?: TradingDashboardData }) {
   const d = data ?? getTradingDashboardMock();
   const j = d.journal;
   const [calMonth, setCalMonth] = useState(() => parseISO(`${d.calendar.defaultMonth}-01`));
-  const [calView, setCalView] = useState<'usd' | 'pct' | 'r' | 'trades'>('usd');
+  const [calView, setCalView] = useState<CalView>('usd');
   const dayMap = useMemo(() => dayMapFromCells(d.calendar.days), [d.calendar.days]);
 
   const weeks = useMemo(() => {
@@ -235,89 +233,83 @@ export default function TradingOverview({ data }: { data?: TradingDashboardData 
 
   const s = d.calendar.summary;
 
+  const performanceRows: [string, string, string][] = [
+    ['Profit factor', d.stats.profitFactor.toFixed(2), 'text-text-primary'],
+    ['Avg win', fmtUsd(d.stats.avgWinUsd), 'text-success'],
+    ['Avg loss', fmtUsd(-d.stats.avgLossUsd), 'text-danger'],
+    ['Period P&L', fmtCompactSigned(d.stats.periodPnlUsd), d.stats.periodPnlUsd >= 0 ? 'text-success' : 'text-danger'],
+    ['Total trades', String(d.stats.totalTrades), 'text-text-primary'],
+  ];
+
   return (
-    <div className="space-y-8 text-text-primary pb-8">
+    <div className="space-y-4 md:space-y-5 text-text-primary">
       <TradingJournalSection journal={j} />
 
       {/* —— Calendar + sidebar —— */}
       <section className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        <div
-          className="xl:col-span-2 rounded-xl border overflow-hidden"
-          style={{ backgroundColor: CARD, borderColor: BORDER }}
-        >
+        <Card padding="none" className="xl:col-span-2 overflow-hidden">
           <div className="p-3 md:p-4 border-b border-border-primary flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-accent" />
-              <h3 className="font-bold text-text-primary">Trading calendar</h3>
+              <Calendar className="w-4 h-4 text-accent" aria-hidden />
+              <h3 className="text-md font-semibold text-text-primary">Trading calendar</h3>
             </div>
-            <div className="flex items-center gap-1 flex-wrap">
-              {(
-                [
-                  { id: 'usd' as const, label: '$' },
-                  { id: 'pct' as const, label: '%' },
-                  { id: 'r' as const, label: 'R' },
-                  { id: 'trades' as const, label: 'T' },
-                ] as const
-              ).map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setCalView(t.id)}
-                  className={clsx(
-                    'w-8 h-8 rounded-lg text-xs font-bold transition-colors',
-                    calView === t.id ? 'bg-accent text-text-inverse' : 'bg-bg-secondary text-text-tertiary hover:text-text-primary',
-                  )}
-                >
-                  {t.label}
-                </button>
-              ))}
-              <button
-                type="button"
-                className="w-8 h-8 rounded-lg bg-bg-secondary text-text-tertiary flex items-center justify-center hover:text-text-primary"
-                aria-label="Toggle visibility"
-              >
-                <Eye className="w-4 h-4" />
-              </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Segmented
+                size="sm"
+                aria-label="Calendar view"
+                value={calView}
+                onChange={setCalView}
+                options={CAL_VIEWS}
+              />
+              <Button variant="ghost" size="sm" iconOnly aria-label="Toggle visibility">
+                <Eye className="w-4 h-4" aria-hidden />
+              </Button>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                type="button"
+              <Button
+                variant="outline"
+                size="sm"
+                iconOnly
                 onClick={() => setCalMonth(subMonths(calMonth, 1))}
-                className="p-1.5 rounded-lg border border-border-primary hover:bg-bg-hover text-text-secondary"
+                aria-label="Previous month"
               >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
+                <ChevronLeft className="w-4 h-4" aria-hidden />
+              </Button>
               <span className="text-sm font-semibold text-text-primary min-w-[100px] text-center">
                 {format(calMonth, 'MMM yyyy')}
               </span>
-              <button
-                type="button"
+              <Button
+                variant="outline"
+                size="sm"
+                iconOnly
                 onClick={() => setCalMonth(addMonths(calMonth, 1))}
-                className="p-1.5 rounded-lg border border-border-primary hover:bg-bg-hover text-text-secondary"
+                aria-label="Next month"
               >
-                <ChevronRight className="w-4 h-4" />
-              </button>
+                <ChevronRight className="w-4 h-4" aria-hidden />
+              </Button>
             </div>
           </div>
 
-          <div className="px-3 py-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] border-b border-border-primary bg-bg-secondary/40">
-            <span className="text-accent font-semibold">Monthly P&L {fmtCompactSigned(s.monthlyPnlUsd)}</span>
-            <span className="text-text-tertiary">
-              Active days <span className="text-text-primary">{s.activeDays}</span>
+          <div className="px-3 py-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs border-b border-border-primary bg-bg-secondary/40">
+            <span className={cn('font-semibold font-mono tabular-nums', s.monthlyPnlUsd >= 0 ? 'text-success' : 'text-danger')}>
+              Monthly P&L {fmtCompactSigned(s.monthlyPnlUsd)}
             </span>
             <span className="text-text-tertiary">
-              Trades <span className="text-text-primary">{s.trades}</span>
+              Active days <span className="text-text-primary font-mono tabular-nums">{s.activeDays}</span>
             </span>
             <span className="text-text-tertiary">
-              Lots <span className="text-text-primary">{s.lots.toFixed(2)}</span>
+              Trades <span className="text-text-primary font-mono tabular-nums">{s.trades}</span>
             </span>
-            <span className="ml-auto text-text-tertiary">
-              <span className="text-accent">{s.wins}W</span> <span className="text-red-400">{s.losses}L</span>
+            <span className="text-text-tertiary">
+              Lots <span className="text-text-primary font-mono tabular-nums">{s.lots.toFixed(2)}</span>
+            </span>
+            <span className="ml-auto text-text-tertiary font-mono tabular-nums">
+              <span className="text-success">{s.wins}W</span> <span className="text-danger">{s.losses}L</span>
             </span>
           </div>
 
           <div className="p-2 md:p-3">
-            <div className="grid grid-cols-[repeat(8,minmax(0,1fr))] gap-1 text-[10px] text-text-tertiary font-semibold mb-1 px-0.5">
+            <div className="grid grid-cols-[repeat(8,minmax(0,1fr))] gap-1 text-xxs text-text-tertiary font-semibold uppercase tracking-[0.1em] mb-1 px-0.5">
               {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Wk'].map((h) => (
                 <div key={h} className="text-center py-1">
                   {h}
@@ -336,46 +328,46 @@ export default function TradingOverview({ data }: { data?: TradingDashboardData 
                   return (
                     <div
                       key={key}
-                      className={clsx(
-                        'min-h-[72px] rounded-lg border p-1 flex flex-col',
+                      className={cn(
+                        'min-h-[72px] rounded-md border p-1 flex flex-col',
                         !inMonth && 'opacity-25 border-transparent bg-transparent',
                         inMonth && !cell && 'border-border-primary bg-bg-secondary/40',
-                        inMonth && isWin && 'border-accent/50 bg-accent/10',
-                        inMonth && isLoss && 'border-red-500/50 bg-red-500/100/10',
+                        inMonth && isWin && 'border-success/50 bg-success/10',
+                        inMonth && isLoss && 'border-danger/50 bg-danger/10',
                       )}
                     >
-                      <span className="text-[10px] text-text-tertiary">{format(dt, 'd')}</span>
+                      <span className="text-xxs text-text-tertiary">{format(dt, 'd')}</span>
                       {inMonth && cell && cell.kind !== 'empty' ? (
                         <>
                           {showUsd ? (
                             <span
-                              className={clsx(
-                                'text-[11px] font-bold leading-tight',
-                                cell.pnlUsd! >= 0 ? 'text-accent' : 'text-red-400',
+                              className={cn(
+                                'text-xs font-bold leading-tight font-mono tabular-nums',
+                                cell.pnlUsd! >= 0 ? 'text-success' : 'text-danger',
                               )}
                             >
                               {fmtCompactSigned(cell.pnlUsd!)}
                             </span>
                           ) : null}
                           {calView === 'trades' && cell.trades != null ? (
-                            <span className="text-[10px] text-text-secondary">{cell.trades} trades</span>
+                            <span className="text-xxs text-text-secondary">{cell.trades} trades</span>
                           ) : null}
                           {calView === 'r' && cell.rMultiple != null ? (
-                            <span className="text-[10px] text-text-secondary">{cell.rMultiple}R</span>
+                            <span className="text-xxs text-text-secondary">{cell.rMultiple}R</span>
                           ) : null}
                           {calView === 'pct' && cell.pnlUsd != null ? (
-                            <span className="text-[10px] text-text-secondary">{(cell.pnlUsd / 100).toFixed(1)}%</span>
+                            <span className="text-xxs text-text-secondary">{(cell.pnlUsd / 100).toFixed(1)}%</span>
                           ) : null}
                           {calView === 'usd' && cell.trades != null ? (
-                            <span className="text-[9px] text-text-tertiary mt-auto">{cell.trades} t</span>
+                            <span className="text-xxs text-text-tertiary mt-auto">{cell.trades} t</span>
                           ) : null}
                         </>
                       ) : null}
                     </div>
                   );
                 })}
-                <div className="min-h-[72px] rounded-lg border border-border-primary bg-bg-secondary/50 flex flex-col items-center justify-center text-[10px]">
-                  <span className="text-text-tertiary font-mono">
+                <div className="min-h-[72px] rounded-md border border-border-primary bg-bg-secondary/50 flex flex-col items-center justify-center text-xxs">
+                  <span className="text-text-tertiary font-mono tabular-nums">
                     {/* wi is the week-index loop counter, bounded by weekTotals.length. */}
                     {weekTotals[wi]!.n > 0 ? fmtCompactSigned(weekTotals[wi]!.sum) : '—'}
                   </span>
@@ -383,69 +375,72 @@ export default function TradingOverview({ data }: { data?: TradingDashboardData 
               </div>
             ))}
           </div>
-        </div>
+        </Card>
 
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div className="flex justify-end">
-            <label className="text-[10px] text-text-tertiary uppercase font-bold flex items-center gap-2">
-              Currency
-              <select className="bg-bg-input border border-border-primary rounded-lg px-2 py-1.5 text-sm text-text-primary">
+            <div className="w-28">
+              <Select label="Currency" size="sm" aria-label="Currency">
                 <option>USD</option>
-              </select>
-            </label>
-          </div>
-          <div className="rounded-xl p-4 border" style={{ backgroundColor: CARD, borderColor: BORDER }}>
-            <div className="flex items-center gap-2 text-sm font-semibold mb-3">
-              <Target className="w-4 h-4 text-accent" />
-              Trade win %
+              </Select>
             </div>
-            <p className={clsx('text-3xl font-bold', d.stats.tradeWinPct >= 50 ? 'text-accent' : 'text-red-400')}>
+          </div>
+          <Card>
+            <CardHeader
+              title={
+                <span className="inline-flex items-center gap-2">
+                  <Target className="w-4 h-4 text-accent" aria-hidden />
+                  Trade win %
+                </span>
+              }
+            />
+            <p className={cn('font-mono tabular-nums text-2xl font-semibold', d.stats.tradeWinPct >= 50 ? 'text-success' : 'text-danger')}>
               {d.stats.tradeWinPct.toFixed(1)}%
             </p>
-            <div className="h-2 rounded-full bg-red-500/100/40 mt-3 overflow-hidden flex">
+            <div className="h-2 rounded-full bg-danger/40 mt-3 overflow-hidden flex">
               <div
-                className="h-full bg-accent"
+                className="h-full bg-success"
                 style={{ width: `${Math.min(100, d.stats.tradeWinPct)}%` }}
               />
             </div>
-            <div className="flex justify-between text-[11px] mt-2">
-              <span className="text-accent">{j.wins} won</span>
-              <span className="text-red-400">{j.losses} lost</span>
+            <div className="flex justify-between text-xs mt-2 font-mono tabular-nums">
+              <span className="text-success">{j.wins} won</span>
+              <span className="text-danger">{j.losses} lost</span>
             </div>
-          </div>
-          <div className="rounded-xl p-4 border" style={{ backgroundColor: CARD, borderColor: BORDER }}>
-            <div className="flex items-center gap-2 text-sm font-semibold mb-3">
-              <BarChart3 className="w-4 h-4 text-accent" />
-              Performance
-            </div>
+          </Card>
+          <Card>
+            <CardHeader
+              title={
+                <span className="inline-flex items-center gap-2">
+                  <BarChart3 className="w-4 h-4 text-accent" aria-hidden />
+                  Performance
+                </span>
+              }
+            />
             <ul className="space-y-2 text-sm">
-              {[
-                ['Profit factor', d.stats.profitFactor.toFixed(2), 'text-accent'],
-                ['Avg win', fmtUsd(d.stats.avgWinUsd), 'text-accent'],
-                ['Avg loss', fmtUsd(-d.stats.avgLossUsd), 'text-red-400'],
-                ['Period P&L', fmtCompactSigned(d.stats.periodPnlUsd), 'text-accent'],
-                ['Total trades', String(d.stats.totalTrades), 'text-text-primary'],
-              ].map(([k, v, c]) => (
+              {performanceRows.map(([k, v, c]) => (
                 <li key={k} className="flex justify-between gap-2">
                   <span className="text-text-tertiary">{k}</span>
-                  <span className={clsx('font-mono font-semibold tabular-nums', c)}>{v}</span>
+                  <span className={cn('font-mono font-semibold tabular-nums', c)}>{v}</span>
                 </li>
               ))}
             </ul>
-          </div>
+          </Card>
         </div>
       </section>
 
       {/* —— Equity —— */}
-      <section>
-        <div className="rounded-xl p-4 border" style={{ backgroundColor: CARD, borderColor: BORDER }}>
-          <div className="flex items-center gap-2 mb-3">
-            <LineChart className="w-5 h-5 text-accent" />
-            <h3 className="font-bold text-text-primary">Equity growth</h3>
-          </div>
-          <EquityChart points={d.equity} />
-        </div>
-      </section>
+      <Card>
+        <CardHeader
+          title={
+            <span className="inline-flex items-center gap-2">
+              <LineChart className="w-4 h-4 text-accent" aria-hidden />
+              Equity growth
+            </span>
+          }
+        />
+        <EquityChart points={d.equity} />
+      </Card>
     </div>
   );
 }

@@ -8,7 +8,19 @@ import { clsx } from 'clsx';
 import MobileOrderSheet from '@/components/trading/MobileOrderSheet';
 import { ActiveAccountBadge } from '@/components/trading/ActiveAccountBadge';
 import { useUIStore } from '@/stores/uiStore';
-import { BellOff, ChevronUp, Star, TrendingUp } from 'lucide-react';
+import { BellOff, ChevronUp, Search, Star, TrendingUp } from 'lucide-react';
+import { Badge, Button, EmptyState, Input, Tabs } from '@/components/ui';
+import SymbolIcon from '@/components/trading/SymbolIcon';
+import { getMarketStatus } from '@/lib/marketHours';
+import { quoteFreshness } from '@/lib/quoteStatus';
+
+/** Market open but no live tick for this symbol — the feed is down, not the market. */
+function isFeedStale(symbol: string, tick: Parameters<typeof quoteFreshness>[0]): boolean {
+  const inst = useTradingStore.getState().instruments.find((i) => i.symbol === symbol) as
+    | { segment?: string }
+    | undefined;
+  return quoteFreshness(tick, getMarketStatus(symbol, inst?.segment).isOpen) === 'stale';
+}
 
 type Trend = 'up' | 'down' | 'neutral';
 
@@ -364,12 +376,15 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
   const rail =
     variant === 'terminalRail'
       ? 'border-0 bg-bg-base'
-      : 'border-r border-border-primary bg-bg-primary';
+      : 'border-r border-border-primary bg-bg-base';
+
+  /** Tick flash: the price blinks green on an up-tick, red on a down-tick. */
+  const flashClass = (t: Trend | undefined) => (t === 'up' ? 'flash-up' : t === 'down' ? 'flash-down' : false);
 
   return (
     <div className={clsx('h-full min-h-0 flex flex-col', rail)}>
       {pathname?.startsWith('/trading/terminal') && activeAccount ? (
-        <div className="sm:hidden shrink-0 px-3 pt-2 pb-1 border-b border-border-glass bg-bg-secondary/30">
+        <div className="sm:hidden shrink-0 px-3 pt-2 pb-1 border-b border-border-primary bg-bg-secondary">
           <ActiveAccountBadge account={activeAccount} variant="compact" />
         </div>
       ) : null}
@@ -377,21 +392,18 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
         <>
           <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2.5 bg-bg-secondary border-b border-border-primary">
             <div className="flex items-center gap-2 min-w-0 flex-1">
-              <div
-                className="w-8 h-8 rounded-full shrink-0 bg-gradient-to-br from-amber-400 to-blue-500"
-                aria-hidden
-              />
+              <SymbolIcon symbol={selectedSymbol} size={32} />
               <span className="text-sm font-bold text-text-primary font-mono truncate">{selectedSymbol}</span>
               <span className="text-base leading-none shrink-0" aria-hidden>
                 {SYMBOL_EMOJI[selectedSymbol] || '●'}
               </span>
               <BellOff className="w-3.5 h-3.5 text-text-tertiary shrink-0" aria-hidden />
-              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-bg-hover text-text-secondary shrink-0">
-                DB
-              </span>
+              <Badge size="sm">DB</Badge>
             </div>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
               onClick={() => {
                 if (onExitMarkets) {
                   onExitMarkets();
@@ -399,7 +411,7 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
                   setRailListExpanded((e) => !e);
                 }
               }}
-              className="shrink-0 p-1 rounded-md text-accent hover:bg-accent/10 transition-colors"
+              className="text-accent"
               aria-expanded={onExitMarkets ? true : railListExpanded}
               aria-label={onExitMarkets ? 'Back to trade panel' : railListExpanded ? 'Collapse symbol list' : 'Expand symbol list'}
             >
@@ -408,35 +420,22 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
                   'w-5 h-5 transition-transform duration-200',
                   !onExitMarkets && !railListExpanded && 'rotate-180',
                 )}
+                aria-hidden
               />
-            </button>
+            </Button>
           </div>
           {onExitMarkets || railListExpanded ? (
             <>
               <div className="p-3 shrink-0 border-b border-border-primary">
-                <div className="relative">
-                  <svg
-                    className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 opacity-40 text-text-tertiary"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                    />
-                  </svg>
-                  <input
-                    type="text"
-                    data-terminal-symbol-search
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search symbols…"
-                    className="w-full pl-10 pr-3 py-2.5 text-sm rounded-xl border border-border-primary bg-bg-secondary text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20"
-                  />
-                </div>
+                <Input
+                  type="text"
+                  data-terminal-symbol-search
+                  icon={<Search aria-hidden />}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search symbols…"
+                  aria-label="Search symbols"
+                />
               </div>
               <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain touch-pan-y">
                 {TERMINAL_GROUPS.map((group) => {
@@ -444,18 +443,21 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
                   if (syms.length === 0) return null;
                   return (
                     <div key={group}>
-                      <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-text-tertiary border-t border-border-primary first:border-t-0 bg-bg-secondary">
+                      <div className="px-3 py-1.5 text-xxs font-bold uppercase tracking-[0.12em] text-text-tertiary border-t border-border-primary first:border-t-0 bg-bg-secondary">
                         {group}
                       </div>
                       {syms.map((symbol) => {
                         const tick = prices[symbol];
                         const digits = getDigits(symbol);
                         const sel = symbol === selectedSymbol;
+                        const stale = isFeedStale(symbol, tick);
                         return (
                           <button
                             key={symbol}
                             type="button"
                             onClick={() => handleRowClick(symbol)}
+                            aria-label={`${symbol}${tick ? ` bid ${tick.bid.toFixed(digits)} ask ${tick.ask.toFixed(digits)}` : ''}`}
+                            aria-current={sel ? 'true' : undefined}
                             className={clsx(
                               'w-full flex items-center justify-between gap-2 pl-0 pr-3 py-2.5 text-left border-l-[3px] transition-colors',
                               sel
@@ -464,37 +466,39 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
                             )}
                           >
                             <div className="flex items-center gap-2 min-w-0 pl-3">
-                              <div
-                                className="w-6 h-6 rounded-full shrink-0 bg-gradient-to-br from-amber-400/90 to-blue-500/90"
-                                aria-hidden
-                              />
+                              <SymbolIcon symbol={symbol} size={24} />
                               <span className="text-sm font-bold text-text-primary font-mono">{symbol}</span>
-                              <span className="text-sm leading-none opacity-90 shrink-0">
+                              <span className="text-sm leading-none opacity-90 shrink-0" aria-hidden>
                                 {SYMBOL_EMOJI[symbol] || '·'}
                               </span>
+                              {stale && (
+                                <Badge variant="warning" size="sm" title="Live price unavailable — feed reconnecting">
+                                  Stale
+                                </Badge>
+                              )}
                             </div>
                             <div className="flex gap-4 shrink-0">
                               <div className="flex flex-col items-end gap-0.5">
                                 {tick ? (
-                                  <span className="text-xs font-mono font-semibold tabular-nums text-[#ef5350]">
+                                  <span className={clsx('text-xs font-mono font-semibold tabular-nums rounded-sm px-0.5', stale ? 'text-text-tertiary' : 'text-sell', flashClass(bidFlash[symbol]))}>
                                     {tick.bid.toFixed(digits)}
                                   </span>
                                 ) : (
                                   <span className="text-xs text-text-tertiary">—</span>
                                 )}
-                                <span className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">
+                                <span className="text-xxs font-semibold uppercase tracking-wide text-text-tertiary">
                                   Bid
                                 </span>
                               </div>
                               <div className="flex flex-col items-end gap-0.5">
                                 {tick ? (
-                                  <span className="text-xs font-mono font-semibold tabular-nums text-[#6366F1]">
+                                  <span className={clsx('text-xs font-mono font-semibold tabular-nums rounded-sm px-0.5', stale ? 'text-text-tertiary' : 'text-buy', flashClass(askFlash[symbol]))}>
                                     {tick.ask.toFixed(digits)}
                                   </span>
                                 ) : (
                                   <span className="text-xs text-text-tertiary">—</span>
                                 )}
-                                <span className="text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">
+                                <span className="text-xxs font-semibold uppercase tracking-wide text-text-tertiary">
                                   Ask
                                 </span>
                               </div>
@@ -512,73 +516,56 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
       ) : (
         <>
           {/* ── Search bar with Go button ── */}
-          <div className="px-3 pt-3 pb-2 shrink-0 border-b border-border-glass bg-bg-secondary">
+          <div className="px-3 pt-3 pb-2 shrink-0 border-b border-border-primary bg-bg-secondary">
             <div className="flex items-center gap-2">
-              <div className="relative flex-1 min-w-0">
-                <svg
-                  className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-tertiary"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-                <input
+              <div className="flex-1 min-w-0">
+                <Input
                   type="text"
+                  icon={<Search aria-hidden />}
                   value={search}
                   onChange={(e) => {
                     setSearch(e.target.value);
                     if (e.target.value.trim()) setSegment('All');
                   }}
                   placeholder="Search symbols..."
-                  className="w-full pl-10 pr-3 py-2.5 text-sm rounded-xl border border-border-glass bg-bg-primary text-text-primary placeholder:text-text-tertiary outline-none focus:border-buy/50 focus:ring-1 focus:ring-buy/20"
+                  aria-label="Search symbols"
                 />
               </div>
-              <button
-                type="button"
+              <Button
+                variant="primary"
+                size="md"
                 onClick={() => { /* search triggers on change already */ }}
-                className="shrink-0 px-4 py-2.5 rounded-xl bg-buy text-white text-sm font-bold hover:bg-buy-light active:scale-95 transition-all"
               >
                 Go
-              </button>
+              </Button>
             </div>
           </div>
 
           {/* ── Category tabs — horizontal scroll ── */}
-          <div className="shrink-0 border-b border-border-glass bg-bg-secondary">
-            <div className="flex overflow-x-auto no-scrollbar scrollbar-none">
-              {(['Starred', 'All', ...TERMINAL_GROUPS] as const).map((tab) => {
-                const label = tab === 'Starred' ? '★ Favourites' : tab === 'All' ? 'All' : tab;
-                const active = segment === (tab === 'Starred' ? 'Starred' : tab);
-                return (
-                  <button
-                    key={tab}
-                    type="button"
-                    onClick={() => setSegment(tab === 'Starred' ? 'Starred' : tab)}
-                    className={clsx(
-                      'shrink-0 px-4 py-3 text-xs font-bold uppercase tracking-wide whitespace-nowrap transition-colors border-b-2',
-                      active
-                        ? 'text-buy border-buy'
-                        : 'text-text-tertiary border-transparent hover:text-text-primary',
-                    )}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
+          <div className="shrink-0 bg-bg-secondary overflow-x-auto no-scrollbar scrollbar-none">
+            <Tabs
+              variant="underline"
+              size="sm"
+              aria-label="Instrument category"
+              className="min-w-max px-2"
+              tabs={(['Starred', 'All', ...TERMINAL_GROUPS] as const).map((tab) => ({
+                id: tab,
+                label: tab === 'Starred' ? '★ Favourites' : tab === 'All' ? 'All' : tab,
+              }))}
+              active={segment}
+              onChange={(id) => setSegment(id)}
+            />
           </div>
 
           {/* ── Results label ── */}
           {search.trim() !== '' && (
-            <div className="px-4 py-2 shrink-0 bg-bg-secondary/50">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">Search Results</span>
+            <div className="px-4 py-2 shrink-0 bg-bg-secondary">
+              <span className="text-xxs font-bold uppercase tracking-[0.12em] text-text-tertiary">Search Results</span>
             </div>
           )}
 
           {/* ── Instrument list ── */}
-          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain touch-pan-y bg-bg-primary no-scrollbar scrollbar-none">
+          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-y-contain touch-pan-y bg-bg-base no-scrollbar scrollbar-none">
             {(() => {
               // Filter symbols by search + segment
               const displaySymbols = allSymbols.filter((s: string) => {
@@ -593,14 +580,10 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
 
               if (displaySymbols.length === 0) {
                 return (
-                  <div className="flex flex-col items-center justify-center py-16 gap-3">
-                    <svg className="w-10 h-10 text-text-tertiary/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                    <p className="text-sm text-text-tertiary font-medium">
-                      {segment === 'Starred' ? 'No favourites yet' : 'No instruments found'}
-                    </p>
-                  </div>
+                  <EmptyState
+                    icon={<Search />}
+                    title={segment === 'Starred' ? 'No favourites yet' : 'No instruments found'}
+                  />
                 );
               }
 
@@ -638,24 +621,27 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
                   <div
                     key={symbol}
                     className={clsx(
-                      'w-full flex items-center gap-3 px-4 py-3.5 border-b border-border-glass/40 transition-colors',
-                      sel ? 'bg-buy/[0.06]' : 'hover:bg-bg-hover active:bg-buy/5',
+                      'w-full flex items-center gap-3 px-4 py-3.5 border-b border-border-secondary transition-colors',
+                      sel ? 'bg-accent/10' : 'hover:bg-bg-hover',
                     )}
                   >
                     {/* Star toggle — persisted favourite */}
-                    <button
-                      type="button"
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      iconOnly
                       onClick={toggleFav}
-                      className="shrink-0 p-1 -ml-1 rounded-md hover:bg-bg-hover transition-colors"
+                      className="-ml-1"
                       aria-label={isWatchlisted ? 'Remove from favourites' : 'Add to favourites'}
                       aria-pressed={isWatchlisted}
                     >
                       <Star
                         size={18}
                         strokeWidth={2}
-                        className={clsx(isWatchlisted ? 'text-amber-400 fill-amber-400' : 'text-text-tertiary')}
+                        className={clsx(isWatchlisted ? 'text-warning fill-warning' : 'text-text-tertiary')}
+                        aria-hidden
                       />
-                    </button>
+                    </Button>
 
                     {/* Tapping the label/body opens the mobile order sheet */}
                     <button
@@ -666,7 +652,7 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
                       <div className="flex items-center gap-1.5">
                         <span className="text-base font-bold text-text-primary font-mono tracking-wide">{symbol}</span>
                       </div>
-                      <p className="text-[11px] text-text-tertiary mt-0.5 truncate uppercase tracking-wide">
+                      <p className="text-xs text-text-tertiary mt-0.5 truncate uppercase tracking-wide">
                         {segLabel}{displayName !== symbol ? ` – ${displayName}` : ''}
                       </p>
                     </button>
@@ -678,10 +664,10 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
                         onClick={() => handleRowClick(symbol)}
                         className="shrink-0 text-right"
                       >
-                        <span className="block text-sm font-mono font-bold tabular-nums text-text-primary">
+                        <span className={clsx('block text-sm font-mono font-bold tabular-nums text-text-primary rounded-sm px-0.5', flashClass(bidFlash[symbol]))}>
                           {tick.bid.toFixed(digits)}
                         </span>
-                        <span className={clsx('block text-[10px] font-bold tabular-nums', isUp ? 'text-buy' : 'text-sell')}>
+                        <span className={clsx('block text-xxs font-bold tabular-nums', isUp ? 'text-buy' : 'text-sell')}>
                           {isUp ? '▲' : '▼'} {Math.abs(spreadInPips(symbol, tick.bid, tick.ask, instruments))} pip
                         </span>
                       </button>
@@ -690,15 +676,16 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
                     )}
 
                     {/* Chart icon — opens full chart for this symbol */}
-                    <button
-                      type="button"
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      iconOnly
                       onClick={openChart}
-                      className="shrink-0 p-1.5 rounded-md text-text-tertiary hover:text-buy hover:bg-bg-hover transition-colors"
                       aria-label="Open chart"
                       title="Open chart"
                     >
-                      <TrendingUp size={18} strokeWidth={2} />
-                    </button>
+                      <TrendingUp size={18} strokeWidth={2} aria-hidden />
+                    </Button>
                   </div>
                 );
               });

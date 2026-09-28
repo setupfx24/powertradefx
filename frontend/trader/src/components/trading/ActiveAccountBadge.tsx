@@ -2,6 +2,7 @@
 
 import { clsx } from 'clsx';
 import type { TradingAccount } from '@/stores/tradingStore';
+import { Badge } from '@/components/ui';
 
 type Variant = 'default' | 'compact';
 
@@ -24,17 +25,12 @@ export function ActiveAccountBadge({
     <div
       className={clsx(
         'flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0',
-        compact ? 'text-[10px] sm:text-xs' : 'text-xs sm:text-sm',
+        compact ? 'text-xxs sm:text-xs' : 'text-xs sm:text-sm',
         className,
       )}
       title={`Trading account ${account.account_number}${g ? ` — ${g}` : ''}`}
     >
-      <span
-        className={clsx(
-          'font-bold uppercase tracking-wider text-text-tertiary shrink-0',
-          compact ? 'text-[9px]' : 'text-[10px]',
-        )}
-      >
+      <span className="text-xxs font-bold uppercase tracking-[0.12em] text-text-tertiary shrink-0">
         Account
       </span>
       <span
@@ -45,26 +41,13 @@ export function ActiveAccountBadge({
       >
         {account.account_number}
       </span>
-      <span
-        className={clsx(
-          'font-extrabold uppercase rounded-full border shrink-0',
-          compact ? 'text-[8px] px-1.5 py-0.5' : 'text-[9px] sm:text-[10px] px-2 py-0.5',
-          account.is_demo
-            ? 'bg-warning/15 text-warning border-warning/25'
-            : 'bg-buy/12 text-buy border-buy/25',
-        )}
-      >
+      <Badge variant={account.is_demo ? 'warning' : 'success'} size={compact ? 'sm' : 'md'}>
         {account.is_demo ? 'Demo' : 'Live'}
-      </span>
+      </Badge>
       {g ? (
-        <span
-          className={clsx(
-            'font-semibold text-text-secondary bg-bg-primary border border-border-glass rounded-md truncate max-w-[6rem] sm:max-w-[8rem]',
-            compact ? 'text-[9px] px-1.5 py-0.5' : 'text-[10px] px-2 py-0.5',
-          )}
-        >
-          {g}
-        </span>
+        <Badge variant="neutral" tone="outline" size={compact ? 'sm' : 'md'} className="normal-case tracking-normal max-w-[6rem] sm:max-w-[8rem]">
+          <span className="truncate">{g}</span>
+        </Badge>
       ) : null}
     </div>
   );

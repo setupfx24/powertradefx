@@ -2,11 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { clsx } from 'clsx';
-import { ChevronDown, Loader2, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { cn } from '@/lib/utils';
 import api from '@/lib/api/client';
 import { useAuthStore } from '@/stores/authStore';
+import { Badge, Button, EmptyState, Segmented, Select, Skeleton } from '@/components/ui';
 
 export interface AvailableAccountGroup {
   id: string;
@@ -48,7 +49,8 @@ type Props = {
  * matches the Vantage / OctaFX-style "Open Account" drawer that anchors
  * to the right edge of the viewport: full-height panel, content sections
  * stacked vertically, sticky Submit at the bottom. The data model and
- * create flow are unchanged.
+ * create flow are unchanged. The surface is the Modal primitive's
+ * (bg-bg-tertiary + hairline border + shadow-lg).
  */
 export default function AccountTypePickerModal({ open, onClose, onCreated }: Props) {
   const user = useAuthStore((s) => s.user);
@@ -176,7 +178,7 @@ export default function AccountTypePickerModal({ open, onClose, onCreated }: Pro
     // including the "Open Account" trigger that's supposed to reopen
     // this drawer.
     <div
-      className={clsx(
+      className={cn(
         // Bumped above the AppNavbar (sticky z-50) and the support FAB
         // (z-75). Without this the navbar's backdrop-blur stacking
         // context bled through the top of the drawer.
@@ -187,8 +189,8 @@ export default function AccountTypePickerModal({ open, onClose, onCreated }: Pro
     >
       {/* Backdrop. Fades in/out so the drawer slide doesn't feel detached. */}
       <div
-        className={clsx(
-          'absolute inset-0 bg-black/40 transition-opacity duration-300',
+        className={cn(
+          'absolute inset-0 bg-bg-overlay transition-opacity duration-300',
           open ? 'opacity-100' : 'opacity-0 pointer-events-none',
         )}
         onClick={onClose}
@@ -202,51 +204,34 @@ export default function AccountTypePickerModal({ open, onClose, onCreated }: Pro
         role="dialog"
         aria-modal="true"
         aria-label="Open account"
-        // Inline `background` is belt-and-suspenders: even if the
-        // bg-card utility doesn't apply for any reason, the panel
-        // still renders fully opaque so the navbar can't bleed through.
-        style={{ background: 'var(--bg-card, #FFFFFF)' }}
-        className={clsx(
-          'absolute top-0 right-0 h-full w-full sm:max-w-[640px] border-l border-border-primary shadow-2xl',
+        className={cn(
+          'absolute top-0 right-0 h-full w-full sm:max-w-[640px] bg-bg-tertiary border-l border-border-primary shadow-lg',
           'flex flex-col transform transition-transform duration-300 ease-out',
           open ? 'translate-x-0' : 'translate-x-full',
         )}
       >
         {/* Sticky header with title + close. */}
-        <header className="flex items-center justify-between px-6 sm:px-8 py-5 border-b border-border-primary shrink-0">
-          <h2 className="text-xl sm:text-2xl font-bold text-text-primary tracking-tight">Open Account</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="p-1.5 -m-1.5 rounded-full text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
-          >
-            <X size={20} />
-          </button>
+        <header className="flex items-center justify-between px-6 sm:px-8 py-4 border-b border-border-primary shrink-0">
+          <h2 className="text-xl md:text-2xl font-semibold text-text-primary tracking-tight">Open Account</h2>
+          <Button variant="ghost" size="sm" iconOnly onClick={onClose} aria-label="Close" className="-mr-2">
+            <X size={18} aria-hidden />
+          </Button>
         </header>
 
         {/* Scrollable content area. */}
-        <div className="flex-1 overflow-y-auto px-6 sm:px-8 py-6 space-y-7">
-          {/* Live / Demo toggle — large pill row, occupies the full width
-              like the Vantage drawer rather than a small inline segmented
-              control. */}
-          <div
-            className="grid grid-cols-2 p-1 rounded-full"
-            style={{ background: 'var(--bg-card-nested)', border: '1px solid var(--border-primary)' }}
-          >
-            <TypePill
-              active={requestedType === 'real'}
-              disabled={userIsDemo}
-              label="Live Account"
-              onClick={() => setRequestedType('real')}
-            />
-            <TypePill
-              active={requestedType === 'demo'}
-              disabled={false}
-              label="Demo Account"
-              onClick={() => setRequestedType('demo')}
-            />
-          </div>
+        <div className="flex-1 overflow-y-auto px-6 sm:px-8 py-6 space-y-6">
+          {/* Live / Demo toggle — full-width segmented control. */}
+          <Segmented
+            size="md"
+            fullWidth
+            aria-label="Account kind"
+            value={requestedType}
+            onChange={setRequestedType}
+            options={[
+              { value: 'real', label: 'Live Account', disabled: userIsDemo },
+              { value: 'demo', label: 'Demo Account' },
+            ]}
+          />
           {userIsDemo && (
             <p className="-mt-3 text-xs text-text-tertiary">
               Demo users can only open demo accounts. Sign up for a real account to trade live.
@@ -255,18 +240,18 @@ export default function AccountTypePickerModal({ open, onClose, onCreated }: Pro
 
           {/* Account type picker — 2-column grid of group cards. */}
           <section>
-            <h3 className="text-sm font-bold text-text-primary mb-3">Choose An Account Type</h3>
+            <h3 className="text-md font-semibold text-text-primary mb-3">Choose An Account Type</h3>
             {loading ? (
-              <div className="flex items-center justify-center py-16 text-text-secondary text-sm gap-2">
-                <Loader2 size={14} className="animate-spin" /> Loading account types…
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" aria-busy>
+                <Skeleton className="h-36" />
+                <Skeleton className="h-36" />
               </div>
             ) : groups.length === 0 ? (
-              <div
-                className="rounded-xl border p-8 text-center text-sm text-text-secondary"
-                style={{ background: 'var(--bg-card-nested)', borderColor: 'var(--border-primary)' }}
-              >
-                No account types are available yet. Please contact support.
-              </div>
+              <EmptyState
+                compact
+                title="No account types available"
+                description="No account types are available yet. Please contact support."
+              />
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {groups.map((g) => {
@@ -276,32 +261,25 @@ export default function AccountTypePickerModal({ open, onClose, onCreated }: Pro
                       key={g.id}
                       type="button"
                       onClick={() => setSelectedId(g.id)}
-                      className={clsx(
-                        'relative text-left rounded-xl p-4 transition-all',
-                        sel ? 'ring-2 ring-accent/60' : '',
+                      aria-pressed={sel}
+                      className={cn(
+                        'relative text-left rounded-lg border bg-card-nested p-4 transition-[border-color,box-shadow] duration-150',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45',
+                        sel ? 'border-accent ring-2 ring-accent/25' : 'border-border-primary hover:border-border-strong',
                       )}
-                      style={{
-                        background: 'var(--bg-card-nested)',
-                        border: `1px solid ${sel ? 'var(--accent)' : 'var(--border-primary)'}`,
-                      }}
                     >
                       <div className="flex items-center gap-2 mb-2">
                         <span className="text-sm font-bold text-text-primary tracking-wide uppercase">
                           {g.name || 'Standard'}
                         </span>
                         {g.swap_free && (
-                          <span
-                            className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full"
-                            style={{ background: 'rgba(16,185,129,0.15)', color: '#10B981', border: '1px solid rgba(16,185,129,0.35)' }}
-                          >
-                            Swap-free
-                          </span>
+                          <Badge variant="success" size="sm">Swap-free</Badge>
                         )}
                       </div>
                       <p className="text-xs text-text-tertiary mb-3 leading-snug line-clamp-2">
                         {g.description || 'Currencies, indices, metals, energies, crypto'}
                       </p>
-                      <div className="space-y-1 text-[11px] text-text-secondary">
+                      <div className="space-y-1 text-xs text-text-secondary">
                         <Row k="Spread from" v={`${(g.spread_markup || 0.6).toFixed(1)} pips`} />
                         <Row k="Min deposit" v={fmtMoney(g.minimum_deposit || 0)} />
                         <Row
@@ -326,47 +304,38 @@ export default function AccountTypePickerModal({ open, onClose, onCreated }: Pro
 
           {/* Leverage */}
           <section>
-            <h3 className="text-sm font-bold text-text-primary mb-3">Leverage</h3>
-            <div className="relative">
-              <select
-                value={leverage ?? ''}
-                onChange={(e) => setLeverage(Number(e.target.value))}
-                disabled={!selected || leverageOptions.length === 0}
-                className="w-full appearance-none pl-4 pr-10 py-3 rounded-xl text-sm font-semibold bg-card-nested text-text-primary disabled:opacity-50"
-                style={{ border: '1px solid var(--border-primary)' }}
-              >
-                {leverageOptions.map((l) => (
-                  <option key={l} value={l}>1:{l}</option>
-                ))}
-              </select>
-              <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-tertiary pointer-events-none" />
-            </div>
-            {selected && (
-              <div className="mt-2 space-y-1">
-                <p className="text-xs text-text-tertiary">
-                  Capped at this account type&apos;s maximum: 1:{groupMaxLeverage(selected)}
-                </p>
-                {selected.kyc_unlock_required && (
-                  <p className="text-xs text-amber-400/85">
-                    Complete KYC to unlock higher leverage.
-                  </p>
-                )}
-              </div>
+            <Select
+              label="Leverage"
+              value={leverage ?? ''}
+              onChange={(e) => setLeverage(Number(e.target.value))}
+              disabled={!selected || leverageOptions.length === 0}
+              className="font-mono tabular-nums font-semibold"
+              hint={selected ? `Capped at this account type's maximum: 1:${groupMaxLeverage(selected)}` : undefined}
+            >
+              {leverageOptions.map((l) => (
+                <option key={l} value={l}>1:{l}</option>
+              ))}
+            </Select>
+            {selected?.kyc_unlock_required && (
+              <p className="mt-2 text-xs text-warning">
+                Complete KYC to unlock higher leverage.
+              </p>
             )}
           </section>
         </div>
 
         {/* Sticky footer with Submit. */}
-        <footer className="px-6 sm:px-8 py-4 border-t border-border-primary shrink-0 bg-card">
-          <button
-            type="button"
+        <footer className="px-6 sm:px-8 py-4 border-t border-border-primary shrink-0 bg-bg-tertiary">
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
             onClick={handleCreate}
             disabled={creating || !selected}
-            className="w-full inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-sm font-bold bg-accent hover:bg-accent-hover text-white shadow-[0_2px_8px_rgb(var(--accent-rgb) / 0.25)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            loading={creating}
           >
-            {creating && <Loader2 size={14} className="animate-spin" />}
             {creating ? 'Creating…' : 'Submit'}
-          </button>
+          </Button>
         </footer>
       </aside>
     </div>,
@@ -376,42 +345,11 @@ export default function AccountTypePickerModal({ open, onClose, onCreated }: Pro
 
 /* ───────────── Tiny UI atoms ───────────── */
 
-function TypePill({
-  active,
-  disabled,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  disabled: boolean;
-  label: string;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={disabled ? undefined : onClick}
-      disabled={disabled}
-      className="py-2.5 text-sm font-semibold rounded-full transition-colors select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-      style={{
-        background: active ? 'var(--bg-card)' : 'transparent',
-        color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-        opacity: disabled ? 0.55 : 1,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        border: 'none',
-        boxShadow: active ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-      }}
-    >
-      {label}
-    </button>
-  );
-}
-
 function Row({ k, v }: { k: string; v: string }) {
   return (
     <div className="flex items-center justify-between gap-2">
       <span className="text-text-tertiary">{k}</span>
-      <span className="font-medium text-text-primary tabular-nums">{v}</span>
+      <span className="font-mono tabular-nums font-medium text-text-primary">{v}</span>
     </div>
   );
 }

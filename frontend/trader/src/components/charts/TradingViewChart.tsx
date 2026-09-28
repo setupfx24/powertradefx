@@ -13,16 +13,21 @@
  * Symbol changes call widget.setSymbol() so the ~26 MB library isn't reloaded.
  *
  * On-chart trading lines (SwisDex-style):
- *  - Each open position draws a locked ENTRY (execution) line coloured by side
- *    (BUY blue / SELL red) whose label carries the LIVE P&L (+$ and %) coloured
- *    by profit/loss/breakeven, plus locked dashed SL (amber) / TP (teal) lines
- *    labelled `SL <price>  +$<projected P&L at that level>`.
- *  - Pending orders draw a dashed entry (BUY blue / SELL purple) + SL/TP.
+ *  - Each open position draws a locked ENTRY (execution) line in the brand
+ *    accent whose label carries the LIVE P&L (+$ and %) coloured by
+ *    profit (green) / loss (red) / breakeven (grey), plus locked dashed
+ *    SL (red) / TP (green) lines labelled `SL <price>  +$<projected P&L>`.
+ *  - Pending orders draw a dashed entry (BUY green / SELL red) + SL/TP.
  *  - An HTML overlay pins an [SL] [TP] [✕] button group to each entry line:
  *    drag SL/TP up/down to set (dashed preview line + shaded zone + price/P&L
  *    label follows the cursor), or plain-click to type a price. ✕ closes at
  *    market. Committing always confirms first via the in-app dialog.
- *  - Persistent shaded zones fill entry→SL (red) and entry→TP (teal).
+ *  - Persistent shaded zones fill entry→SL (red) and entry→TP (green).
+ *
+ * Colour literals: the Charting Library takes plain colour strings, so this
+ * file is allow-listed by scripts/check-design-tokens.mjs. Every literal
+ * below MIRRORS a token in globals.css (named in its comment) — change the
+ * token, change the mirror.
  *  - A stale-price watchdog greys the entry lines when the feed stalls.
  * All bracket edits go through PUT /positions/{id} with ONLY the changed leg
  * (the backend partial-update leaves the other leg untouched).
@@ -38,6 +43,8 @@ import { loadChartLibrary } from '@/lib/chart/loadChartLibrary';
 import { api } from '@/lib/api/client';
 import { netPnl } from '@/lib/pnl';
 import toast from 'react-hot-toast';
+import { X } from 'lucide-react';
+import { Button, Input } from '@/components/ui';
 import { ChartTradeWidget } from '@/components/charts/ChartTradeWidget';
 
 // Tell the React Native app (when this runs inside its WebView) that an SL/TP
@@ -63,19 +70,38 @@ function isRealPositionId(id: string): boolean {
 // are quiet at weekends (long so we don't spam "stale" when no ticks are
 // expected), otherwise a normal live-market threshold.
 const STALE_MS = { crypto: 3000, normal: 5000, weekendClosed: 60000 };
-const STALE_COLOR = '#6b7280';
+const STALE_COLOR = '#6C7583';       // = --text-tertiary — greyed entry line when the feed stalls
 
-// Chart line colours — blue/red industry standard. Blue = anything BUY-related
-// (BUY entry, profit); Red = anything SELL-related (SELL entry, loss).
-const CHART_BUY_COLOR = '#3b82f6';   // blue — BUY position entry line
-const CHART_SELL_COLOR = '#ef4444';  // red  — SELL position entry line
-const PROFIT_COLOR = '#3b82f6';      // blue — entry-line P&L label when in profit
-const LOSS_COLOR = '#ef4444';        // red  — entry-line P&L label when in loss
-const BREAKEVEN_COLOR = '#9ca3af';   // gray — entry-line P&L label near break-even
-const SL_COLOR = '#f59e0b';          // amber — stop-loss line
-const TP_COLOR = '#14b8a6';          // teal  — take-profit line
-const PENDING_BUY_COLOR = '#3b82f6'; // blue   — pending BUY entry line
-const PENDING_SELL_COLOR = '#a855f7';// purple — pending SELL entry line
+// ── Theme mirrors (globals.css, dark) ───────────────────────────────────
+const BUY_HEX = '#00C087';           // = --buy-rgb  (green buy / success)
+const SELL_HEX = '#F84960';          // = --sell-rgb (red sell / danger)
+const ACCENT_HEX = '#FA5600';        // = --accent-rgb (brand orange)
+const BG_BASE_HEX = '#0E1013';       // = --bg-base
+const BG_BASE_LIGHT_HEX = '#FFFFFF'; // = --bg-base (light theme)
+const BORDER_SECONDARY_HEX = '#1A1F26'; // = --border-secondary (grid / scale lines)
+const TEXT_SECONDARY_HEX = '#A3ACBA';   // = --text-secondary (axis text)
+const BUY_LIGHT_THEME_HEX = '#00A876';  // = --buy-rgb  (light theme)
+const SELL_LIGHT_THEME_HEX = '#E5324B'; // = --sell-rgb (light theme)
+
+// Chart line colours — ONE convention with the rest of the app: green buy /
+// red sell; the entry line itself is the brand accent.
+const ENTRY_COLOR = ACCENT_HEX;      // = --accent-rgb — position entry line (both sides)
+const CHART_BUY_COLOR = BUY_HEX;     // = --buy-rgb  — ✕ close button on a BUY position
+const CHART_SELL_COLOR = SELL_HEX;   // = --sell-rgb — ✕ close button on a SELL position
+const PROFIT_COLOR = BUY_HEX;        // = --success-rgb — entry-line P&L label when in profit
+const LOSS_COLOR = SELL_HEX;         // = --danger-rgb  — entry-line P&L label when in loss
+const BREAKEVEN_COLOR = '#6C7583';   // = --text-tertiary — entry-line P&L label near break-even
+const SL_COLOR = SELL_HEX;           // = --sell-rgb — stop-loss line (red)
+const TP_COLOR = BUY_HEX;            // = --buy-rgb  — take-profit line (green)
+const PENDING_BUY_COLOR = BUY_HEX;   // = --buy-rgb  — pending BUY entry line
+const PENDING_SELL_COLOR = SELL_HEX; // = --sell-rgb — pending SELL entry line
+// Alpha fills for the entry→SL / entry→TP zones and the SL/TP buttons.
+const SL_ZONE_RGBA = 'rgba(248, 73, 96, 0.10)';   // = --sell-rgb / 0.10
+const TP_ZONE_RGBA = 'rgba(0, 192, 135, 0.10)';   // = --buy-rgb  / 0.10
+const SL_DRAG_RGBA = 'rgba(248, 73, 96, 0.13)';   // = --sell-rgb / 0.13
+const TP_DRAG_RGBA = 'rgba(0, 192, 135, 0.13)';   // = --buy-rgb  / 0.13
+const SL_BTN_RGBA = 'rgba(248, 73, 96, 0.97)';    // = --sell-rgb / 0.97
+const TP_BTN_RGBA = 'rgba(0, 192, 135, 0.97)';    // = --buy-rgb  / 0.97
 
 // Where the on-chart [SL] [TP] [✕] group sits, measured from the chart's RIGHT
 // edge: just left of each line's right-axis label so the buttons read as part
@@ -201,8 +227,8 @@ function TradingViewChartInner({
         theme,
         autosize: true,
         fullscreen: false,
-        toolbar_bg: theme === 'dark' ? '#0b0e11' : '#ffffff',
-        loading_screen: { backgroundColor: theme === 'dark' ? '#0b0e11' : '#ffffff' },
+        toolbar_bg: theme === 'dark' ? BG_BASE_HEX : BG_BASE_LIGHT_HEX,        // = --bg-base
+        loading_screen: { backgroundColor: theme === 'dark' ? BG_BASE_HEX : BG_BASE_LIGHT_HEX }, // = --bg-base
         disabled_features: ['use_localstorage_for_settings', 'symbol_search_hot_key'],
         enabled_features: ['hide_left_toolbar_by_default'],
         overrides: {
@@ -211,8 +237,23 @@ function TradingViewChartInner({
           // switching intervals). use_localstorage_for_settings is disabled
           // above, so this override applies on every load.
           'mainSeriesProperties.showCountdown': true,
+          // Candles follow the app's trade-side convention in BOTH themes:
+          // green up (= --buy-rgb) / red down (= --sell-rgb).
+          'mainSeriesProperties.candleStyle.upColor': theme === 'dark' ? BUY_HEX : BUY_LIGHT_THEME_HEX,           // = --buy-rgb
+          'mainSeriesProperties.candleStyle.downColor': theme === 'dark' ? SELL_HEX : SELL_LIGHT_THEME_HEX,       // = --sell-rgb
+          'mainSeriesProperties.candleStyle.borderUpColor': theme === 'dark' ? BUY_HEX : BUY_LIGHT_THEME_HEX,     // = --buy-rgb
+          'mainSeriesProperties.candleStyle.borderDownColor': theme === 'dark' ? SELL_HEX : SELL_LIGHT_THEME_HEX, // = --sell-rgb
+          'mainSeriesProperties.candleStyle.wickUpColor': theme === 'dark' ? BUY_HEX : BUY_LIGHT_THEME_HEX,       // = --buy-rgb
+          'mainSeriesProperties.candleStyle.wickDownColor': theme === 'dark' ? SELL_HEX : SELL_LIGHT_THEME_HEX,   // = --sell-rgb
           ...(theme === 'dark'
-            ? { 'paneProperties.background': '#0b0e11', 'paneProperties.backgroundType': 'solid', 'scalesProperties.textColor': '#b7bdc6' }
+            ? {
+                'paneProperties.background': BG_BASE_HEX,                  // = --bg-base
+                'paneProperties.backgroundType': 'solid',
+                'paneProperties.vertGridProperties.color': BORDER_SECONDARY_HEX, // = --border-secondary
+                'paneProperties.horzGridProperties.color': BORDER_SECONDARY_HEX, // = --border-secondary
+                'scalesProperties.lineColor': BORDER_SECONDARY_HEX,        // = --border-secondary
+                'scalesProperties.textColor': TEXT_SECONDARY_HEX,          // = --text-secondary
+              }
             : {}),
         },
       });
@@ -320,11 +361,10 @@ function TradingViewChartInner({
   }, []);
 
   // Reconcile chart lines whenever positions / pending orders change. Each open
-  // position gets an ENTRY line whose LINE colour is fixed by side (BUY blue /
-  // SELL red) and whose LABEL shows the LIVE P&L coloured by profit/loss
-  // (blue/red/gray), throttled to 500ms; plus SL (amber) / TP (teal) labelled
-  // with the projected P&L at that level. Each pending order gets its entry
-  // (BUY blue / SELL purple, dashed) + SL/TP.
+  // position gets an ENTRY line in the brand accent whose LABEL shows the LIVE
+  // P&L coloured by profit/loss (green/red/grey), throttled to 500ms; plus
+  // SL (red) / TP (green) labelled with the projected P&L at that level. Each
+  // pending order gets its entry (BUY green / SELL red, dashed) + SL/TP.
   //
   // Drawn with createShape('horizontal_line') — the CORE Charting Library API
   // (Advanced Charts has no order-line API). Shapes span the FULL chart width
@@ -351,21 +391,21 @@ function TradingViewChartInner({
     const cs = Number(inst?.contract_size) || 100000;
     const fp = (n: number) => Number(n).toFixed(digits);
 
-    // P&L → LABEL colour: blue in profit, red in loss, gray near break-even.
+    // P&L → LABEL colour: green in profit, red in loss, grey near break-even.
     const pnlColor = (pnl: number) =>
       Math.abs(pnl) < 0.10 ? BREAKEVEN_COLOR : pnl > 0 ? PROFIT_COLOR : LOSS_COLOR;
 
     // `color` is the LINE colour, `textColor` the LABEL colour. For position
-    // entry lines they differ: the line is fixed by side (BUY blue / SELL red)
-    // while the label tracks P&L (profit blue / loss red / gray). SL/TP/pending
-    // omit textColor → it falls back to the line colour.
+    // entry lines they differ: the line is the brand accent while the label
+    // tracks P&L (profit green / loss red / grey). SL/TP/pending omit
+    // textColor → it falls back to the line colour.
     type Desired = { key: string; price: number; color: string; textColor?: string; text: string; dashed: boolean; pnl?: number };
     const desired: Desired[] = [];
 
     // ── Open positions: entry line labelled with LIVE P&L, coloured by P&L
     //    state (not side). p.profit is the SAME value the positions table uses
     //    → single source of truth, so the line can never disagree with the
-    //    table. SL (amber) / TP (teal) with projected P&L at the level. ──
+    //    table. SL (red) / TP (green) with projected P&L at the level. ──
     for (const p of myPos) {
       // NET P&L (profit − commission + swap; swap is negative for a charge) —
       // the same figure the positions table and the mobile app show, so the
@@ -377,10 +417,9 @@ function TradingViewChartInner({
       const pct = notional > 0 ? (pnl / notional) * 100 : 0;
       const pnlStr = `${pnl >= 0 ? '+' : '-'}$${Math.abs(pnl).toFixed(2)}`;
       const pctStr = `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
-      // Line colour by SIDE (BUY blue / SELL red); label colour by P&L.
-      const sideColor = p.side.toUpperCase() === 'BUY' ? CHART_BUY_COLOR : CHART_SELL_COLOR;
+      // Line colour = brand accent (entry); label colour by P&L.
       desired.push({
-        key: p.id, price: entry, color: sideColor, textColor: pnlColor(pnl),
+        key: p.id, price: entry, color: ENTRY_COLOR, textColor: pnlColor(pnl),
         // Live P&L rendered as the TV shape's OWN label — TradingView pins it
         // exactly on the entry price (right axis), so it can never drift.
         text: `${p.side.toUpperCase()} ${lots}  ${pnlStr} (${pctStr})`,
@@ -475,7 +514,7 @@ function TradingViewChartInner({
         if (d.text !== existing.text || d.color !== existing.color || nextTextColor !== existing.textColor) {
           const isPnl = d.pnl != null;
           const throttleOk = !isPnl || (now - (existing.propAt || 0) >= throttleMs);
-          // For entry lines the LINE colour is fixed by side, so the P&L flip
+          // For entry lines the LINE colour is fixed (accent), so the P&L flip
           // shows up in the LABEL colour — trigger on that too.
           const worthIt = !isPnl
             || d.color !== existing.color
@@ -809,7 +848,7 @@ function TradingViewChartInner({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mkDragBtn = (txt: string, bg: string, title: string, p: any, kind: 'sl' | 'tp'): HTMLButtonElement => {
       const color = kind === 'sl' ? SL_COLOR : TP_COLOR;
-      const zoneBg = kind === 'sl' ? 'rgba(239,68,68,0.13)' : 'rgba(20,184,166,0.13)';
+      const zoneBg = kind === 'sl' ? SL_DRAG_RGBA : TP_DRAG_RGBA;
       const b = document.createElement('button');
       b.type = 'button';
       b.textContent = txt;
@@ -927,18 +966,18 @@ function TradingViewChartInner({
         `position:absolute;right:${rightPx}px;transform:translateY(-50%);`
         + `display:flex;align-items:center;gap:3px;pointer-events:none;visibility:hidden;z-index:6;`;
       if (!isCopy) {
-        root.appendChild(mkDragBtn('SL', 'rgba(245,158,11,0.97)', `Stop loss ${side} ${p.lots} ${sym}`, p, 'sl'));
-        root.appendChild(mkDragBtn('TP', 'rgba(20,184,166,0.97)', `Take profit ${side} ${p.lots} ${sym}`, p, 'tp'));
+        root.appendChild(mkDragBtn('SL', SL_BTN_RGBA, `Stop loss ${side} ${p.lots} ${sym}`, p, 'sl'));
+        root.appendChild(mkDragBtn('TP', TP_BTN_RGBA, `Take profit ${side} ${p.lots} ${sym}`, p, 'tp'));
       }
       root.appendChild(mkBtn('✕', sideColor, `Close ${side} ${p.lots} ${sym} at market`, () => {
         closePositionFromChart(p.id);
       }));
-      // Persistent shaded zones (entry → SL red, entry → TP teal), positioned
+      // Persistent shaded zones (entry → SL red, entry → TP green), positioned
       // in the sync loop from the LIVE bracket prices. Below the buttons (z 4).
       const slZone = document.createElement('div');
-      slZone.style.cssText = `position:absolute;left:0;right:0;top:0;height:0;background:rgba(239,68,68,0.10);pointer-events:none;visibility:hidden;z-index:4;`;
+      slZone.style.cssText = `position:absolute;left:0;right:0;top:0;height:0;background:${SL_ZONE_RGBA};pointer-events:none;visibility:hidden;z-index:4;`;
       const tpZone = document.createElement('div');
-      tpZone.style.cssText = `position:absolute;left:0;right:0;top:0;height:0;background:rgba(20,184,166,0.10);pointer-events:none;visibility:hidden;z-index:4;`;
+      tpZone.style.cssText = `position:absolute;left:0;right:0;top:0;height:0;background:${TP_ZONE_RGBA};pointer-events:none;visibility:hidden;z-index:4;`;
       overlay.appendChild(slZone); overlay.appendChild(tpZone);
       overlay.appendChild(root);
       btns.push({ p, entry: Number(p.open_price) || 0, el: root, slZone, tpZone });
@@ -989,16 +1028,12 @@ function TradingViewChartInner({
     <div className={clsx('relative w-full h-full min-h-[200px] min-w-0 bg-bg-base')} data-tv-chart-root>
       <div id={CONTAINER_ID} ref={containerRef} className="h-full w-full min-h-[200px]" />
 
-      {/* Loader until the chart is ready (covers the library load). */}
+      {/* Loader until the chart is ready (covers the library load). The
+          hosting page scopes the theme (.theme-dark / .theme-light), so the
+          token utilities resolve to the right ground here. */}
       {!chartReady && (
-        <div
-          className="absolute inset-0 z-40 flex items-center justify-center"
-          style={{ background: theme === 'dark' ? '#0b0e11' : '#ffffff' }}
-        >
-          <div
-            className="animate-spin"
-            style={{ width: 34, height: 34, borderRadius: '50%', border: '3px solid rgba(242,106,31,0.25)', borderTopColor: '#f26a1f' }}
-          />
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-bg-base">
+          <div className="h-[34px] w-[34px] animate-spin rounded-full border-[3px] border-accent/25 border-t-accent" aria-hidden />
         </div>
       )}
 
@@ -1027,59 +1062,56 @@ function TradingViewChartInner({
               type="button"
               tabIndex={-1}
               aria-label="Dismiss"
-              className="absolute inset-0 z-0 m-0 h-full w-full cursor-default border-0 bg-black/60 p-0 backdrop-blur-sm"
+              className="absolute inset-0 z-0 m-0 h-full w-full cursor-default border-0 bg-bg-overlay p-0"
               onClick={() => setDialog(null)}
             />
             <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-4">
               <div
                 role="dialog"
                 aria-modal="true"
-                className="relative w-full max-w-[300px] rounded-xl border p-3.5 shadow-2xl overflow-hidden pointer-events-auto bg-bg-secondary border-border-primary"
+                aria-labelledby="chart-dialog-title"
+                className="relative w-full max-w-[300px] rounded-sheet border border-border-primary bg-card p-3.5 shadow-lg overflow-hidden pointer-events-auto"
                 onMouseDown={(e) => e.stopPropagation()}
               >
                 <div className="flex items-start justify-between gap-2 mb-2">
-                  <h3 className="text-sm font-bold pr-2 text-text-primary">{dialog.title}</h3>
-                  <button
-                    type="button"
-                    onClick={() => setDialog(null)}
-                    className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg transition-colors bg-bg-hover text-text-tertiary hover:text-text-primary"
-                    aria-label="Close"
-                  >
-                    ✕
-                  </button>
+                  <h3 id="chart-dialog-title" className="text-sm font-bold pr-2 text-text-primary">{dialog.title}</h3>
+                  <Button variant="ghost" size="xs" iconOnly onClick={() => setDialog(null)} aria-label="Close">
+                    <X className="h-4 w-4" aria-hidden />
+                  </Button>
                 </div>
                 <p className="text-xs text-text-secondary mb-3">{dialog.body}</p>
                 {dialog.input && (
-                  <input
-                    autoFocus
-                    type="number"
-                    step="any"
-                    value={dialogValue}
-                    onChange={(e) => setDialogValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        const d = dialog; setDialog(null); d.onConfirm(dialogValue);
-                      } else if (e.key === 'Escape') { setDialog(null); }
-                    }}
-                    placeholder={dialog.input.placeholder}
-                    className="w-full mb-3 px-3 py-2 rounded-lg border border-border-primary bg-bg-input font-mono text-sm text-text-primary outline-none focus:border-accent/50"
-                  />
+                  <div className="mb-3">
+                    <Input
+                      autoFocus
+                      type="number"
+                      step="any"
+                      size="sm"
+                      numeric
+                      value={dialogValue}
+                      onChange={(e) => setDialogValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          const d = dialog; setDialog(null); d.onConfirm(dialogValue);
+                        } else if (e.key === 'Escape') { setDialog(null); }
+                      }}
+                      placeholder={dialog.input.placeholder}
+                      aria-label={dialog.input.placeholder}
+                    />
+                  </div>
                 )}
                 <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setDialog(null)}
-                    className="flex-1 py-2.5 font-bold rounded-lg text-sm active:scale-[0.98] transition-all bg-bg-hover text-text-primary"
-                  >
+                  <Button variant="secondary" size="sm" fullWidth onClick={() => setDialog(null)}>
                     Cancel
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant={dialog.danger ? 'danger' : 'primary'}
+                    size="sm"
+                    fullWidth
                     onClick={() => { const d = dialog; setDialog(null); d.onConfirm(dialogValue); }}
-                    className={`flex-1 py-2.5 text-white font-bold rounded-lg shadow-lg active:scale-[0.98] transition-all text-sm ${dialog.danger ? 'bg-sell shadow-sell/20' : 'bg-buy shadow-buy/20'}`}
                   >
                     {dialog.confirmLabel}
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>

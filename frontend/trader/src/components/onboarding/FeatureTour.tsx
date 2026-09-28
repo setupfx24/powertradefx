@@ -26,6 +26,7 @@ import { createPortal } from 'react-dom';
 import { usePathname } from 'next/navigation';
 import { ArrowLeft, ArrowRight, X } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
+import { Button } from '@/components/ui';
 
 const STORAGE_PREFIX = 'sc-feature-tour:v1:';
 
@@ -257,39 +258,41 @@ export default function FeatureTour() {
     <div className="fixed inset-0 z-[9998]" role="dialog" aria-modal="true" aria-label="Feature tour">
       {/* Full-screen click blocker. When there's no target it also provides
           the dim; with a target the spotlight box below supplies the dim. */}
-      <div className={rect ? 'absolute inset-0' : 'absolute inset-0 bg-black/60'} onClick={(e) => e.stopPropagation()} />
+      <div className={rect ? 'absolute inset-0' : 'absolute inset-0 bg-bg-overlay'} onClick={(e) => e.stopPropagation()} />
 
       {/* Spotlight hole + ring around the live target (box-shadow dims the
           rest of the screen through the "hole"). */}
       {rect && (
         <div
-          className="pointer-events-none absolute rounded-xl ring-2 ring-accent transition-all duration-200"
+          className="pointer-events-none absolute rounded-lg ring-2 ring-accent transition-all duration-200"
           style={{
             top: rect.top - HIGHLIGHT_PAD,
             left: rect.left - HIGHLIGHT_PAD,
             width: rect.width + HIGHLIGHT_PAD * 2,
             height: rect.height + HIGHLIGHT_PAD * 2,
-            boxShadow: '0 0 0 9999px rgba(0,0,0,0.6)',
+            boxShadow: '0 0 0 9999px var(--bg-overlay)',
           }}
         />
       )}
 
       {/* Instruction card */}
       <div
-        className="absolute z-[10000] rounded-2xl border border-border-primary bg-card p-5 shadow-2xl"
+        className="absolute z-[10000] rounded-lg border border-border-primary bg-card p-5 shadow-lg animate-fade-in"
         style={cardStyle}
       >
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="xs"
+          iconOnly
           onClick={finish}
           aria-label="Skip tour"
-          className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-full text-[#9A9A9A] hover:bg-bg-hover hover:text-text-primary transition-colors"
+          className="absolute right-3 top-3 rounded-full"
         >
-          <X size={16} />
-        </button>
+          <X size={16} aria-hidden />
+        </Button>
 
-        <h3 className="pr-6 text-base font-bold text-text-primary">{step.title}</h3>
-        <p className="mt-1.5 text-sm leading-relaxed text-[#5B5B5B]">{step.body}</p>
+        <h3 className="pr-6 text-md font-semibold text-text-primary">{step.title}</h3>
+        <p className="mt-1.5 text-sm leading-relaxed text-text-secondary">{step.body}</p>
 
         {/* Progress dots */}
         <div className="mt-4 flex items-center gap-1.5">
@@ -299,39 +302,30 @@ export default function FeatureTour() {
               className={
                 i === index
                   ? 'h-1.5 w-4 rounded-full bg-accent transition-all'
-                  : 'h-1.5 w-1.5 rounded-full bg-[#E5E5E5] transition-all'
+                  : 'h-1.5 w-1.5 rounded-full bg-border-strong transition-all'
               }
             />
           ))}
         </div>
 
         <div className="mt-4 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={finish}
-            className="text-xs font-medium text-[#9A9A9A] hover:text-text-primary transition-colors"
-          >
+          <Button variant="ghost" size="xs" onClick={finish} className="-ml-2.5">
             Skip
-          </button>
+          </Button>
           <div className="flex items-center gap-2">
             {index > 0 && (
-              <button
-                type="button"
-                onClick={back}
-                className="inline-flex items-center gap-1 rounded-lg border border-border-primary px-3 py-1.5 text-sm font-medium text-text-primary hover:bg-bg-hover transition-colors"
-              >
-                <ArrowLeft size={14} />
+              <Button variant="outline" size="sm" onClick={back} leftIcon={<ArrowLeft size={14} aria-hidden />}>
                 Back
-              </button>
+              </Button>
             )}
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              size="sm"
               onClick={next}
-              className="inline-flex items-center gap-1 rounded-lg bg-accent px-3.5 py-1.5 text-sm font-semibold text-white hover:bg-accent-hover transition-colors"
+              rightIcon={!isLast ? <ArrowRight size={14} aria-hidden /> : undefined}
             >
               {isLast ? 'Got it' : 'Next'}
-              {!isLast && <ArrowRight size={14} />}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

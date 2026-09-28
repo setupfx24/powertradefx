@@ -21,6 +21,7 @@
 
 import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
+import { clsx } from 'clsx';
 import { useTradingStore, type InstrumentInfo } from '@/stores/tradingStore';
 import { api } from '@/lib/api/client';
 import { wsManager } from '@/lib/ws/wsManager';
@@ -28,15 +29,17 @@ import { extractTicksFromPayload } from '@/lib/ws/normalizePricePayload';
 import { mapApiAccount } from '@/lib/mapApiAccount';
 import { ChartErrorBoundary } from '@/components/charts/ChartErrorBoundary';
 
+/** The requested theme is applied as a scope class (globals.css `.theme-*`)
+ *  so every token below resolves for THIS page regardless of the app's
+ *  persisted dashboard theme. */
+function themeScope(theme: 'light' | 'dark') {
+  return theme === 'dark' ? 'theme-dark' : 'theme-light';
+}
+
 function ChartSpinner({ dark }: { dark: boolean }) {
   return (
-    <div
-      style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: dark ? '#0b0e11' : '#ffffff' }}
-    >
-      <div
-        className="animate-spin"
-        style={{ width: 34, height: 34, borderRadius: '50%', border: '3px solid rgba(242,106,31,0.25)', borderTopColor: '#f26a1f' }}
-      />
+    <div className={clsx('fixed inset-0 flex items-center justify-center bg-bg-base', themeScope(dark ? 'dark' : 'light'))}>
+      <div className="h-[34px] w-[34px] animate-spin rounded-full border-[3px] border-accent/25 border-t-accent" aria-hidden />
     </div>
   );
 }
@@ -157,9 +160,7 @@ export default function ChartPage() {
   }, []);
 
   return (
-    <div
-      style={{ position: 'fixed', inset: 0, background: theme === 'dark' ? '#0b0e11' : '#ffffff' }}
-    >
+    <div className={clsx('fixed inset-0 bg-bg-base', themeScope(theme))}>
       <ChartErrorBoundary>
         {/* Buy/Sell widget hidden here — the mobile app has its own native
             trade panel; the chart keeps SL/TP pill + draggable lines. */}

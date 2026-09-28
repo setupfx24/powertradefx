@@ -4,6 +4,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { clsx } from 'clsx';
 import { Info, Calculator, RotateCcw, Search, ChevronDown, X } from 'lucide-react';
 import { useTradingStore, type InstrumentInfo } from '@/stores/tradingStore';
+import { Button, Card, Field, Input, Select, Tabs } from '@/components/ui';
 
 type CalcTab = 'margin' | 'pnl' | 'lotsize' | 'swap';
 
@@ -25,17 +26,20 @@ function Row({
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-1">
-      <label className="flex items-center text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
-        {label}
-        {tip && (
-          <span className="ml-1 cursor-help" title={tip}>
-            <Info size={11} className="text-text-tertiary" />
-          </span>
-        )}
-      </label>
+    <Field
+      label={
+        <span className="inline-flex items-center gap-1">
+          {label}
+          {tip && (
+            <span className="cursor-help" title={tip}>
+              <Info size={11} className="text-text-tertiary" aria-hidden />
+            </span>
+          )}
+        </span>
+      }
+    >
       {children}
-    </div>
+    </Field>
   );
 }
 
@@ -51,16 +55,12 @@ function CompactSelect({
   placeholder?: string;
 }) {
   return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="w-full rounded-lg py-2 px-2.5 text-[12px] font-medium text-text-primary outline-none appearance-none cursor-pointer bg-bg-secondary border border-border-primary"
-    >
+    <Select size="sm" value={value} onChange={(e) => onChange(e.target.value)}>
       {placeholder && <option value="">{placeholder}</option>}
       {options.map((o) => (
         <option key={o.value} value={o.value}>{o.label}</option>
       ))}
-    </select>
+    </Select>
   );
 }
 
@@ -76,19 +76,29 @@ function CompactInput({
   suffix?: string;
 }) {
   return (
+    <Input
+      type="number"
+      size="sm"
+      numeric
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      suffix={suffix}
+      className="font-bold"
+    />
+  );
+}
+
+/** Read-only value shown in the same slot as an input (balance, leverage). */
+function ReadOnlyValue({ children, tone }: { children: React.ReactNode; tone?: 'accent' }) {
+  return (
     <div
-      className="flex items-center rounded-lg overflow-hidden bg-bg-secondary border border-border-primary"
-    >
-      <input
-        type="number"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="flex-1 bg-transparent px-2.5 py-2 text-[12px] font-mono font-bold text-text-primary outline-none w-0 min-w-0 placeholder:text-text-tertiary"
-      />
-      {suffix && (
-        <span className="pr-2.5 text-[10px] font-semibold text-text-tertiary shrink-0">{suffix}</span>
+      className={clsx(
+        'h-8 flex items-center rounded-md px-2.5 text-xs font-mono font-bold tabular-nums bg-bg-tertiary border border-border-primary',
+        tone === 'accent' ? 'text-accent' : 'text-text-primary',
       )}
+    >
+      {children}
     </div>
   );
 }
@@ -130,46 +140,57 @@ function CompactInstrumentPicker({
 
   return (
     <div className="relative" ref={ref}>
-      <button
-        type="button"
+      <Button
+        variant="secondary"
+        size="sm"
+        fullWidth
         onClick={() => { setOpen(!open); setSearch(''); }}
-        className="w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-[12px] font-medium text-text-primary cursor-pointer transition-colors bg-bg-secondary border border-border-primary"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="!justify-between font-medium"
+        rightIcon={<ChevronDown size={12} className={clsx('text-text-tertiary shrink-0 transition-transform', open && 'rotate-180')} aria-hidden />}
       >
         <span className="truncate">{current?.symbol || 'Select Instrument'}</span>
-        <ChevronDown size={12} className={`text-text-tertiary shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
+      </Button>
       {open && (
-        <div className="absolute top-full left-0 z-50 w-full mt-1 rounded-lg overflow-hidden shadow-2xl bg-card border border-border-primary">
+        <div className="absolute top-full left-0 z-50 w-full mt-1 rounded-lg overflow-hidden shadow-lg bg-card border border-border-primary">
           <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-border-primary bg-bg-secondary">
-            <Search size={12} className="text-text-tertiary shrink-0" />
-            <input
-              ref={inputRef}
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search..."
-              className="flex-1 bg-transparent text-[11px] text-text-primary outline-none placeholder:text-text-tertiary"
-            />
+            <div className="flex-1 min-w-0">
+              <Input
+                ref={inputRef}
+                type="text"
+                size="sm"
+                icon={<Search size={12} aria-hidden />}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search..."
+                aria-label="Search instruments"
+              />
+            </div>
             {search && (
-              <button type="button" onClick={() => setSearch('')} className="text-text-tertiary hover:text-text-primary">
-                <X size={11} />
-              </button>
+              <Button variant="ghost" size="xs" iconOnly onClick={() => setSearch('')} aria-label="Clear search">
+                <X size={11} aria-hidden />
+              </Button>
             )}
           </div>
-          <div className="max-h-[180px] overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+          <div className="max-h-[180px] overflow-y-auto" role="listbox">
             {filtered.length > 0 ? filtered.map((inst) => (
               <button
                 key={inst.symbol}
                 type="button"
+                role="option"
+                aria-selected={inst.symbol === value}
                 onClick={() => { onChange(inst.symbol); setOpen(false); setSearch(''); }}
-                className="w-full flex items-center justify-between px-2 py-1.5 text-left transition-colors hover:bg-bg-hover"
-                style={{ color: inst.symbol === value ? 'var(--accent, #2962FF)' : 'var(--text-secondary)' }}
+                className={clsx(
+                  'w-full flex items-center justify-between px-2 py-1.5 text-left transition-colors hover:bg-bg-hover',
+                  inst.symbol === value ? 'text-accent' : 'text-text-secondary',
+                )}
               >
-                <span className="text-[11px] font-semibold">{inst.symbol}</span>
-                <span className="text-[9px] text-text-tertiary">{inst.segment}</span>
+                <span className="text-xs font-semibold font-mono">{inst.symbol}</span>
+                <span className="text-xxs text-text-tertiary">{inst.segment}</span>
               </button>
             )) : (
-              <div className="px-2 py-3 text-center text-[10px] text-text-tertiary">No results</div>
+              <div className="px-2 py-3 text-center text-xxs text-text-tertiary">No results</div>
             )}
           </div>
         </div>
@@ -263,6 +284,12 @@ export default function RiskCalculator() {
     tab === 'lotsize' ? (lotResult ? lotResult.lotSize.toFixed(2) : '0.00') :
     (swapResult ? `$${swapResult.totalSwap.toFixed(2)}` : '$0.00');
 
+  // P/L result is signed (success / danger); every other result is a neutral figure.
+  const resultTone =
+    tab === 'pnl' && pnlResult
+      ? (pnlResult.pnl >= 0 ? 'text-success' : 'text-danger')
+      : 'text-text-primary';
+
   const resultDetails: { l: string; v: string }[] =
     tab === 'margin' && marginResult ? [
       { l: 'Lots', v: marginResult.lot.toFixed(2) },
@@ -296,42 +323,31 @@ export default function RiskCalculator() {
       {/* Header */}
       <div className="shrink-0 flex items-center justify-between px-2.5 py-2 border-b border-border-primary bg-bg-secondary">
         <div className="flex items-center gap-2">
-          <Calculator size={14} className="text-accent" />
+          <Calculator size={14} className="text-accent" aria-hidden />
           <span className="text-xs font-bold text-text-primary">Risk Calculator</span>
         </div>
-        <button
-          type="button"
-          onClick={handleReset}
-          className="w-7 h-7 rounded-md flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors"
-          title="Reset"
-        >
-          <RotateCcw size={12} />
-        </button>
+        <Button variant="ghost" size="xs" iconOnly onClick={handleReset} title="Reset" aria-label="Reset calculator">
+          <RotateCcw size={12} aria-hidden />
+        </Button>
       </div>
 
       <div className="h-px w-full shrink-0 bg-accent" aria-hidden />
 
       {/* Tabs */}
-      <div className="shrink-0 flex items-center gap-0 px-1 py-1.5 border-b border-border-primary bg-bg-secondary">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setTab(t.id)}
-            className={clsx(
-              'flex-1 py-1.5 rounded-md text-[10px] font-bold transition-all',
-              tab === t.id
-                ? 'bg-accent text-white shadow-md shadow-accent/20'
-                : 'text-text-tertiary hover:text-text-primary',
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div className="shrink-0 px-1.5 py-1.5 border-b border-border-primary bg-bg-secondary">
+        <Tabs
+          variant="pills"
+          size="sm"
+          fullWidth
+          aria-label="Calculator"
+          tabs={TABS}
+          active={tab}
+          onChange={(id) => setTab(id as CalcTab)}
+        />
       </div>
 
       {/* Scrollable body */}
-      <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain" style={{ scrollbarWidth: 'none' }}>
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain scrollbar-none">
         <div className="px-2.5 py-2.5 space-y-2.5">
 
           {/* Account */}
@@ -358,11 +374,7 @@ export default function RiskCalculator() {
           {/* Lot Size: Balance */}
           {tab === 'lotsize' && (
             <Row label="Account Balance" tip="Your balance">
-              <div
-                className="rounded-lg px-2.5 py-2 text-[12px] font-mono font-bold text-accent bg-bg-secondary border border-border-primary"
-              >
-                ${balance.toFixed(2)}
-              </div>
+              <ReadOnlyValue tone="accent">${balance.toFixed(2)}</ReadOnlyValue>
             </Row>
           )}
 
@@ -395,11 +407,7 @@ export default function RiskCalculator() {
           {tab === 'margin' && (
             <>
               <Row label="Leverage" tip="Account leverage">
-                <div
-                  className="rounded-lg px-2.5 py-2 text-[12px] font-mono font-bold text-text-primary bg-bg-secondary border border-border-primary"
-                >
-                  1:{accountLeverage}
-                </div>
+                <ReadOnlyValue>1:{accountLeverage}</ReadOnlyValue>
               </Row>
               <Row label="Lot Size" tip="Position size">
                 <CompactInput value={lots} onChange={setLots} placeholder="Enter Size" />
@@ -441,39 +449,34 @@ export default function RiskCalculator() {
           )}
 
           {/* Calculate button */}
-          <button
-            type="button"
+          <Button
+            variant="primary"
+            size="sm"
+            fullWidth
             onClick={() => {
               if (!entryPrice && livePrice > 0) setEntryPrice(livePrice.toFixed(digits));
             }}
-            className="w-full py-2.5 rounded-lg text-[11px] font-bold text-white bg-accent transition-all active:scale-[0.98] shadow-md shadow-accent/20"
           >
             Calculate
-          </button>
+          </Button>
 
           {/* ─── Result panel ─── */}
-          <div
-            className="rounded-xl flex flex-col items-center justify-center p-5"
-            style={{
-              background: 'linear-gradient(135deg, rgba(41,98,255,0.12) 0%, rgba(94,179,255,0.06) 100%)',
-              border: '1px solid rgba(41,98,255,0.2)',
-            }}
-          >
-            <span className="text-[11px] font-semibold text-text-secondary mb-1">{resultLabel}</span>
-            <span className="text-2xl font-black font-mono text-[#5eb3ff]">{resultValue}</span>
+          <Card nested padding="lg" className="flex flex-col items-center justify-center">
+            <span className="text-xs font-semibold text-text-secondary mb-1">{resultLabel}</span>
+            <span className={clsx('text-2xl font-bold font-mono tabular-nums', resultTone)}>{resultValue}</span>
             {resultDetails.length > 0 && (
               <div className="mt-3 w-full space-y-1">
                 {resultDetails.map((d) => (
-                  <div key={d.l} className="flex items-center justify-between text-[10px]">
+                  <div key={d.l} className="flex items-center justify-between text-xxs">
                     <span className="text-text-tertiary">{d.l}</span>
-                    <span className="font-mono font-semibold text-text-secondary">{d.v}</span>
+                    <span className="font-mono font-semibold text-text-secondary tabular-nums">{d.v}</span>
                   </div>
                 ))}
               </div>
             )}
-          </div>
+          </Card>
 
-          <p className="text-[8px] text-text-tertiary/50 text-center leading-relaxed pb-1">
+          <p className="text-xxs text-text-tertiary text-center leading-relaxed pb-1">
             Approximate values. May vary by market conditions.
           </p>
         </div>

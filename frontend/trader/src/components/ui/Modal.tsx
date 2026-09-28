@@ -2,8 +2,9 @@
 
 import { useEffect, useCallback, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { cn } from '@/lib/utils';
 import { X } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Button } from './Button';
 
 interface ModalProps {
   open: boolean;
@@ -18,6 +19,19 @@ interface ModalProps {
   bodyClassName?: string;
 }
 
+const WIDTHS: Record<NonNullable<ModalProps['width']>, string> = {
+  sm: 'max-w-sm',
+  md: 'max-w-md',
+  lg: 'max-w-lg',
+  xl: 'max-w-xl',
+  '2xl': 'max-w-2xl',
+  '3xl': 'max-w-3xl',
+  '4xl': 'max-w-4xl',
+  '5xl': 'max-w-5xl',
+  '6xl': 'max-w-6xl',
+};
+
+/** Centered dialog: overlay + card sheet. Closes on Escape / overlay click. */
 export default function Modal({
   open,
   onClose,
@@ -53,43 +67,32 @@ export default function Modal({
 
   if (!open || !mounted) return null;
 
-  const widths = {
-    sm: 'max-w-sm',
-    md: 'max-w-md',
-    lg: 'max-w-lg',
-    xl: 'max-w-xl',
-    '2xl': 'max-w-2xl',
-    '3xl': 'max-w-3xl',
-    '4xl': 'max-w-4xl',
-    '5xl': 'max-w-5xl',
-    '6xl': 'max-w-6xl',
-  };
-
   // Portal into document.body so an ancestor with `transform`/`will-change`/`filter`
   // doesn't steal `position: fixed` (CSS containing-block rule). This keeps the
   // modal centered in the viewport regardless of page scroll position.
   return createPortal(
     <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-bg-base/75" onClick={onClose} />
-      <div className={cn(
-        'relative w-full max-h-[90vh] overflow-y-auto bg-bg-tertiary border border-border-primary rounded-lg shadow-modal animate-fade-in',
-        widths[width],
-        className,
-      )}>
+      <div className="absolute inset-0 bg-bg-overlay" onClick={onClose} aria-hidden />
+      <div
+        role="dialog"
+        aria-modal="true"
+        className={cn(
+          'relative w-full max-h-[90vh] overflow-y-auto bg-card border border-border-primary rounded-sheet shadow-lg animate-fade-in',
+          WIDTHS[width],
+          className,
+        )}
+      >
         {title && (
           <div
             className={cn(
-              'flex items-center justify-between px-4 py-3 border-b border-border-primary sticky top-0 bg-bg-tertiary z-10',
+              'flex items-center justify-between gap-3 px-4 py-3 border-b border-border-primary sticky top-0 bg-card z-10',
               headerClassName,
             )}
           >
-            <h3 className="text-md font-semibold text-text-primary">{title}</h3>
-            <button
-              onClick={onClose}
-              className="p-1 text-text-tertiary hover:text-text-primary transition-fast rounded-sm hover:bg-bg-hover"
-            >
-              <X size={16} />
-            </button>
+            <h3 className="text-md font-semibold text-text-primary truncate">{title}</h3>
+            <Button variant="ghost" size="sm" iconOnly aria-label="Close dialog" onClick={onClose}>
+              <X className="h-4 w-4" aria-hidden />
+            </Button>
           </div>
         )}
         <div className={cn('p-4', bodyClassName)}>{children}</div>

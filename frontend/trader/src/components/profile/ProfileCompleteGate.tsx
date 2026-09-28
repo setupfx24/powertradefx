@@ -17,11 +17,12 @@
  *    the modal unmounts itself.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, ShieldCheck, UserCircle2 } from 'lucide-react';
+import { ShieldCheck, UserCircle2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api/client';
 import { getErrorMessage } from '@/lib/errors';
+import { Button, Input, Select } from '@/components/ui';
 
 type FormState = {
   first_name: string;
@@ -189,20 +190,20 @@ export default function ProfileCompleteGate() {
 
   return (
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md"
+      className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-bg-overlay backdrop-blur-md"
       role="dialog"
       aria-modal="true"
       aria-labelledby="profile-gate-title"
     >
-      <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-border-primary bg-bg-secondary shadow-2xl">
+      <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-sheet border border-border-primary bg-bg-tertiary shadow-lg animate-fade-in">
         {/* Header */}
         <div className="px-6 pt-6 pb-4 border-b border-border-primary">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-xl bg-accent/15 flex items-center justify-center">
-              <UserCircle2 size={20} className="text-accent" />
+            <div className="grid h-10 w-10 place-items-center rounded-lg bg-accent/15">
+              <UserCircle2 size={20} className="text-accent" aria-hidden />
             </div>
             <div className="flex-1">
-              <h2 id="profile-gate-title" className="text-text-primary font-bold text-lg leading-tight">
+              <h2 id="profile-gate-title" className="text-md font-semibold text-text-primary leading-tight">
                 Complete your profile
               </h2>
               <p className="text-text-tertiary text-xs mt-0.5">
@@ -219,157 +220,127 @@ export default function ProfileCompleteGate() {
         {/* Form */}
         <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
           <div className="grid grid-cols-2 gap-3">
-            <Field label="First name" required>
-              <input
-                type="text"
-                value={form.first_name}
-                onChange={handleChange('first_name')}
-                placeholder="Jane"
-                autoComplete="given-name"
-                maxLength={100}
-                className="w-full px-3 py-2.5 rounded-lg border border-border-primary bg-bg-secondary text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent/50 text-sm"
-              />
-            </Field>
-            <Field label="Last name" required>
-              <input
-                type="text"
-                value={form.last_name}
-                onChange={handleChange('last_name')}
-                placeholder="Doe"
-                autoComplete="family-name"
-                maxLength={100}
-                className="w-full px-3 py-2.5 rounded-lg border border-border-primary bg-bg-secondary text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent/50 text-sm"
-              />
-            </Field>
-          </div>
-
-          <Field label="Phone number" required>
-            <input
-              type="tel"
-              value={form.phone}
-              onChange={handleChange('phone')}
-              placeholder="+91 98765 43210"
-              autoComplete="tel"
-              maxLength={20}
-              className="w-full px-3 py-2.5 rounded-lg border border-border-primary bg-bg-secondary text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent/50 text-sm"
-            />
-          </Field>
-
-          <Field label="Country of residence" required>
-            <select
-              value={form.country}
-              onChange={handleChange('country')}
-              className="w-full px-3 py-2.5 rounded-lg border border-border-primary bg-bg-secondary text-text-primary outline-none focus:border-accent/50 text-sm appearance-none"
-            >
-              <option value="">Select your country…</option>
-              {COUNTRIES.map((c) => (
-                <option key={c.code} value={c.name}>{c.name}</option>
-              ))}
-            </select>
-          </Field>
-
-          <Field label="Street address" required>
-            <input
+            <Input
+              label="First name"
+              required
               type="text"
-              value={form.address}
-              onChange={handleChange('address')}
-              placeholder="House / flat / street"
-              autoComplete="street-address"
-              maxLength={200}
-              className="w-full px-3 py-2.5 rounded-lg border border-border-primary bg-bg-secondary text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent/50 text-sm"
+              value={form.first_name}
+              onChange={handleChange('first_name')}
+              placeholder="Jane"
+              autoComplete="given-name"
+              maxLength={100}
             />
-          </Field>
+            <Input
+              label="Last name"
+              required
+              type="text"
+              value={form.last_name}
+              onChange={handleChange('last_name')}
+              placeholder="Doe"
+              autoComplete="family-name"
+              maxLength={100}
+            />
+          </div>
+
+          <Input
+            label="Phone number"
+            required
+            type="tel"
+            value={form.phone}
+            onChange={handleChange('phone')}
+            placeholder="+91 98765 43210"
+            autoComplete="tel"
+            maxLength={20}
+          />
+
+          <Select
+            label="Country of residence"
+            required
+            value={form.country}
+            onChange={handleChange('country')}
+          >
+            <option value="">Select your country…</option>
+            {COUNTRIES.map((c) => (
+              <option key={c.code} value={c.name}>{c.name}</option>
+            ))}
+          </Select>
+
+          <Input
+            label="Street address"
+            required
+            type="text"
+            value={form.address}
+            onChange={handleChange('address')}
+            placeholder="House / flat / street"
+            autoComplete="street-address"
+            maxLength={200}
+          />
 
           <div className="grid grid-cols-2 gap-3">
-            <Field label="City" required>
-              <input
-                type="text"
-                value={form.city}
-                onChange={handleChange('city')}
-                autoComplete="address-level2"
-                maxLength={100}
-                className="w-full px-3 py-2.5 rounded-lg border border-border-primary bg-bg-secondary text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent/50 text-sm"
-              />
-            </Field>
-            <Field label="State / province" required>
-              <input
-                type="text"
-                value={form.state}
-                onChange={handleChange('state')}
-                autoComplete="address-level1"
-                maxLength={100}
-                className="w-full px-3 py-2.5 rounded-lg border border-border-primary bg-bg-secondary text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent/50 text-sm"
-              />
-            </Field>
+            <Input
+              label="City"
+              required
+              type="text"
+              value={form.city}
+              onChange={handleChange('city')}
+              autoComplete="address-level2"
+              maxLength={100}
+            />
+            <Input
+              label="State / province"
+              required
+              type="text"
+              value={form.state}
+              onChange={handleChange('state')}
+              autoComplete="address-level1"
+              maxLength={100}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Postal / ZIP code" required>
-              <input
-                type="text"
-                value={form.postal_code}
-                onChange={handleChange('postal_code')}
-                autoComplete="postal-code"
-                maxLength={20}
-                className="w-full px-3 py-2.5 rounded-lg border border-border-primary bg-bg-secondary text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent/50 text-sm"
-              />
-            </Field>
-            <Field label="Date of birth" required hint="18+ to trade.">
-              <input
-                type="date"
-                value={form.date_of_birth}
-                onChange={handleChange('date_of_birth')}
-                max={new Date().toISOString().slice(0, 10)}
-                className="w-full px-3 py-2.5 rounded-lg border border-border-primary bg-bg-secondary text-text-primary outline-none focus:border-accent/50 text-sm"
-              />
-            </Field>
+            <Input
+              label="Postal / ZIP code"
+              required
+              type="text"
+              value={form.postal_code}
+              onChange={handleChange('postal_code')}
+              autoComplete="postal-code"
+              maxLength={20}
+            />
+            <Input
+              label="Date of birth"
+              required
+              hint="18+ to trade."
+              type="date"
+              value={form.date_of_birth}
+              onChange={handleChange('date_of_birth')}
+              max={new Date().toISOString().slice(0, 10)}
+            />
           </div>
 
-          <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-emerald-500/100/5 border border-emerald-500/20">
-            <ShieldCheck size={14} className="text-emerald-400 shrink-0" />
-            <p className="text-[11px] text-emerald-300/80 leading-relaxed">
+          <div className="flex items-center gap-2 px-3 py-2.5 rounded-md bg-success/10 border border-success/25">
+            <ShieldCheck size={14} className="text-success shrink-0" aria-hidden />
+            <p className="text-xs text-success leading-relaxed">
               Encrypted in transit and at rest. Used only for compliance and account safety.
             </p>
           </div>
 
-          <button
+          <Button
             type="submit"
+            variant="primary"
+            size="lg"
+            fullWidth
             disabled={submitting || missingCount > 0}
-            className="w-full inline-flex items-center justify-center gap-2 py-3 rounded-xl bg-accent text-bg-base font-bold text-sm transition-all active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed"
+            loading={submitting}
           >
-            {submitting ? (
-              <>
-                <Loader2 size={14} className="animate-spin" /> Saving…
-              </>
-            ) : missingCount > 0 ? (
-              `${missingCount} field${missingCount === 1 ? '' : 's'} remaining`
-            ) : (
-              'Save & continue'
-            )}
-          </button>
+            {submitting
+              ? 'Saving…'
+              : missingCount > 0
+              ? `${missingCount} field${missingCount === 1 ? '' : 's'} remaining`
+              : 'Save & continue'}
+          </Button>
         </form>
       </div>
     </div>
-  );
-}
-
-function Field({
-  label, required, hint, children,
-}: {
-  label: string;
-  required?: boolean;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="block text-[11px] font-medium text-text-secondary mb-1.5">
-        {label}{required ? <span className="text-red-400 ml-0.5">*</span> : null}
-      </span>
-      {children}
-      {hint ? (
-        <span className="block text-[10px] text-text-tertiary mt-1">{hint}</span>
-      ) : null}
-    </label>
   );
 }

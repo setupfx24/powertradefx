@@ -1,14 +1,44 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
+  Suspense,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { clsx } from 'clsx';
 import toast from 'react-hot-toast';
 import DashboardShell from '@/components/layout/DashboardShell';
 import DemoLockGate from '@/components/demo/DemoLockGate';
 import { formatCurrency } from '@/lib/formatters';
 import { useAuthStore } from '@/stores/authStore';
 import api, { getApiBase } from '@/lib/api/client';
+import { cn } from '@/lib/utils';
+import {
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  EmptyState,
+  Field,
+  Input,
+  PageHeader,
+  Select,
+  Skeleton,
+  StatCard,
+  Table,
+  TBody,
+  TD,
+  TH,
+  THead,
+  TR,
+  Tabs,
+} from '@/components/ui';
 // Automated deposits go through Razorpay Checkout (cards / UPI / netbanking).
 // The user enters a USD amount; the backend converts USD→INR at the live
 // mid-market rate, creates a Razorpay order, and we open the Razorpay
@@ -18,15 +48,33 @@ import {
   Wallet as WalletIcon,
   CreditCard,
   ArrowUpFromLine,
+  ArrowDownToLine,
   ArrowLeftRight,
   History as HistoryIcon,
-  ChevronDown,
   RefreshCcw,
   CheckCircle2,
   Hourglass,
   FileText,
+  Copy,
+  ExternalLink,
 } from 'lucide-react';
 import { downloadWalletStatementPdf } from '@/lib/pdf/walletStatementPdf';
+
+/**
+ * Razorpay's Checkout iframe cannot read our CSS variables, so resolve the
+ * accent token (`--accent-rgb`, an "r g b" triplet) to a hex string at call
+ * time. Returns an empty object when the token is unavailable (SSR or an
+ * unparsable value) so the popup falls back to Razorpay's default theme —
+ * we never carry a colour literal in this file.
+ */
+function checkoutTheme(): { theme?: { color: string } } {
+  if (typeof window === 'undefined') return {};
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--accent-rgb').trim();
+  const parts = raw.split(/[\s,]+/).map((p) => Number(p));
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return {};
+  const hex = parts.map((n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0')).join('');
+  return { theme: { color: `#${hex}` } };
+}
 
 // Razorpay popup integration removed — local-banking flow replaces it.
 // Admin can still attach Razorpay payment-links per request from the
@@ -614,7 +662,7 @@ function WalletPageContent() {
       currency: 'INR',
       name: 'PowerTradeFX',
       description: `Deposit ${deposit.id.slice(0, 8)}`,
-      theme: { color: '#FA5600' }, // --brand-600; Razorpay iframe can't read our CSS vars
+      ...checkoutTheme(), // Razorpay's iframe can't read our CSS vars — resolve the accent token at call time
       handler: async (resp: Record<string, string>) => {
         try {
           await api.post('/wallet/deposit/razorpay/verify', {
@@ -704,7 +752,7 @@ function WalletPageContent() {
       name: 'PowerTradeFX',
       description: `Deposit ${deposit.id.slice(0, 8)}`,
       prefill: {},
-      theme: { color: '#FA5600' }, // --brand-600; Razorpay iframe can't read our CSS vars
+      ...checkoutTheme(), // Razorpay's iframe can't read our CSS vars — resolve the accent token at call time
       handler: async (resp: Record<string, string>) => {
         // Verify the signature server-side so the row credits via the
         // same locked path the webhook uses. Webhook will also catch
@@ -1255,13 +1303,21 @@ function WalletPageContent() {
     transferSourceId !== transferDestinationId &&
     transferAmountValid;
 
+
+  // The manual crypto path needs somewhere to send funds. Mirrors the check
+  // inside submitDeposit(); used here only to decide what to render.
+  const hasManualDestination = !!(
+    manualBankInfo &&
+    (manualBankInfo.bank_name ||
+      manualBankInfo.upi_id ||
+      manualBankInfo.qr_code_url ||
+      manualBankInfo.wallet_address)
+  );
+
   if (loading) {
     return (
       <DashboardShell>
-        <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 py-16">
-          <div className="w-10 h-10 border-[3px] border-accent border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm font-medium text-text-tertiary">Loading wallet…</span>
-        </div>
+        <WalletSkeleton />
       </DashboardShell>
     );
   }
@@ -1281,51 +1337,12 @@ function WalletPageContent() {
 
   // ── Render -----------------------------------------------------------
 
-  /** Top tab bar (underline style). */
-  const renderTabBar = () => {
-    const tabs: { id: FundsTab; label: string }[] = [
-      { id: 'deposit', label: 'Deposit' },
-      { id: 'withdrawal', label: 'Withdrawal' },
-      { id: 'transfer', label: 'Transfer Between Accounts' },
-      { id: 'history', label: 'Transaction History' },
-    ];
-    return (
-      <div className="border-b border-border-primary">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-          {tabs.map((t) => {
-            const active = tab === t.id;
-            return (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => setTab(t.id)}
-                className={clsx(
-                  'relative -mb-px py-3 text-sm transition-colors whitespace-nowrap',
-                  active
-                    ? 'font-bold text-text-primary'
-                    : 'font-medium text-text-tertiary hover:text-text-primary',
-                )}
-              >
-                {t.label}
-                {active && (
-                  <span className="absolute left-0 right-0 -bottom-px h-[2px] bg-accent rounded-full" />
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
-
-  // -----------------------------------------------------------------
-  // Tab bodies
-  // -----------------------------------------------------------------
+  const currency = wallet?.currency || 'USD';
 
   // Non-migrated users fund through the main wallet: deposits land there and
   // withdrawals come from it; trading accounts are funded via the Transfer
   // tab. Migrated / wallet-bound users pick a real account row directly.
-  const accountOptionsForFunding = wallet?.wallet_account
+  const accountOptionsForFunding: AccountOption[] = wallet?.wallet_account
     ? liveAccounts.map((a) => ({
         id: a.id,
         label: `${a.account_group?.name || 'Standard'} · ${a.account_number || a.id.slice(0, 8)}`,
@@ -1339,14 +1356,221 @@ function WalletPageContent() {
         },
       ];
 
+  /** Admin's QR / bank / UPI / wallet destination for the manual crypto path. */
+  const renderPayTo = (info: ManualBankDetailsResponse) => (
+    <Card nested padding="sm" className="space-y-3">
+      <p className="text-xxs font-bold uppercase tracking-[0.12em] text-text-tertiary">Pay to</p>
+      {info.qr_code_url && (
+        <img
+          src={info.qr_code_url}
+          alt="Admin payment QR"
+          className="block h-40 w-40 rounded-md border border-border-primary bg-card object-contain"
+        />
+      )}
+      <div className="space-y-1 text-xs text-text-secondary">
+        {info.bank_name && (
+          <div><span className="font-semibold text-text-primary">Bank:</span> {info.bank_name}</div>
+        )}
+        {info.account_holder && (
+          <div><span className="font-semibold text-text-primary">Holder:</span> {info.account_holder}</div>
+        )}
+        {info.account_number && (
+          <div><span className="font-semibold text-text-primary">A/C:</span> {info.account_number}</div>
+        )}
+        {info.ifsc_code && (
+          <div><span className="font-semibold text-text-primary">IFSC:</span> {info.ifsc_code}</div>
+        )}
+        {info.upi_id && (
+          <div><span className="font-semibold text-text-primary">UPI:</span> {info.upi_id}</div>
+        )}
+      </div>
+      {info.wallet_address && (
+        <div className="space-y-2 border-t border-border-secondary pt-3">
+          <p className="text-xxs font-bold uppercase tracking-[0.12em] text-text-tertiary">Crypto address</p>
+          <div className="flex items-start gap-3 rounded-md border border-border-primary bg-card p-2.5">
+            <img
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&margin=2&data=${encodeURIComponent(info.wallet_address)}`}
+              alt="Wallet address QR"
+              className="block h-24 w-24 shrink-0 rounded-sm border border-border-primary bg-card object-contain"
+            />
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="break-all font-mono text-xs leading-snug text-text-primary">{info.wallet_address}</p>
+              <Button
+                variant="link"
+                size="xs"
+                leftIcon={<Copy className="h-3.5 w-3.5" />}
+                onClick={() => {
+                  navigator.clipboard?.writeText(info.wallet_address!);
+                  toast.success('Address copied');
+                }}
+              >
+                Copy address
+              </Button>
+            </div>
+          </div>
+          <p className="text-xxs leading-snug text-text-tertiary">
+            Scan the QR or copy the address. After paying, paste your transaction hash below as proof.
+          </p>
+        </div>
+      )}
+    </Card>
+  );
+
+  /** One local-banking request: status, the admin-issued link / Razorpay
+   *  CTA, and the inline "I've Paid" proof form. */
+  const renderLocalBankingRequest = (r: WalletListItem) => {
+    const status = (r.status || 'pending').toLowerCase();
+    const isApproved = status === 'approved' || status === 'auto_approved';
+    const isRejected = status === 'rejected' || status === 'failed';
+    const hasLink = !!r.payment_link;
+    const proofSubmitted = Number(r.amount || 0) > 0;
+    const isConfirming = confirmingId === r.id;
+    const stage = isApproved
+      ? 'Credited'
+      : isRejected
+        ? 'Rejected'
+        : proofSubmitted
+          ? 'Proof submitted — admin verifying'
+          : hasLink
+            ? 'Payment link ready'
+            : 'Awaiting admin review';
+    // Three link states:
+    //   razorpay:awaiting → admin approved, user enters amount and creates the order
+    //   razorpay:<order_id> → order already created (legacy / repeat-open path) — open popup
+    //   anything else → external link admin shared
+    const pl = r.payment_link || '';
+    const isRzpAwaiting = pl === 'razorpay:awaiting';
+    const isRzpOrder = pl.startsWith('razorpay:') && !isRzpAwaiting;
+    const showActions = hasLink && !isApproved && !isRejected && !proofSubmitted && !isRzpAwaiting;
+    const rzpBusy = rzpCreatingForId === r.id;
+
+    return (
+      <Card key={r.id} nested padding="sm" className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-mono text-sm font-semibold tabular-nums text-text-primary">
+                {proofSubmitted ? `$${Number(r.amount || 0).toLocaleString()}` : 'Deposit request'}
+              </span>
+              <Badge size="sm" dot variant={isApproved ? 'success' : isRejected ? 'danger' : 'warning'}>
+                {isApproved ? 'Credited' : isRejected ? 'Rejected' : 'Pending'}
+              </Badge>
+            </div>
+            <p className="mt-0.5 text-xs text-text-tertiary">
+              {r.created_at ? new Date(r.created_at).toLocaleString() : ''} · {stage}
+            </p>
+          </div>
+          {showActions && (
+            <div className="flex shrink-0 items-center gap-1.5">
+              {isRzpOrder ? (
+                <Button size="sm" variant="secondary" onClick={() => void openRazorpayCheckout(r)}>
+                  Pay with Razorpay
+                </Button>
+              ) : (
+                <>
+                  <a href={r.payment_link as string} target="_blank" rel="noopener noreferrer" className={LINK_BUTTON_CLASS}>
+                    Pay now
+                    <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                  </a>
+                  <Button
+                    size="sm"
+                    variant={isConfirming ? 'ghost' : 'outline'}
+                    onClick={() => {
+                      setConfirmingId(isConfirming ? null : r.id);
+                      setConfirmAmount('');
+                      setConfirmTxId('');
+                      setConfirmFile(null);
+                    }}
+                  >
+                    {isConfirming ? 'Cancel' : "I've Paid"}
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Razorpay-awaiting form — admin approved, user enters the amount and
+            we create the Razorpay order on the fly, then open Checkout. */}
+        {isRzpAwaiting && !isApproved && !isRejected && (
+          <Card padding="sm" className="space-y-3">
+            <p className="text-xs leading-snug text-text-tertiary">
+              Your request was approved. Enter how much you want to deposit and pay via Razorpay.
+            </p>
+            <div className="flex items-end gap-2">
+              <div className="min-w-0 flex-1">
+                <Input
+                  label="Amount (USD)"
+                  numeric
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  min="1"
+                  value={rzpPayAmountByDeposit[r.id] || ''}
+                  onChange={(e) => setRzpPayAmountByDeposit((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                  placeholder="e.g. 100"
+                />
+              </div>
+              <Button
+                variant="secondary"
+                loading={rzpBusy}
+                disabled={rzpBusy || !(parseFloat(rzpPayAmountByDeposit[r.id] || '0') > 0)}
+                onClick={() => void openRazorpayForAwaitingDeposit(r)}
+              >
+                {rzpBusy ? 'Opening…' : 'Pay with Razorpay'}
+              </Button>
+            </div>
+          </Card>
+        )}
+
+        {/* Inline "I've Paid" form — collapses back when closed. */}
+        {isConfirming && (
+          <Card padding="sm" className="space-y-3">
+            <Input
+              label="Amount paid (USD)"
+              numeric
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              value={confirmAmount}
+              onChange={(e) => setConfirmAmount(e.target.value)}
+              placeholder="e.g. 100"
+            />
+            <Input
+              label="UTR / UPI reference"
+              type="text"
+              value={confirmTxId}
+              onChange={(e) => setConfirmTxId(e.target.value)}
+              placeholder="Transaction reference from your bank / UPI app"
+            />
+            <Input
+              label="Payment proof (screenshot / PDF)"
+              type="file"
+              accept="image/*,application/pdf"
+              onChange={(e) => setConfirmFile(e.target.files?.[0] ?? null)}
+              className={FILE_INPUT_CLASS}
+            />
+            <Button
+              variant="secondary"
+              fullWidth
+              loading={confirmSubmitting}
+              onClick={() => void submitLocalBankingProof(r.id)}
+            >
+              {confirmSubmitting ? 'Submitting…' : 'Submit proof'}
+            </Button>
+          </Card>
+        )}
+      </Card>
+    );
+  };
+
   const renderDepositTab = () => (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-12">
-      {/* LEFT — form */}
-      <div className="lg:col-span-2 space-y-5">
-        {/* Account */}
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-primary">Account</label>
-          <FundsDropdown
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <Card className="lg:col-span-2">
+        <CardHeader title="Deposit funds" description="Pick the account to fund, then choose how you want to pay." />
+        <CardBody className="space-y-4">
+          <AccountSelect
+            label="Account"
             value={depositAccountId}
             options={accountOptionsForFunding}
             placeholder="Select an account"
@@ -1356,432 +1580,159 @@ function WalletPageContent() {
             }}
             disabled={accountOptionsForFunding.length === 0}
           />
-        </div>
 
-        {/* Amount — required for Crypto, optional for Local Banking. LB
-            users submit a permission request; the admin sets the final
-            Razorpay charge amount at approval time so the user can leave
-            this blank or use it as a suggestion. */}
-        {(depositUiSection === 'crypto' || depositUiSection === 'local_banking') && (
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-primary">
-              Amount{depositUiSection === 'local_banking' ? ' (optional)' : ''}
-            </label>
-            <input
-              type="number"
-              inputMode="decimal"
-              min={depositMinDeposit > 0 ? depositMinDeposit : 0}
-              step="0.01"
-              value={depositAmount}
-              onChange={(e) => setDepositAmount(e.target.value)}
-              placeholder="Enter an amount"
-              className={clsx(
-                'w-full rounded-xl bg-bg-tertiary px-4 py-3.5 text-sm text-text-primary placeholder:text-text-tertiary outline-none transition-shadow',
-                'focus:ring-2 focus:ring-accent/40',
-              )}
-            />
-            {depositAmount && !depositAmountValid && depositMinDeposit > 0 && (
-              <p className="text-xs text-red-400">
-                Minimum deposit for this account is {formatCurrency(depositMinDeposit, depositAccount?.currency || wallet?.currency || 'USD')}.
-              </p>
-            )}
-            {depositMinDeposit > 0 && depositAmountValid && (
-              <p className="text-xs text-text-tertiary">
-                Minimum deposit: {formatCurrency(depositMinDeposit, depositAccount?.currency || wallet?.currency || 'USD')}
-              </p>
-            )}
-          </div>
-        )}
+          {/* Amount — required for Crypto, optional for Local Banking. LB
+              users submit a permission request; the admin sets the final
+              Razorpay charge amount at approval time so the user can leave
+              this blank or use it as a suggestion. */}
+          <Input
+            label={`Amount${depositUiSection === 'local_banking' ? ' (optional)' : ''}`}
+            numeric
+            type="number"
+            inputMode="decimal"
+            min={depositMinDeposit > 0 ? depositMinDeposit : 0}
+            step="0.01"
+            value={depositAmount}
+            onChange={(e) => setDepositAmount(e.target.value)}
+            placeholder="Enter an amount"
+            suffix={currency}
+            error={
+              depositAmount && !depositAmountValid && depositMinDeposit > 0
+                ? `Minimum deposit for this account is ${formatCurrency(depositMinDeposit, depositAccount?.currency || wallet?.currency || 'USD')}.`
+                : undefined
+            }
+            hint={
+              depositMinDeposit > 0 && depositAmountValid
+                ? `Minimum deposit: ${formatCurrency(depositMinDeposit, depositAccount?.currency || wallet?.currency || 'USD')}`
+                : undefined
+            }
+          />
 
-        {/* Payment method chips: Crypto (admin's QR shown, user pays + uploads
-            proof) and Local Banking (request flow, admin sends back link). */}
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-primary">Payment method</label>
-          <div className="flex gap-2">
-            {(
-              [
-                { id: 'crypto' as const, label: 'Crypto', sub: '' },
-                { id: 'local_banking' as const, label: 'Local Banking', sub: 'Request payment link' },
-              ]
-            ).map((c) => {
-              const active = depositUiSection === c.id;
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => setDepositUiSection(c.id)}
-                  className={clsx(
-                    'flex-1 rounded-xl border px-4 py-3 text-left transition-colors',
-                    active
-                      ? 'border-[#0A0A0A] bg-card'
-                      : 'border-transparent bg-bg-tertiary hover:border-border-primary',
-                  )}
-                >
-                  <div className="text-sm font-semibold text-text-primary">{c.label}</div>
-                  {c.sub && <div className="text-xs text-text-tertiary mt-0.5">{c.sub}</div>}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+          {/* Payment method: Crypto (admin's QR shown, user pays + uploads
+              proof) and Local Banking (request flow, admin sends back link). */}
+          <Field label="Payment method">
+            <div role="radiogroup" aria-label="Payment method" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <MethodCard
+                active={depositUiSection === 'crypto'}
+                label="Crypto"
+                badge={<Badge size="sm" variant="success">Auto-credit</Badge>}
+                onSelect={() => setDepositUiSection('crypto')}
+              />
+              <MethodCard
+                active={depositUiSection === 'local_banking'}
+                label="Local Banking"
+                sub="Request payment link"
+                badge={
+                  <Badge size="sm" variant={kycApproved ? 'neutral' : 'warning'}>
+                    {kycApproved ? 'Admin review' : 'KYC required'}
+                  </Badge>
+                }
+                onSelect={() => setDepositUiSection('local_banking')}
+              />
+            </div>
+          </Field>
 
-        {/* Channel-specific extras ------------------------------ */}
-        {depositUiSection === 'crypto' ? (
-          <>
-            {/* Admin's QR / wallet info — same source as the legacy manual
-                flow used (per-tier bank/UPI/QR rows the admin maintains). */}
-            {manualBankInfo && (
-              manualBankInfo.bank_name ||
-              manualBankInfo.upi_id ||
-              manualBankInfo.qr_code_url ||
-              manualBankInfo.wallet_address
-            ) && (
-              <div className="rounded-xl border border-border-primary bg-card px-4 py-3.5 text-sm text-text-primary space-y-3">
-                <div className="text-xs font-semibold uppercase tracking-wider text-text-tertiary">
-                  Pay to
-                </div>
-                {manualBankInfo.qr_code_url && (
-                  <img
-                    src={manualBankInfo.qr_code_url}
-                    alt="Admin payment QR"
-                    className="block w-40 h-40 object-contain rounded-lg border border-border-primary bg-card"
-                  />
-                )}
-                <div className="space-y-1 text-xs">
-                  {manualBankInfo.bank_name && (
-                    <div><span className="text-text-primary font-semibold">Bank:</span> {manualBankInfo.bank_name}</div>
-                  )}
-                  {manualBankInfo.account_holder && (
-                    <div><span className="text-text-primary font-semibold">Holder:</span> {manualBankInfo.account_holder}</div>
-                  )}
-                  {manualBankInfo.account_number && (
-                    <div><span className="text-text-primary font-semibold">A/C:</span> {manualBankInfo.account_number}</div>
-                  )}
-                  {manualBankInfo.ifsc_code && (
-                    <div><span className="text-text-primary font-semibold">IFSC:</span> {manualBankInfo.ifsc_code}</div>
-                  )}
-                  {manualBankInfo.upi_id && (
-                    <div><span className="text-text-primary font-semibold">UPI:</span> {manualBankInfo.upi_id}</div>
-                  )}
-                </div>
-                {manualBankInfo.wallet_address && (
-                  <div className="space-y-2 pt-2 border-t border-border-primary">
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
-                      Crypto address
-                    </div>
-                    {(() => {
-                      const addr = manualBankInfo.wallet_address!;
-                      const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&margin=2&data=${encodeURIComponent(addr)}`;
-                      return (
-                        <div className="flex items-start gap-3 rounded-lg border border-border-primary p-2.5 bg-bg-secondary">
-                          <img
-                            src={qrSrc}
-                            alt="Wallet address QR"
-                            className="block w-24 h-24 shrink-0 object-contain rounded bg-card border border-border-primary"
-                          />
-                          <div className="flex-1 min-w-0 space-y-1">
-                            <div className="text-[11px] font-mono break-all leading-snug text-text-primary">{addr}</div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                navigator.clipboard?.writeText(addr);
-                                toast.success('Address copied');
-                              }}
-                              className="text-[11px] font-semibold text-accent hover:underline"
-                            >
-                              Copy address
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                    <p className="text-[10px] text-text-tertiary leading-snug">
-                      Scan the QR or copy the address. After paying, paste your transaction hash below as proof.
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
+          {/* Channel-specific extras ------------------------------ */}
+          {depositUiSection === 'crypto' ? (
+            <>
+              {/* Admin's QR / wallet info — same source as the legacy manual
+                  flow used (per-tier bank/UPI/QR rows the admin maintains). */}
+              {hasManualDestination && renderPayTo(manualBankInfo!)}
 
-            {/* Automated crypto checkout via the OxaPay gateway. Opens a
-                hosted page where the user picks a coin/network, pays, and
-                the OxaPay webhook auto-credits the deposit — no manual
-                tx-hash entry required. */}
-            <button
-              type="button"
-              onClick={() => void openCryptoGatewayCheckout()}
-              disabled={cryptoGatewayBusy || !(parseFloat(depositAmount) > 0)}
-              className="w-full rounded-xl bg-accent text-white text-sm font-semibold py-3 hover:bg-[#1a1a1a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-2"
-            >
-              {cryptoGatewayBusy ? 'Opening gateway…' : 'Pay with crypto gateway →'}
-            </button>
+              {/* Automated crypto checkout via the OxaPay gateway. Opens a
+                  hosted page where the user picks a coin/network, pays, and
+                  the OxaPay webhook auto-credits the deposit — no manual
+                  tx-hash entry required. */}
+              <Button
+                variant="outline"
+                size="lg"
+                fullWidth
+                rightIcon={<ExternalLink className="h-4 w-4" />}
+                loading={cryptoGatewayBusy}
+                disabled={cryptoGatewayBusy || !(parseFloat(depositAmount) > 0)}
+                onClick={() => void openCryptoGatewayCheckout()}
+              >
+                {cryptoGatewayBusy ? 'Opening gateway…' : 'Pay with crypto gateway'}
+              </Button>
 
-            {/* Manual proof submission — only show when admin has actually
-                configured a bank/UPI/QR/wallet to pay TO. If nothing is
-                configured the user has nowhere to send funds manually, so
-                hide the tx-hash + proof fields rather than show empty
-                inputs that lead to a stuck request. */}
-            {manualBankInfo && (
-              manualBankInfo.bank_name ||
-              manualBankInfo.upi_id ||
-              manualBankInfo.qr_code_url ||
-              manualBankInfo.wallet_address
-            ) && (
-              <>
-                <p className="text-[11px] text-text-tertiary leading-snug text-center">
-                  Or pay manually to the address above and submit your transaction hash below.
-                </p>
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-text-primary">Transaction reference / tx hash</label>
-                  <input
+              {/* Manual proof submission — only when admin has configured a
+                  bank/UPI/QR/wallet to pay TO. Otherwise the user has nowhere
+                  to send funds manually, so hide the tx-hash + proof fields
+                  rather than show empty inputs that lead to a stuck request. */}
+              {hasManualDestination && (
+                <>
+                  <p className="text-center text-xs leading-snug text-text-tertiary">
+                    Or pay manually to the address above and submit your transaction hash below.
+                  </p>
+                  <Input
+                    label="Transaction reference / tx hash"
                     type="text"
                     value={depositTxId}
                     onChange={(e) => setDepositTxId(e.target.value)}
                     placeholder="On-chain tx hash, UTR, or transfer reference"
-                    className="w-full rounded-xl bg-bg-tertiary px-4 py-3.5 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:ring-2 focus:ring-accent/40"
+                    className="font-mono"
                   />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-text-primary">Payment proof</label>
-                  <input
+                  <Input
+                    label="Payment proof"
                     type="file"
                     accept="image/*,application/pdf"
                     onChange={(e) => setDepositProofFile(e.target.files?.[0] ?? null)}
-                    className="w-full rounded-xl bg-bg-tertiary px-4 py-3 text-sm text-text-primary file:mr-3 file:rounded-lg file:border-0 file:bg-accent file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white"
+                    className={FILE_INPUT_CLASS}
                   />
-                </div>
-              </>
-            )}
-          </>
-        ) : (
-          <div className="space-y-2">
-            {!kycApproved && (
-              <div className="rounded-xl border border-accent/40 bg-accent-soft px-4 py-3 text-sm text-text-primary flex flex-wrap items-center justify-between gap-3">
-                <span className="leading-relaxed">
-                  Local Banking requires <span className="font-semibold">verified KYC</span>.
-                </span>
-                <button
-                  type="button"
-                  onClick={() => router.push('/kyc')}
-                  className="shrink-0 inline-flex items-center justify-center rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-semibold px-3 py-1.5 transition-colors"
-                >
-                  Complete KYC
-                </button>
-              </div>
-            )}
-            <div className="rounded-xl bg-bg-tertiary px-4 py-3.5 text-sm text-text-primary">
-              <p className="leading-relaxed">
+                </>
+              )}
+            </>
+          ) : (
+            <div className="space-y-3">
+              {!kycApproved && (
+                <Card nested padding="sm" className="flex flex-wrap items-center justify-between gap-3 border-warning/40">
+                  <span className="text-sm leading-relaxed text-text-primary">
+                    Local Banking requires <span className="font-semibold">verified KYC</span>.
+                  </span>
+                  <Button size="sm" variant="secondary" onClick={() => router.push('/kyc')}>
+                    Complete KYC
+                  </Button>
+                </Card>
+              )}
+              <p className="rounded-md bg-bg-tertiary px-4 py-3 text-sm leading-relaxed text-text-secondary">
                 Submit this request and our team will share a payment link (Razorpay, bank transfer, or UPI) with you shortly. Your wallet is credited the USD amount once payment is confirmed.
               </p>
-            </div>
 
-            {/* User's existing local-banking requests (admin queue / link). */}
-            {localBankingRequests.length > 0 && (
-              <div className="rounded-xl border border-border-primary bg-card px-4 py-3.5">
-                <div className="text-xs font-semibold uppercase tracking-wider text-text-tertiary mb-2">
-                  Your requests
+              {/* User's existing local-banking requests (admin queue / link). */}
+              {localBankingRequests.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xxs font-bold uppercase tracking-[0.12em] text-text-tertiary">Your requests</p>
+                  {localBankingRequests.slice(0, 5).map(renderLocalBankingRequest)}
                 </div>
-                <ul className="space-y-2">
-                  {localBankingRequests.slice(0, 5).map((r) => {
-                    const status = (r.status || 'pending').toLowerCase();
-                    const isApproved = status === 'approved' || status === 'auto_approved';
-                    const isRejected = status === 'rejected' || status === 'failed';
-                    const hasLink = !!r.payment_link;
-                    const proofSubmitted = Number(r.amount || 0) > 0;
-                    const isConfirming = confirmingId === r.id;
-                    const stage = isApproved
-                      ? 'Credited'
-                      : isRejected
-                        ? 'Rejected'
-                        : proofSubmitted
-                          ? 'Proof submitted — admin verifying'
-                          : hasLink
-                            ? 'Payment link ready'
-                            : 'Awaiting admin review';
-                    return (
-                      <li
-                        key={r.id}
-                        className="rounded-lg bg-bg-tertiary px-3 py-2 text-sm space-y-2"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="font-semibold text-text-primary tabular-nums">
-                              {proofSubmitted
-                                ? `$${Number(r.amount || 0).toLocaleString()}`
-                                : 'Deposit request'}
-                            </div>
-                            <div className="text-[11px] text-text-tertiary">
-                              {r.created_at ? new Date(r.created_at).toLocaleString() : ''} · {stage}
-                            </div>
-                          </div>
-                          {hasLink && !isApproved && !isRejected && !proofSubmitted && (() => {
-                            const pl = r.payment_link || '';
-                            // Three states:
-                            //   razorpay:awaiting → admin approved, user
-                            //     enters amount and creates the order
-                            //   razorpay:<order_id> → order already created
-                            //     (legacy / repeat-open path) — open popup
-                            //   anything else → external link admin shared
-                            const isRzpAwaiting = pl === 'razorpay:awaiting';
-                            const isRzpOrder = pl.startsWith('razorpay:') && !isRzpAwaiting;
-                            if (isRzpAwaiting) {
-                              return null; // handled by the inline amount form below
-                            }
-                            return (
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                {isRzpOrder ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => void openRazorpayCheckout(r)}
-                                    className="inline-flex items-center justify-center rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-semibold px-3 py-1.5 transition-colors"
-                                  >
-                                    Pay with Razorpay
-                                  </button>
-                                ) : (
-                                  <>
-                                    <a
-                                      href={r.payment_link as string}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex items-center justify-center rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-semibold px-3 py-1.5 transition-colors"
-                                    >
-                                      Pay now
-                                    </a>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setConfirmingId(isConfirming ? null : r.id);
-                                        setConfirmAmount('');
-                                        setConfirmTxId('');
-                                        setConfirmFile(null);
-                                      }}
-                                      className="inline-flex items-center justify-center rounded-lg border border-[#0A0A0A] text-text-primary text-xs font-semibold px-3 py-1.5 hover:bg-accent hover:text-white transition-colors"
-                                    >
-                                      {isConfirming ? 'Cancel' : "I've Paid"}
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            );
-                          })()}
-                        </div>
+              )}
+            </div>
+          )}
 
-                        {/* Razorpay-awaiting form — admin approved, user enters
-                            the amount and we create the Razorpay order on the
-                            fly, then open the Checkout popup. */}
-                        {r.payment_link === 'razorpay:awaiting' && !isApproved && !isRejected && (
-                          <div className="space-y-2 rounded-lg bg-card border border-border-primary p-3">
-                            <p className="text-xs text-text-tertiary leading-snug">
-                              Your request was approved. Enter how much you want to deposit and pay via Razorpay.
-                            </p>
-                            <div className="flex items-end gap-2">
-                              <div className="flex-1 space-y-1">
-                                <label className="text-xs font-medium text-text-primary">Amount (USD)</label>
-                                <input
-                                  type="number"
-                                  inputMode="decimal"
-                                  step="0.01"
-                                  min="1"
-                                  value={rzpPayAmountByDeposit[r.id] || ''}
-                                  onChange={(e) =>
-                                    setRzpPayAmountByDeposit((prev) => ({ ...prev, [r.id]: e.target.value }))
-                                  }
-                                  placeholder="e.g. 100"
-                                  className="w-full rounded-lg bg-bg-tertiary px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent/40"
-                                />
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => void openRazorpayForAwaitingDeposit(r)}
-                                disabled={
-                                  rzpCreatingForId === r.id ||
-                                  !(parseFloat(rzpPayAmountByDeposit[r.id] || '0') > 0)
-                                }
-                                className="inline-flex items-center justify-center rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-semibold px-4 py-2.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                {rzpCreatingForId === r.id ? 'Opening…' : 'Pay with Razorpay'}
-                              </button>
-                            </div>
-                          </div>
-                        )}
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            disabled={!depositCanContinue}
+            loading={depositSubmitting}
+            onClick={() => void submitDeposit()}
+          >
+            {depositSubmitting ? 'Processing…' : depositUiSection === 'local_banking' ? 'Send Request' : 'Continue'}
+          </Button>
+        </CardBody>
+      </Card>
 
-                        {/* Inline "I've Paid" form — collapses back when closed. */}
-                        {isConfirming && (
-                          <div className="space-y-2 rounded-lg bg-card border border-border-primary p-3">
-                            <div className="space-y-1">
-                              <label className="text-xs font-medium text-text-primary">Amount paid (USD)</label>
-                              <input
-                                type="number"
-                                inputMode="decimal"
-                                step="0.01"
-                                value={confirmAmount}
-                                onChange={(e) => setConfirmAmount(e.target.value)}
-                                placeholder="e.g. 100"
-                                className="w-full rounded-lg bg-bg-tertiary px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent/40"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-xs font-medium text-text-primary">UTR / UPI reference</label>
-                              <input
-                                type="text"
-                                value={confirmTxId}
-                                onChange={(e) => setConfirmTxId(e.target.value)}
-                                placeholder="Transaction reference from your bank / UPI app"
-                                className="w-full rounded-lg bg-bg-tertiary px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent/40"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-xs font-medium text-text-primary">Payment proof (screenshot / PDF)</label>
-                              <input
-                                type="file"
-                                accept="image/*,application/pdf"
-                                onChange={(e) => setConfirmFile(e.target.files?.[0] ?? null)}
-                                className="w-full rounded-lg bg-bg-tertiary px-3 py-2 text-xs file:mr-3 file:rounded file:border-0 file:bg-accent file:px-3 file:py-1 file:text-xs file:font-semibold file:text-white"
-                              />
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => void submitLocalBankingProof(r.id)}
-                              disabled={confirmSubmitting}
-                              className="w-full rounded-lg bg-accent hover:bg-accent-hover disabled:opacity-60 text-white text-sm font-semibold py-2 transition-colors"
-                            >
-                              {confirmSubmitting ? 'Submitting…' : 'Submit proof'}
-                            </button>
-                          </div>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Continue */}
-        <ContinueButton
-          disabled={!depositCanContinue}
-          busy={depositSubmitting}
-          onClick={() => void submitDeposit()}
-          label={depositUiSection === 'local_banking' ? 'Send Request' : 'Continue'}
-        />
-      </div>
-
-      {/* RIGHT — stepper */}
-      <Stepper
+      <StepsCard
         steps={[
           {
             icon: <WalletIcon size={16} />,
             title: 'Deposit Funds',
-            description:
-              'Start by depositing the desired amount into your account to initiate the process.',
+            description: 'Start by depositing the desired amount into your account to initiate the process.',
             state: 'current',
           },
           {
             icon: <CreditCard size={16} />,
             title: 'Select Deposit Method',
-            description:
-              'Choose the most convenient payment method from the available options for your deposit.',
+            description: 'Choose the most convenient payment method from the available options for your deposit.',
             state: 'upcoming',
           },
         ]}
@@ -1790,11 +1741,12 @@ function WalletPageContent() {
   );
 
   const renderWithdrawalTab = () => (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-12">
-      <div className="lg:col-span-2 space-y-5">
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-primary">Account</label>
-          <FundsDropdown
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <Card className="lg:col-span-2">
+        <CardHeader title="Withdraw funds" description="Requests are reviewed by finance before funds are released." />
+        <CardBody className="space-y-4">
+          <AccountSelect
+            label="Account"
             value={withdrawAccountId}
             options={accountOptionsForFunding}
             placeholder="Select an account"
@@ -1804,24 +1756,10 @@ function WalletPageContent() {
             }}
             disabled={accountOptionsForFunding.length === 0}
           />
-        </div>
 
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
-            <label className="text-sm font-medium text-text-primary">Amount</label>
-            <button
-              type="button"
-              onClick={() => {
-                const acc = liveAccounts.find((a) => a.id === withdrawAccountId);
-                const bal = Number(acc?.balance ?? wallet?.main_wallet_balance ?? 0);
-                setWithdrawAmount(String(Math.max(0, bal)));
-              }}
-              className="text-xs font-bold text-text-primary hover:underline"
-            >
-              Max
-            </button>
-          </div>
-          <input
+          <Input
+            label="Amount"
+            numeric
             type="number"
             inputMode="decimal"
             min="0.01"
@@ -1829,81 +1767,60 @@ function WalletPageContent() {
             value={withdrawAmount}
             onChange={(e) => setWithdrawAmount(e.target.value)}
             placeholder="Enter an amount"
-            className="w-full rounded-xl bg-bg-tertiary px-4 py-3.5 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:ring-2 focus:ring-accent/40"
-          />
-        </div>
-
-        {/* Payment-method chips */}
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium text-text-primary">Payout method</label>
-          <div className="flex gap-2">
-            {(
-              [
-                { id: 'crypto' as const, label: 'Crypto', sub: 'USDT on-chain' },
-                { id: 'bank' as const, label: 'Bank / UPI', sub: 'Manual payout' },
-              ]
-            ).map((c) => {
-              const active = withdrawUiSection === c.id;
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => setWithdrawUiSection(c.id)}
-                  className={clsx(
-                    'flex-1 rounded-xl border px-4 py-3 text-left transition-colors',
-                    active
-                      ? 'border-[#0A0A0A] bg-card'
-                      : 'border-transparent bg-bg-tertiary hover:border-border-primary',
-                  )}
+            suffix={currency}
+            hint={
+              <span className="flex items-center justify-end">
+                <Button
+                  variant="link"
+                  size="xs"
+                  onClick={() => {
+                    const acc = liveAccounts.find((a) => a.id === withdrawAccountId);
+                    const bal = Number(acc?.balance ?? wallet?.main_wallet_balance ?? 0);
+                    setWithdrawAmount(String(Math.max(0, bal)));
+                  }}
                 >
-                  <div className="text-sm font-semibold text-text-primary">{c.label}</div>
-                  {c.sub && <div className="text-xs text-text-tertiary mt-0.5">{c.sub}</div>}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+                  Max
+                </Button>
+              </span>
+            }
+          />
 
-        {withdrawUiSection === 'crypto' ? (
-          <>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-primary">USDT Network</label>
-              <div className="grid grid-cols-3 gap-2">
-                {WITHDRAW_NETWORK_OPTIONS.map((opt) => {
-                  const active = opt.network === withdrawNetwork;
-                  return (
-                    <button
-                      key={opt.network}
-                      type="button"
-                      onClick={() => setWithdrawNetwork(opt.network)}
-                      className={clsx(
-                        'rounded-xl border px-3 py-2.5 text-left text-xs transition-colors',
-                        active
-                          ? 'border-[#0A0A0A] bg-card'
-                          : 'border-transparent bg-bg-tertiary hover:border-border-primary',
-                      )}
-                    >
-                      <div className="font-semibold text-text-primary">{opt.label}</div>
-                      <div className="text-[11px] text-text-tertiary mt-0.5">{opt.sub}</div>
-                    </button>
-                  );
-                })}
-              </div>
+          <Field label="Payout method">
+            <div role="radiogroup" aria-label="Payout method" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <MethodCard
+                active={withdrawUiSection === 'crypto'}
+                label="Crypto"
+                sub="USDT on-chain"
+                badge={<Badge size="sm" variant="info">Up to 24h</Badge>}
+                onSelect={() => setWithdrawUiSection('crypto')}
+              />
+              <MethodCard
+                active={withdrawUiSection === 'bank'}
+                label="Bank / UPI"
+                sub="Manual payout"
+                badge={<Badge size="sm" variant="neutral">Finance review</Badge>}
+                onSelect={() => setWithdrawUiSection('bank')}
+              />
             </div>
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <label className="text-sm font-medium text-text-primary">Your {withdrawActiveNetwork.label} address</label>
-                {linkedWalletAddress && withdrawActiveNetwork.addressRegex.test(linkedWalletAddress) && (
-                  <button
-                    type="button"
-                    onClick={() => setWithdrawCryptoAddress(linkedWalletAddress)}
-                    className="text-xs font-bold text-text-primary hover:underline"
-                  >
-                    Use linked wallet
-                  </button>
-                )}
-              </div>
-              <input
+          </Field>
+
+          {withdrawUiSection === 'crypto' ? (
+            <>
+              <Field label="USDT Network">
+                <div role="radiogroup" aria-label="USDT network" className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {WITHDRAW_NETWORK_OPTIONS.map((opt) => (
+                    <MethodCard
+                      key={opt.network}
+                      active={opt.network === withdrawNetwork}
+                      label={opt.label}
+                      sub={opt.sub}
+                      onSelect={() => setWithdrawNetwork(opt.network)}
+                    />
+                  ))}
+                </div>
+              </Field>
+              <Input
+                label={`Your ${withdrawActiveNetwork.label} address`}
                 type="text"
                 spellCheck={false}
                 autoCorrect="off"
@@ -1911,67 +1828,68 @@ function WalletPageContent() {
                 value={withdrawCryptoAddress}
                 onChange={(e) => setWithdrawCryptoAddress(e.target.value)}
                 placeholder={withdrawActiveNetwork.addressHint}
-                className={clsx(
-                  'w-full rounded-xl bg-bg-tertiary px-4 py-3.5 text-sm font-mono text-text-primary placeholder:text-text-tertiary outline-none break-all',
+                className="font-mono"
+                error={
                   withdrawAddrTrimmed && !withdrawAddrValid
-                    ? 'ring-2 ring-red-500/60'
-                    : 'focus:ring-2 focus:ring-accent/40',
-                )}
+                    ? `That doesn't look like a valid ${withdrawActiveNetwork.label} address.`
+                    : undefined
+                }
+                hint={
+                  <span className="flex flex-wrap items-center justify-between gap-2">
+                    <span>Double-check the address — payouts on the wrong network can&apos;t be recovered. Processing time: up to 24h.</span>
+                    {linkedWalletAddress && withdrawActiveNetwork.addressRegex.test(linkedWalletAddress) && (
+                      <Button variant="link" size="xs" onClick={() => setWithdrawCryptoAddress(linkedWalletAddress)}>
+                        Use linked wallet
+                      </Button>
+                    )}
+                  </span>
+                }
               />
-              <p className="text-xs text-text-tertiary leading-relaxed">
-                {withdrawAddrTrimmed && !withdrawAddrValid
-                  ? `That doesn't look like a valid ${withdrawActiveNetwork.label} address.`
-                  : `Double-check the address — payouts on the wrong network can't be recovered. Processing time: up to 24h.`}
-              </p>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-primary">UPI ID</label>
-              <input
+            </>
+          ) : (
+            <>
+              <Input
+                label="UPI ID"
                 type="text"
                 value={manualWithdrawUpi}
                 onChange={(e) => setManualWithdrawUpi(e.target.value)}
                 placeholder="yourname@upi"
-                className="w-full rounded-xl bg-bg-tertiary px-4 py-3.5 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:ring-2 focus:ring-accent/40"
               />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-primary">QR code (optional)</label>
-              <input
+              <Input
+                label="QR code (optional)"
                 type="file"
                 accept="image/*"
                 onChange={(e) => setManualWithdrawQrFile(e.target.files?.[0] ?? null)}
-                className="w-full rounded-xl bg-bg-tertiary px-4 py-3 text-sm text-text-primary file:mr-3 file:rounded-lg file:border-0 file:bg-accent file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white"
+                className={FILE_INPUT_CLASS}
               />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-text-primary">Notes (optional)</label>
-              <input
+              <Input
+                label="Notes (optional)"
                 type="text"
                 value={manualWithdrawNotes}
                 onChange={(e) => setManualWithdrawNotes(e.target.value)}
                 placeholder="Any context for finance"
-                className="w-full rounded-xl bg-bg-tertiary px-4 py-3.5 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:ring-2 focus:ring-accent/40"
               />
-            </div>
-          </>
-        )}
+            </>
+          )}
 
-        <ContinueButton
-          disabled={!withdrawCanContinue}
-          busy={withdrawSubmitting}
-          onClick={() => void submitWithdraw()}
-          label={
-            withdrawAmount
-              ? `Continue — ${fmt(withdrawAmountNumber || 0)}`
-              : 'Continue'
-          }
-        />
-      </div>
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            disabled={!withdrawCanContinue}
+            loading={withdrawSubmitting}
+            onClick={() => void submitWithdraw()}
+          >
+            {withdrawSubmitting
+              ? 'Processing…'
+              : withdrawAmount
+                ? `Continue — ${fmt(withdrawAmountNumber || 0)}`
+                : 'Continue'}
+          </Button>
+        </CardBody>
+      </Card>
 
-      <Stepper
+      <StepsCard
         steps={[
           {
             icon: <ArrowUpFromLine size={16} />,
@@ -1993,7 +1911,7 @@ function WalletPageContent() {
   const renderTransferTab = () => {
     // Build the option list once — main wallet (or wallet account row, when
     // migrated) + every other live trading account.
-    const sharedOptions = [
+    const sharedOptions: AccountOption[] = [
       ...(wallet?.wallet_account
         ? [] // wallet-bound users have their wallet listed as a normal row
         : [{
@@ -2008,31 +1926,29 @@ function WalletPageContent() {
       })),
     ];
     return (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-12">
-        <div className="lg:col-span-2 space-y-5">
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-primary">From</label>
-            <FundsDropdown
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader title="Transfer between accounts" description="Move funds between your main wallet and trading accounts." />
+          <CardBody className="space-y-4">
+            <AccountSelect
+              label="From"
               value={transferSourceId}
               options={sharedOptions}
               placeholder="Select source account"
               onChange={setTransferSourceId}
               disabled={sharedOptions.length === 0}
             />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-primary">To</label>
-            <FundsDropdown
+            <AccountSelect
+              label="To"
               value={transferDestinationId}
               options={sharedOptions.filter((o) => o.id !== transferSourceId)}
               placeholder="Select destination account"
               onChange={setTransferDestinationId}
               disabled={sharedOptions.length === 0}
             />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-text-primary">Amount</label>
-            <input
+            <Input
+              label="Amount"
+              numeric
               type="number"
               inputMode="decimal"
               min="0.01"
@@ -2040,22 +1956,24 @@ function WalletPageContent() {
               value={transferAmount}
               onChange={(e) => setTransferAmount(e.target.value)}
               placeholder="Enter an amount"
-              className="w-full rounded-xl bg-bg-tertiary px-4 py-3.5 text-sm text-text-primary placeholder:text-text-tertiary outline-none focus:ring-2 focus:ring-accent/40"
+              suffix={currency}
+              hint="Transfers between accounts are instant. Trading-account ↔ trading-account routes via your main wallet automatically."
             />
-            <p className="text-xs text-text-tertiary leading-relaxed">
-              Transfers between accounts are instant. Trading-account ↔ trading-account routes via your main wallet automatically.
-            </p>
-          </div>
 
-          <ContinueButton
-            disabled={!transferCanContinue}
-            busy={transferSubmitting}
-            onClick={() => void submitTransfer()}
-            label="Continue"
-          />
-        </div>
+            <Button
+              variant="primary"
+              size="lg"
+              fullWidth
+              disabled={!transferCanContinue}
+              loading={transferSubmitting}
+              onClick={() => void submitTransfer()}
+            >
+              {transferSubmitting ? 'Processing…' : 'Continue'}
+            </Button>
+          </CardBody>
+        </Card>
 
-        <Stepper
+        <StepsCard
           steps={[
             {
               icon: <WalletIcon size={16} />,
@@ -2076,167 +1994,160 @@ function WalletPageContent() {
   };
 
   const renderHistoryTab = () => (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-12">
-      <div className="lg:col-span-2 space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-base font-semibold text-text-primary">Recent transactions</h2>
-          <button
-            type="button"
-            onClick={() => {
-              if (historyItems.length === 0) { toast.error('No transactions to export'); return; }
-              void downloadWalletStatementPdf(
-                historyItems.map((it) => ({
-                  type: it.type, method: it.method, amount: it.amount,
-                  currency: it.currency, status: it.status, created_at: it.created_at,
-                })),
-                {
-                  accountName: userFullName || undefined,
-                  accountEmail: userEmail || undefined,
-                  currency: wallet?.currency || 'USD',
-                  totalDeposited: wallet?.total_deposited,
-                  totalWithdrawn: wallet?.total_withdrawn,
-                  currentBalance: wallet?.balance,
-                },
-              );
-            }}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border-primary bg-card text-xs font-medium text-text-primary transition hover:bg-[#F9FAFB] shrink-0"
-          >
-            <FileText size={14} className="text-text-tertiary" /> Statement PDF
-          </button>
-        </div>
-        <div className="overflow-x-auto rounded-xl border border-border-primary bg-card">
-          <div className="grid min-w-[560px] grid-cols-[1fr_1.2fr_1fr_1.4fr_1fr] text-xs font-semibold uppercase tracking-wide text-text-tertiary bg-[#F9FAFB] px-4 py-3 border-b border-border-primary">
-            <span>Type</span>
-            <span>Method</span>
-            <span className="text-right">Amount</span>
-            <span className="text-right">Date</span>
-            <span className="text-right">Status</span>
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <Card padding="none" className="lg:col-span-2">
+        <CardHeader
+          title="Recent transactions"
+          className="mb-0 border-b border-border-secondary px-4 py-3 md:px-5"
+          actions={
+            <Button
+              size="sm"
+              variant="secondary"
+              leftIcon={<FileText className="h-3.5 w-3.5" />}
+              onClick={() => {
+                if (historyItems.length === 0) { toast.error('No transactions to export'); return; }
+                void downloadWalletStatementPdf(
+                  historyItems.map((it) => ({
+                    type: it.type, method: it.method, amount: it.amount,
+                    currency: it.currency, status: it.status, created_at: it.created_at,
+                  })),
+                  {
+                    accountName: userFullName || undefined,
+                    accountEmail: userEmail || undefined,
+                    currency: wallet?.currency || 'USD',
+                    totalDeposited: wallet?.total_deposited,
+                    totalWithdrawn: wallet?.total_withdrawn,
+                    currentBalance: wallet?.balance,
+                  },
+                );
+              }}
+            >
+              Statement PDF
+            </Button>
+          }
+        />
+        {historyLoading ? (
+          <div className="space-y-2 p-4" aria-busy="true">
+            {[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-8 w-full" />)}
           </div>
-          {historyLoading ? (
-            <div className="px-4 py-10 text-center text-sm text-text-tertiary">Loading…</div>
-          ) : historyItems.length === 0 ? (
-            <div className="px-4 py-10 text-center text-sm text-text-tertiary">No transactions yet.</div>
-          ) : (
-            historyItems.slice(0, 25).map((it) => {
-              const t = (it.type || '').toLowerCase();
-              const status = (it.status || '').toLowerCase();
-              const statusClass =
-                status === 'completed' || status === 'approved'
-                  ? 'text-emerald-400 bg-emerald-500/10'
-                  : status === 'pending'
-                    ? 'text-amber-600 bg-amber-500/10'
-                    : status === 'failed' || status === 'rejected' || status === 'cancelled'
-                      ? 'text-red-400 bg-red-500/10'
-                      : 'text-text-tertiary bg-bg-tertiary';
-              return (
-                <div
-                  key={`${it.id}-${it.type}`}
-                  className="grid min-w-[560px] grid-cols-[1fr_1.2fr_1fr_1.4fr_1fr] items-center px-4 py-3 text-sm border-b border-[#F0F0F0] last:border-b-0"
-                >
-                  <div className="font-medium text-text-primary capitalize truncate">{t || 'transaction'}</div>
-                  <div className="text-text-tertiary truncate">{prettyMethod(it.method)}</div>
-                  <div className="font-mono tabular-nums text-right text-text-primary">
-                    {formatCurrency(Number(it.amount) || 0, it.currency || wallet?.currency || 'USD')}
-                  </div>
-                  <div className="text-right text-text-tertiary text-xs tabular-nums">{fmtHistoryDate(it.created_at)}</div>
-                  <div className="flex justify-end">
-                    <span className={clsx('rounded-full px-2.5 py-0.5 text-[11px] font-semibold capitalize', statusClass)}>
-                      {status || 'unknown'}
-                    </span>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
+        ) : historyItems.length === 0 ? (
+          <EmptyState compact icon={<HistoryIcon />} title="No transactions yet." />
+        ) : (
+          <Table dense>
+            <THead>
+              <TR>
+                <TH>Type</TH>
+                <TH>Method</TH>
+                <TH align="right">Amount</TH>
+                <TH align="right">Date</TH>
+                <TH align="right">Status</TH>
+              </TR>
+            </THead>
+            <TBody>
+              {historyItems.slice(0, 25).map((it) => {
+                const t = (it.type || '').toLowerCase();
+                return (
+                  <TR key={`${it.id}-${it.type}`}>
+                    <TD className="font-medium capitalize">{t || 'transaction'}</TD>
+                    <TD muted className="max-w-[16rem] truncate">{prettyMethod(it.method)}</TD>
+                    <TD numeric>{formatCurrency(Number(it.amount) || 0, it.currency || wallet?.currency || 'USD')}</TD>
+                    <TD numeric muted>{fmtHistoryDate(it.created_at)}</TD>
+                    <TD align="right"><TxnStatusBadge status={it.status} /></TD>
+                  </TR>
+                );
+              })}
+            </TBody>
+          </Table>
+        )}
+      </Card>
 
-      {/* Right — info card */}
-      <div className="space-y-4">
-        <div className="rounded-2xl border border-border-primary bg-card p-5">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-9 h-9 rounded-lg bg-accent text-white flex items-center justify-center">
-              <HistoryIcon size={16} />
-            </div>
-            <h3 className="text-sm font-bold text-text-primary">Wallet Snapshot</h3>
-          </div>
-          <dl className="space-y-2.5 text-sm">
-            <div className="flex items-center justify-between">
-              <dt className="text-text-tertiary">Total deposits</dt>
-              <dd className="font-mono tabular-nums font-semibold text-text-primary">
-                {fmt(wallet?.total_deposited ?? 0)}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between">
-              <dt className="text-text-tertiary">Total withdrawals</dt>
-              <dd className="font-mono tabular-nums font-semibold text-text-primary">
-                {fmt(wallet?.total_withdrawn ?? 0)}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between">
-              <dt className="text-text-tertiary">Pending withdrawals</dt>
-              <dd className="font-mono tabular-nums font-semibold text-text-primary">
-                {wallet?.pending_withdrawals ?? 0}
-              </dd>
-            </div>
-          </dl>
-        </div>
-        <div className="rounded-2xl border border-border-primary bg-card p-5">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-9 h-9 rounded-lg bg-bg-tertiary text-text-tertiary flex items-center justify-center">
+      <Card>
+        <CardHeader
+          eyebrow="Good to know"
+          title="Processing time"
+          actions={
+            <span className="grid h-9 w-9 place-items-center rounded-lg border border-border-primary bg-bg-tertiary text-text-secondary">
               <Hourglass size={16} />
-            </div>
-            <h3 className="text-sm font-bold text-text-primary">Processing time</h3>
-          </div>
-          <p className="text-xs text-text-tertiary leading-relaxed">
-            Crypto withdrawals are reviewed by finance; most requests are processed within 24 hours.
-          </p>
-        </div>
-      </div>
+            </span>
+          }
+        />
+        <p className="text-sm leading-relaxed text-text-secondary">
+          Crypto withdrawals are reviewed by finance; most requests are processed within 24 hours.
+        </p>
+      </Card>
     </div>
   );
 
+  const walletLabel = wallet?.wallet_account ? 'Wallet account' : 'Main wallet';
+  const walletBalance = wallet?.wallet_account ? wallet.wallet_account.balance : wallet?.main_wallet_balance ?? 0;
+
   return (
-    <DashboardShell mainClassName="flex flex-col min-h-0 overflow-hidden p-0 bg-card">
-      <div className="dashboard-main-scroll flex-1 min-h-0 min-w-0 overflow-y-auto bg-card">
-        <div className="w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8 pb-24 space-y-6">
-          <div className="flex items-start justify-between gap-3">
-            <h1 className="text-2xl font-bold tracking-tight text-text-primary">Funds</h1>
-            <button
-              type="button"
+    <DashboardShell>
+      <div className="space-y-4 md:space-y-5">
+        <PageHeader
+          title="Funds"
+          description="Deposits, withdrawals and transfers between your accounts."
+          actions={
+            <Button
+              variant="ghost"
+              iconOnly
+              aria-label="Refresh wallet"
               onClick={() => void fetchData(true)}
               disabled={refreshing}
-              className={clsx(
-                'p-2 rounded-lg border border-border-primary bg-card hover:bg-bg-hover transition-all active:scale-95 shrink-0',
-                refreshing && 'animate-spin cursor-not-allowed opacity-50',
-              )}
-              aria-label="Refresh wallet"
             >
-              <RefreshCcw className="w-4 h-4 text-text-tertiary" />
-            </button>
-          </div>
+              <RefreshCcw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
+            </Button>
+          }
+        />
 
-          {loadError && (
-            <div className="rounded-xl border border-amber-300 bg-amber-500/10 px-3 py-2 text-xs text-amber-900">
-              {loadError}
-            </div>
-          )}
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <StatCard
+            label={walletLabel}
+            value={fmt(walletBalance)}
+            hint={wallet?.wallet_account?.account_number ? `Account ${wallet.wallet_account.account_number}` : currency}
+            icon={<WalletIcon />}
+          />
+          <StatCard label="Total deposited" value={fmt(wallet?.total_deposited ?? 0)} icon={<ArrowDownToLine />} />
+          <StatCard label="Total withdrawn" value={fmt(wallet?.total_withdrawn ?? 0)} icon={<ArrowUpFromLine />} />
+          <StatCard
+            label="Pending withdrawals"
+            value={String(wallet?.pending_withdrawals ?? 0)}
+            hint="awaiting approval"
+            icon={<Hourglass />}
+          />
+        </div>
 
-          {demoFundingBlocked && (
-            <div className="rounded-xl border border-red-300 bg-red-500/10 px-3 py-2.5 text-xs text-red-900">
-              <p className="font-bold">Demo account — funding disabled</p>
-              <p className="mt-1 leading-relaxed">{DEMO_FUNDING_MSG}</p>
-            </div>
-          )}
+        {loadError && <Notice tone="warning">{loadError}</Notice>}
 
-          {renderTabBar()}
+        {demoFundingBlocked && (
+          <Notice tone="danger" title="Demo account — funding disabled">
+            {DEMO_FUNDING_MSG}
+          </Notice>
+        )}
 
-          <div className="pt-2">
-            {tab === 'deposit' && renderDepositTab()}
-            {tab === 'withdrawal' && renderWithdrawalTab()}
-            {tab === 'transfer' && renderTransferTab()}
-            {tab === 'history' && renderHistoryTab()}
-          </div>
+        {/* Scroll container lives outside Tabs so the active underline's
+            1px overhang is not clipped on narrow screens. */}
+        <div className="overflow-x-auto scrollbar-none">
+          <Tabs
+            variant="underline"
+            aria-label="Funds"
+            active={tab}
+            onChange={(id) => setTab(id as FundsTab)}
+            className="min-w-max"
+            tabs={[
+              { id: 'deposit', label: 'Deposit', icon: <ArrowDownToLine /> },
+              { id: 'withdrawal', label: 'Withdrawal', icon: <ArrowUpFromLine /> },
+              { id: 'transfer', label: 'Transfer Between Accounts', icon: <ArrowLeftRight /> },
+              { id: 'history', label: 'Transaction History', icon: <HistoryIcon /> },
+            ]}
+          />
+        </div>
+
+        <div key={tab} className="animate-fade-in">
+          {tab === 'deposit' && renderDepositTab()}
+          {tab === 'withdrawal' && renderWithdrawalTab()}
+          {tab === 'transfer' && renderTransferTab()}
+          {tab === 'history' && renderHistoryTab()}
         </div>
       </div>
     </DashboardShell>
@@ -2244,188 +2155,207 @@ function WalletPageContent() {
 }
 
 // ---------------------------------------------------------------------------
-// Local UI primitives — kept inside the file because they're tightly coupled
-// to the Vantage-style Funds layout and aren't reused elsewhere yet.
+// Local UI pieces — layout glue over the shared primitives. Kept in this file
+// because they are specific to the Funds page.
 // ---------------------------------------------------------------------------
 
-/**
- * Controlled-menu dropdown mirroring the FilterDropdown pattern in
- * accounts/page.tsx. Rendered as a styled button + popover (NOT a native
- * <select>) so the visual treatment matches the rest of the Funds form.
- */
-function FundsDropdown({
+interface AccountOption {
+  id: string;
+  label: string;
+  sublabel?: string;
+}
+
+/** Native file input styled on the control tokens; the picker button is a
+ *  small raised chip. */
+const FILE_INPUT_CLASS =
+  'py-1.5 file:mr-3 file:rounded-sm file:border-0 file:bg-bg-hover file:px-2.5 file:py-1 file:text-xs file:font-semibold file:text-text-primary';
+
+/** Anchor that opens the admin's external payment link in a new tab; styled
+ *  like a small secondary Button (the primitive renders a <button>). */
+const LINK_BUTTON_CLASS =
+  'inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-border-primary bg-bg-tertiary px-3 text-xs font-semibold text-text-primary transition-colors hover:border-border-strong hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45';
+
+/** Account picker: native Select with the balance echoed under it. */
+function AccountSelect({
+  label,
   value,
   options,
-  onChange,
   placeholder,
+  onChange,
   disabled,
 }: {
+  label: string;
   value: string | null;
-  options: ReadonlyArray<{ id: string; label: string; sublabel?: string }>;
-  onChange: (id: string) => void;
+  options: ReadonlyArray<AccountOption>;
   placeholder: string;
+  onChange: (id: string) => void;
   disabled?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function handleDown(e: MouseEvent) {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    function handleEsc(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false);
-    }
-    document.addEventListener('mousedown', handleDown);
-    document.addEventListener('keydown', handleEsc);
-    return () => {
-      document.removeEventListener('mousedown', handleDown);
-      document.removeEventListener('keydown', handleEsc);
-    };
-  }, [open]);
-
   const selected = options.find((o) => o.id === value) ?? null;
-
   return (
-    <div ref={rootRef} className="relative">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((o) => !o)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        className={clsx(
-          'flex w-full items-center justify-between gap-2 rounded-xl bg-bg-tertiary px-4 py-3.5 text-left text-sm outline-none transition-shadow',
-          'focus:ring-2 focus:ring-accent/40',
-          disabled && 'opacity-60 cursor-not-allowed',
-        )}
-      >
-        {selected ? (
-          <span className="flex flex-col min-w-0">
-            <span className="text-text-primary font-medium truncate">{selected.label}</span>
-            {selected.sublabel && (
-              <span className="text-xs text-text-tertiary font-mono tabular-nums truncate">{selected.sublabel}</span>
-            )}
-          </span>
-        ) : (
-          <span className="text-text-tertiary">{placeholder}</span>
-        )}
-        <ChevronDown
-          size={16}
-          className={clsx('text-text-tertiary transition-transform shrink-0', open && 'rotate-180')}
-        />
-      </button>
-      {open && !disabled && options.length > 0 && (
-        <ul
-          role="listbox"
-          className="absolute left-0 right-0 top-full z-50 mt-2 max-h-64 overflow-y-auto rounded-xl border border-border-primary bg-card shadow-lg ring-1 ring-white/10"
-        >
-          {options.map((o) => {
-            const sel = o.id === value;
-            return (
-              <li key={o.id} role="option" aria-selected={sel}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onChange(o.id);
-                    setOpen(false);
-                  }}
-                  className={clsx(
-                    'flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm transition-colors hover:bg-bg-hover',
-                    sel && 'bg-bg-tertiary',
-                  )}
-                >
-                  <span className="flex flex-col min-w-0">
-                    <span className={clsx('truncate', sel ? 'font-semibold text-text-primary' : 'text-text-primary')}>
-                      {o.label}
-                    </span>
-                    {o.sublabel && (
-                      <span className="text-xs text-text-tertiary font-mono tabular-nums truncate">{o.sublabel}</span>
-                    )}
-                  </span>
-                  {sel && <CheckCircle2 size={14} className="text-text-primary shrink-0" />}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+    <Select
+      label={label}
+      value={value ?? ''}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={disabled}
+      hint={
+        selected?.sublabel ? (
+          <>
+            Balance: <span className="font-mono tabular-nums text-text-secondary">{selected.sublabel}</span>
+          </>
+        ) : undefined
+      }
+    >
+      <option value="" disabled>
+        {placeholder}
+      </option>
+      {options.map((o) => (
+        <option key={o.id} value={o.id}>
+          {o.sublabel ? `${o.label} — ${o.sublabel}` : o.label}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
+/** Selectable payment-method tile. A Card with radio semantics so Enter /
+ *  Space select it exactly like the buttons it replaces. */
+function MethodCard({
+  active,
+  label,
+  sub,
+  badge,
+  onSelect,
+}: {
+  active: boolean;
+  label: string;
+  sub?: string;
+  badge?: ReactNode;
+  onSelect: () => void;
+}) {
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onSelect();
+    }
+  };
+  return (
+    <Card
+      interactive
+      nested={!active}
+      padding="sm"
+      role="radio"
+      aria-checked={active}
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={onKeyDown}
+      className={cn(
+        'flex flex-col gap-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45',
+        active && 'border-accent hover:border-accent',
       )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <span className={cn('text-sm font-semibold', active ? 'text-text-primary' : 'text-text-secondary')}>{label}</span>
+        {badge}
+      </div>
+      {sub && <span className="text-xs text-text-tertiary">{sub}</span>}
+    </Card>
+  );
+}
+
+/** Inline warning / danger notice under the header. */
+function Notice({ tone, title, children }: { tone: 'warning' | 'danger'; title?: string; children: ReactNode }) {
+  return (
+    <div
+      role="alert"
+      className={cn(
+        'rounded-md border px-3 py-2.5 text-xs leading-relaxed',
+        tone === 'warning' ? 'border-warning/40 bg-warning/10 text-warning' : 'border-danger/40 bg-danger/10 text-danger',
+      )}
+    >
+      {title && <p className="font-semibold">{title}</p>}
+      <p className={cn(title && 'mt-1 text-text-primary')}>{children}</p>
     </div>
   );
 }
 
-/** Black pill Continue button used at the bottom of every Funds form. */
-function ContinueButton({
-  disabled,
-  busy,
-  onClick,
-  label,
-}: {
-  disabled: boolean;
-  busy: boolean;
-  onClick: () => void;
-  label: string;
-}) {
+/** Settled-status chip for the history table. */
+function TxnStatusBadge({ status }: { status: string }) {
+  const s = (status || '').toLowerCase();
+  const variant =
+    s === 'completed' || s === 'approved' || s === 'auto_approved' || s === 'paid'
+      ? 'success'
+      : s === 'pending'
+        ? 'warning'
+        : s === 'failed' || s === 'rejected' || s === 'cancelled'
+          ? 'danger'
+          : 'neutral';
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={clsx(
-        'w-full rounded-full py-3.5 text-sm font-semibold transition-colors',
-        disabled
-          ? 'bg-[#E5E5E5] text-text-tertiary cursor-not-allowed'
-          : 'bg-accent text-white hover:bg-accent-hover active:scale-[0.99]',
-      )}
-    >
-      {busy ? 'Processing…' : label}
-    </button>
+    <Badge size="sm" dot variant={variant}>
+      {s ? s.replace(/_/g, ' ') : 'unknown'}
+    </Badge>
   );
 }
 
-/**
- * Right-column stepper. Vertical line connects the two icon squares;
- * the current step is a filled black square, upcoming steps are hollow.
- */
-function Stepper({
-  steps,
-}: {
-  steps: ReadonlyArray<{
-    icon: React.ReactNode;
-    title: string;
-    description: string;
-    state: 'current' | 'upcoming' | 'done';
-  }>;
-}) {
+interface Step {
+  icon: ReactNode;
+  title: string;
+  description: string;
+  state: 'current' | 'upcoming' | 'done';
+}
+
+/** Right-column "how it works" stepper. A vertical line connects the icon
+ *  squares; current / done steps are filled with the accent. */
+function StepsCard({ steps }: { steps: ReadonlyArray<Step> }) {
   return (
-    <div className="relative">
-      <div className="absolute left-[15px] top-8 bottom-8 w-px bg-[#E5E5E5]" aria-hidden />
-      <ul className="space-y-7 relative">
+    <Card className="h-fit">
+      <CardHeader eyebrow="How it works" className="mb-3" />
+      <ol className="relative space-y-6">
+        <span className="absolute bottom-8 left-[15px] top-8 w-px bg-border-primary" aria-hidden />
         {steps.map((s, i) => {
-          const filled = s.state === 'current' || s.state === 'done';
+          const filled = s.state !== 'upcoming';
           return (
-            <li key={i} className="flex items-start gap-3.5">
-              <div
-                className={clsx(
-                  'shrink-0 w-8 h-8 rounded-md flex items-center justify-center border-2',
-                  filled
-                    ? 'bg-accent text-white border-[#0A0A0A]'
-                    : 'bg-card text-text-tertiary border-border-primary',
+            <li key={i} className="relative flex items-start gap-3.5">
+              <span
+                className={cn(
+                  'grid h-8 w-8 shrink-0 place-items-center rounded-md border',
+                  filled ? 'border-accent bg-accent text-text-on-accent' : 'border-border-primary bg-card text-text-tertiary',
                 )}
               >
                 {s.icon}
-              </div>
+              </span>
               <div className="min-w-0 pt-0.5">
-                <h4 className={clsx('text-sm font-bold', filled ? 'text-text-primary' : 'text-text-tertiary')}>
-                  {s.title}
-                </h4>
-                <p className="mt-1 text-xs text-text-tertiary leading-relaxed">{s.description}</p>
+                <p className={cn('text-sm font-semibold', filled ? 'text-text-primary' : 'text-text-tertiary')}>{s.title}</p>
+                <p className="mt-1 text-xs leading-relaxed text-text-tertiary">{s.description}</p>
               </div>
             </li>
           );
         })}
-      </ul>
+      </ol>
+    </Card>
+  );
+}
+
+/** Page-shaped loading placeholder: header, four KPI tiles, tab row, form. */
+function WalletSkeleton() {
+  return (
+    <div className="space-y-4 md:space-y-5" aria-busy="true" aria-label="Loading wallet">
+      <div className="space-y-2">
+        <Skeleton className="h-7 w-28" />
+        <Skeleton className="h-4 w-72 max-w-full" />
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {[0, 1, 2, 3].map((i) => (
+          <StatCard key={i} label={<Skeleton className="h-3 w-20" />} value="" loading />
+        ))}
+      </div>
+      <Skeleton className="h-10 w-full max-w-lg" />
+      <Card className="space-y-4">
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-20 w-full" />
+        <Skeleton className="h-11 w-full" />
+      </Card>
     </div>
   );
 }
@@ -2435,10 +2365,7 @@ export default function WalletPage() {
     <Suspense
       fallback={
         <DashboardShell>
-          <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 py-16">
-            <div className="w-10 h-10 border-[3px] border-accent border-t-transparent rounded-full animate-spin" />
-            <span className="text-sm font-medium text-text-tertiary">Loading wallet…</span>
-          </div>
+          <WalletSkeleton />
         </DashboardShell>
       }
     >

@@ -3,10 +3,13 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { clsx } from 'clsx';
-import { ChevronDown, Search, Star, Newspaper, BarChart3 } from 'lucide-react';
+import { Search, Star, Newspaper, BarChart3 } from 'lucide-react';
 import { useTradingStore, type InstrumentInfo } from '@/stores/tradingStore';
 import { tradingTerminalUrl } from '@/lib/tradingNav';
+import { Button, EmptyState, Input, Segmented, Select } from '@/components/ui';
 import SymbolIcon from './SymbolIcon';
+import { getMarketStatus } from '@/lib/marketHours';
+import { quoteFreshness } from '@/lib/quoteStatus';
 
 type Trend = 'up' | 'down' | 'neutral';
 type Segment = 'All' | 'Forex' | 'Crypto' | 'Indices' | 'Commodities' | 'Metals' | 'Stocks';
@@ -80,6 +83,11 @@ function spreadInPips(
   return Math.max(0, Math.round(((ask - bid) / pip) * 10) / 10);
 }
 
+/** Tick flash class: the price cell blinks green on an up-tick, red on a down-tick. */
+function flashClass(trend: Trend | undefined): string | false {
+  return trend === 'up' ? 'flash-up' : trend === 'down' ? 'flash-down' : false;
+}
+
 export type InstrumentsTableProps = {
   onExitMarkets?: () => void;
   onViewNews?: () => void;
@@ -100,12 +108,10 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
   const [view, setView] = useState<View>('instruments');
   const [search, setSearch] = useState('');
   const [segment, setSegment] = useState<Segment>('All');
-  const [segOpen, setSegOpen] = useState(false);
   const [starred, setStarred] = useState<Set<string>>(new Set());
   const [starredOnly, setStarredOnly] = useState(false);
   const [bidFlash, setBidFlash] = useState<Record<string, Trend>>({});
   const [askFlash, setAskFlash] = useState<Record<string, Trend>>({});
-  const segRef = useRef<HTMLDivElement>(null);
 
   const dayLowRef = useRef<Record<string, number>>({});
   const dayHighRef = useRef<Record<string, number>>({});
@@ -161,15 +167,6 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
     return () => clearTimeout(timer);
   }, [prices, watchlist]);
 
-  // Close segment dropdown on outside click
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (segRef.current && !segRef.current.contains(e.target as Node)) setSegOpen(false);
-    };
-    if (segOpen) document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [segOpen]);
-
   const rows = useMemo(() => {
     /* When the user is searching, broaden the source to every priced
        instrument so terms like 'silver'/'gold'/'bitcoin' can find symbols
@@ -205,7 +202,7 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
     if (acc) router.push(tradingTerminalUrl(acc, { view: 'chart' }));
   };
 
-  const toggleStar = (symbol: string, e: React.MouseEvent) => {
+  const toggleStar = (symbol: string, e: React.MouseEvent | React.KeyboardEvent) => {
     e.stopPropagation();
     setStarred((p) => {
       const next = new Set(p);
@@ -217,101 +214,56 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
 
   return (
     <div className="h-full min-h-0 flex flex-col bg-bg-base text-text-primary">
-      {/* Top toolbar — view toggle + search + segment dropdown + star */}
+      {/* Top toolbar — view toggle + search + segment select + star */}
       <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-border-primary bg-bg-secondary">
         {/* View toggle: Instruments / News */}
-        <div className="flex items-center gap-1 shrink-0 rounded-lg border border-border-primary bg-bg-secondary p-0.5">
-          <button
-            type="button"
-            onClick={() => setView('instruments')}
-            className={clsx(
-              'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold uppercase tracking-wide transition-colors',
-              view === 'instruments'
-                ? 'bg-accent/15 text-accent'
-                : 'text-text-tertiary hover:text-text-primary',
-            )}
-            aria-label="Instruments"
-          >
-            <BarChart3 className="w-3.5 h-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setView('news');
-              if (onViewNews) onViewNews();
-            }}
-            className={clsx(
-              'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold uppercase tracking-wide transition-colors',
-              view === 'news' ? 'bg-accent/15 text-accent' : 'text-text-tertiary hover:text-text-primary',
-            )}
-            aria-label="News"
-          >
-            <Newspaper className="w-3.5 h-3.5" />
-          </button>
-        </div>
+        <Segmented
+          size="xs"
+          aria-label="Markets view"
+          value={view}
+          onChange={(v) => {
+            setView(v);
+            if (v === 'news' && onViewNews) onViewNews();
+          }}
+          options={[
+            { value: 'instruments', icon: <BarChart3 aria-hidden />, label: <span className="sr-only">Instruments</span> },
+            { value: 'news', icon: <Newspaper aria-hidden />, label: <span className="sr-only">News</span> },
+          ]}
+        />
 
         {/* Search */}
-        <div className="relative flex-1 min-w-0">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-tertiary" />
-          <input
+        <div className="flex-1 min-w-0">
+          <Input
             type="text"
+            size="sm"
+            icon={<Search aria-hidden />}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search..."
-            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-border-primary bg-bg-secondary text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20"
+            aria-label="Search instruments"
           />
         </div>
 
-        {/* Segment dropdown */}
-        <div className="relative shrink-0" ref={segRef}>
-          <button
-            type="button"
-            onClick={() => setSegOpen((p) => !p)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-border-primary bg-bg-secondary text-text-primary hover:border-border-secondary transition-colors min-w-[110px] justify-between"
-          >
-            <span>{segment}</span>
-            <ChevronDown
-              className={clsx('w-3.5 h-3.5 text-text-tertiary transition-transform', segOpen && 'rotate-180')}
-            />
-          </button>
-          {segOpen && (
-            <div className="absolute right-0 top-full mt-1 w-[140px] rounded-lg border border-border-primary bg-card shadow-2xl z-50 py-1">
-              {SEGMENTS.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => {
-                    setSegment(s);
-                    setSegOpen(false);
-                  }}
-                  className={clsx(
-                    'w-full text-left px-3 py-1.5 text-xs transition-colors',
-                    s === segment
-                      ? 'bg-accent/10 text-accent font-bold'
-                      : 'text-text-secondary hover:bg-bg-hover',
-                  )}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          )}
+        {/* Segment select */}
+        <div className="shrink-0 w-[120px]">
+          <Select size="sm" value={segment} onChange={(e) => setSegment(e.target.value as Segment)} aria-label="Segment">
+            {SEGMENTS.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </Select>
         </div>
 
         {/* Starred filter toggle */}
-        <button
-          type="button"
+        <Button
+          size="sm"
+          iconOnly
+          variant={starredOnly ? 'primary' : 'outline'}
           onClick={() => setStarredOnly((p) => !p)}
-          className={clsx(
-            'shrink-0 p-1.5 rounded-lg border transition-colors',
-            starredOnly
-              ? 'bg-accent/10 border-accent/40 text-accent'
-              : 'bg-bg-secondary border-border-primary text-text-tertiary hover:text-text-primary',
-          )}
           aria-label="Show starred only"
+          aria-pressed={starredOnly}
         >
-          <Star className="w-3.5 h-3.5" fill={starredOnly ? 'currentColor' : 'none'} />
-        </button>
+          <Star className="w-3.5 h-3.5" fill={starredOnly ? 'currentColor' : 'none'} aria-hidden />
+        </Button>
       </div>
 
       {/* Quote cards — one card per instrument: identity on the left, a
@@ -322,9 +274,7 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="p-2 flex flex-col gap-1.5">
         {rows.length === 0 ? (
-          <div className="flex items-center justify-center py-10 text-xs text-text-tertiary">
-            No instruments match
-          </div>
+          <EmptyState compact icon={<Search />} title="No instruments match" />
         ) : (
           rows.map((symbol) => {
             const tick = prices[symbol];
@@ -341,6 +291,9 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
             const pos = tick && range > 0
               ? Math.min(96, Math.max(4, ((tick.bid - (dayLow as number)) / range) * 100))
               : 50;
+            // Market open but no live tick → feed down; grey the pills and say so.
+            const instSeg = (instruments.find((i) => i.symbol === symbol) as { segment?: string } | undefined)?.segment;
+            const stale = quoteFreshness(tick, getMarketStatus(symbol, instSeg).isOpen) === 'stale';
 
             return (
               <div
@@ -350,10 +303,10 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
                 onClick={() => handleRowClick(symbol)}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleRowClick(symbol); } }}
                 className={clsx(
-                  'grid grid-cols-[minmax(140px,1.1fr)_minmax(110px,1fr)_auto] items-center gap-3 rounded-xl border px-3 py-2 cursor-pointer transition-all',
+                  'grid grid-cols-[minmax(140px,1.1fr)_minmax(110px,1fr)_auto] items-center gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors',
                   sel
-                    ? 'border-accent/50 bg-accent/[0.07]'
-                    : 'border-border-primary bg-card/50 hover:border-accent/30 hover:bg-bg-hover',
+                    ? 'border-accent/50 bg-accent/10'
+                    : 'border-border-primary bg-card hover:border-border-strong hover:bg-bg-hover',
                 )}
               >
                 {/* identity */}
@@ -362,60 +315,53 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
                     role="button"
                     tabIndex={0}
                     onClick={(e) => toggleStar(symbol, e)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleStar(symbol, e as any); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleStar(symbol, e); }}
                     className={clsx(
                       'shrink-0 transition-colors cursor-pointer',
-                      isStarred ? 'text-accent' : 'text-text-tertiary/50 hover:text-text-tertiary',
+                      isStarred ? 'text-warning' : 'text-text-tertiary/50 hover:text-text-tertiary',
                     )}
                     aria-label="Star"
+                    aria-pressed={isStarred}
                   >
-                    <Star className="w-3 h-3" fill={isStarred ? 'currentColor' : 'none'} />
+                    <Star className="w-3 h-3" fill={isStarred ? 'currentColor' : 'none'} aria-hidden />
                   </span>
                   <SymbolIcon symbol={symbol} size={22} />
                   <div className="min-w-0">
-                    <div className="text-[13px] font-bold text-text-primary font-mono leading-tight truncate">{symbol}</div>
-                    <div className="text-[10px] text-text-tertiary leading-tight truncate">{desc}</div>
+                    <div className="text-base font-bold text-text-primary font-mono leading-tight truncate">{symbol}</div>
+                    <div className="text-xxs text-text-tertiary leading-tight truncate">{desc}</div>
                   </div>
                 </div>
 
                 {/* day-range meter */}
                 <div className="hidden md:block min-w-0 px-1">
-                  <div className="flex justify-between text-[9px] font-mono text-text-tertiary mb-1 tabular-nums">
+                  <div className="flex justify-between text-xxs font-mono text-text-tertiary mb-1 tabular-nums">
                     <span>L {dayLow != null ? dayLow.toFixed(digits) : '—'}</span>
                     <span>H {dayHigh != null ? dayHigh.toFixed(digits) : '—'}</span>
                   </div>
                   <div className="relative h-1 rounded-full bg-bg-active">
                     <span
-                      className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-accent shadow-[0_0_6px_rgb(var(--accent-rgb)/0.8)]"
+                      className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-accent"
                       style={{ left: `${pos}%` }}
                     />
                   </div>
-                  <div className="mt-1 text-center text-[9px] font-mono text-text-tertiary tabular-nums">
+                  <div className="mt-1 text-center text-xxs font-mono text-text-tertiary tabular-nums">
                     spread {spread != null ? spread.toFixed(1) : '—'} · 1:{leverage}
                   </div>
                 </div>
 
-                {/* sell / buy pills */}
+                {/* sell / buy pills — the pill flashes green/red on a tick
+                    (flash-up / flash-down) and the price text takes the
+                    tick direction colour for the same 400ms. */}
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <span
-                    className={clsx(
-                      'rounded-lg border px-2.5 py-1 text-right min-w-[84px] transition-colors',
-                      bFlash ? 'border-sell/50 bg-sell/25' : 'border-sell/25 bg-sell/10',
-                    )}
-                  >
-                    <span className="block text-[8px] font-bold tracking-[0.14em] text-sell/80">SELL</span>
-                    <span className="block text-[12.5px] font-mono font-bold tabular-nums text-sell">
+                  <span className={clsx('rounded-md border px-2.5 py-1 text-right min-w-[84px]', stale ? 'border-border-primary bg-bg-tertiary' : 'border-sell/25 bg-sell/10', flashClass(bFlash))}>
+                    <span className={clsx('block text-xxs font-bold tracking-[0.14em]', stale ? 'text-warning' : 'text-sell/80')}>{stale ? 'STALE' : 'SELL'}</span>
+                    <span className={clsx('block text-sm font-mono font-bold tabular-nums', stale ? 'text-text-tertiary' : bFlash === 'up' ? 'text-buy' : 'text-sell')}>
                       {tick ? tick.bid.toFixed(digits) : '—'}
                     </span>
                   </span>
-                  <span
-                    className={clsx(
-                      'rounded-lg border px-2.5 py-1 text-right min-w-[84px] transition-colors',
-                      aFlash ? 'border-buy/50 bg-buy/25' : 'border-buy/25 bg-buy/10',
-                    )}
-                  >
-                    <span className="block text-[8px] font-bold tracking-[0.14em] text-buy/80">BUY</span>
-                    <span className="block text-[12.5px] font-mono font-bold tabular-nums text-buy">
+                  <span className={clsx('rounded-md border px-2.5 py-1 text-right min-w-[84px]', stale ? 'border-border-primary bg-bg-tertiary' : 'border-buy/25 bg-buy/10', flashClass(aFlash))}>
+                    <span className={clsx('block text-xxs font-bold tracking-[0.14em]', stale ? 'text-warning' : 'text-buy/80')}>{stale ? 'STALE' : 'BUY'}</span>
+                    <span className={clsx('block text-sm font-mono font-bold tabular-nums', stale ? 'text-text-tertiary' : aFlash === 'down' ? 'text-sell' : 'text-buy')}>
                       {tick ? tick.ask.toFixed(digits) : '—'}
                     </span>
                   </span>

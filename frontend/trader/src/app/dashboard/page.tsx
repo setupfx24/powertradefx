@@ -10,10 +10,13 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { Activity, Briefcase, Inbox, PieChart, Scale, ShieldCheck, TrendingUp, Wallet } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import api from '@/lib/api/client';
-import DashboardShell, { useDesk, type DeskAccount, type DeskTick } from '@/components/layout/DashboardShell';
+import DashboardShell, { useDesk } from '@/components/layout/DashboardShell';
+import { EmptyState, Segmented, SideBadge, Table, TBody, TD, TH, THead, TR } from '@/components/ui';
 
 /* ── shared helpers ─────────────────────────────────────────────────── */
 const usd = (n: number) =>
@@ -164,7 +167,7 @@ function Overview() {
         <section className="dk-panel" style={{ animationDelay: '270ms' }}>
           <div className="dk-head">
             <p className="dk-eyebrow"><Briefcase size={15} strokeWidth={1.6} />Open positions</p>
-            <a className="dk-link-sm" href="/trading/terminal">Terminal →</a>
+            <Link className="dk-link-sm" href="/trading/terminal">Terminal →</Link>
           </div>
           <PositionsTable rows={positions} />
         </section>
@@ -199,14 +202,15 @@ function PlChip({ openPl, flat }: { openPl: number; flat: boolean }) {
 function TfChart({ series, reduced }: { series: { t: number; v: number }[]; reduced: boolean }) {
   const [tf, setTf] = useState<Timeframe>('1D');
   return (
-    <div style={{ flex: 1, minWidth: 0, marginLeft: 18 }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <div className="dk-tfs" role="tablist" aria-label="Timeframe">
-          {TIMEFRAMES.map((x) => (
-            <button key={x} type="button" role="tab" aria-selected={tf === x}
-              className={tf === x ? 'is-on' : ''} onClick={() => setTf(x)}>{x}</button>
-          ))}
-        </div>
+    <div className="min-w-0 flex-1 md:ml-4">
+      <div className="flex justify-end">
+        <Segmented
+          size="xs"
+          aria-label="Timeframe"
+          value={tf}
+          onChange={setTf}
+          options={TIMEFRAMES.map((x) => ({ value: x, label: x }))}
+        />
       </div>
       <EquityChart series={series} tf={tf} reduced={reduced} />
     </div>
@@ -222,7 +226,7 @@ function EquityChart({ series, tf, reduced }: {
   const cutoff = Date.now() - TF_MS[tf];
   const inWindow = series.filter((p) => p.t >= cutoff);
   const data = inWindow.length >= 2 ? inWindow : series.slice(-2);
-  if (data.length < 2) return <div className="dk-empty">Waiting for data…</div>;
+  if (data.length < 2) return <EmptyState compact title="Waiting for data…" />;
   const vs = data.map((d) => d.v);
   const min = Math.min(...vs), max = Math.max(...vs);
   const span = max - min || Math.max(1, Math.abs(max) * 0.001);
@@ -288,7 +292,7 @@ function KpiPl({ label, value, flat, reduced, icon }: { label: string; value: nu
     <div className="dk-kpi">
       <div className="dk-kpi-text">
         <span>{label}</span>
-        <b className={`num ${flat ? '' : value >= 0 ? 'dk-pl-up' : 'dk-pl-dn'}`}>
+        <b className={cn('num', !flat && (value >= 0 ? 'text-success' : 'text-danger'))}>
           {flat ? 'Flat' : `${value >= 0 ? '+' : ''}${usd(shown)}`}
         </b>
       </div>
@@ -324,43 +328,45 @@ function KpiIcon({ icon: Icon }: { icon: LucideIcon }) {
 function PositionsTable({ rows }: { rows: PositionRow[] }) {
   if (rows.length === 0) {
     return (
-      <div className="dk-empty">
-        <Inbox size={48} strokeWidth={1.2} />
-        <b>No open positions</b>
-        <span>Use the order ticket to place your first trade, or open the full terminal.</span>
-      </div>
+      <EmptyState
+        icon={<Inbox />}
+        title="No open positions"
+        description="Use the order ticket to place your first trade, or open the full terminal."
+      />
     );
   }
   return (
-    <table className="dk-table">
-      <thead>
-        <tr><th>Symbol</th><th>Side</th><th className="r">Lots</th><th className="r">Open</th><th className="r">P/L</th></tr>
-      </thead>
-      <tbody>
-        {rows.map((p) => (
-          <tr key={p.id}>
-            <td><b>{p.symbol}</b></td>
-            <td><span className="dk-side-b">{p.side.toUpperCase()}</span></td>
-            <td className="r num">{p.lots.toFixed(2)}</td>
-            <td className="r num">{px(p.open_price)}</td>
-            <td className={`r num ${p.profit >= 0 ? 'dk-pl-up' : 'dk-pl-dn'}`}>
-              {p.profit >= 0 ? '+' : ''}{usd(p.profit)}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div className="mt-1.5">
+      <Table dense>
+        <THead>
+          <TR><TH>Symbol</TH><TH>Side</TH><TH align="right">Lots</TH><TH align="right">Open</TH><TH align="right">P/L</TH></TR>
+        </THead>
+        <TBody>
+          {rows.map((p) => (
+            <TR key={p.id}>
+              <TD className="font-semibold">{p.symbol}</TD>
+              <TD><SideBadge side={p.side} /></TD>
+              <TD numeric>{p.lots.toFixed(2)}</TD>
+              <TD numeric>{px(p.open_price)}</TD>
+              <TD numeric className={p.profit >= 0 ? 'text-success' : 'text-danger'}>
+                {p.profit >= 0 ? '+' : ''}{usd(p.profit)}
+              </TD>
+            </TR>
+          ))}
+        </TBody>
+      </Table>
+    </div>
   );
 }
 
 function ActivityLog({ rows }: { rows: ActivityRow[] }) {
   if (rows.length === 0) {
     return (
-      <div className="dk-empty">
-        <Activity size={48} strokeWidth={1.2} />
-        <b>No account activity yet</b>
-        <span>Your account activity will appear here.</span>
-      </div>
+      <EmptyState
+        icon={<Activity />}
+        title="No account activity yet"
+        description="Your account activity will appear here."
+      />
     );
   }
   return (
@@ -369,7 +375,7 @@ function ActivityLog({ rows }: { rows: ActivityRow[] }) {
         <li key={r.id}>
           <span className="dk-log-type">{(r.type || '').replace(/_/g, ' ')}</span>
           <span className="dk-log-desc">{r.description || ''}</span>
-          <b className={`num ${Number(r.amount) >= 0 ? 'dk-pl-up' : 'dk-pl-dn'}`}>
+          <b className={cn('num', Number(r.amount) >= 0 ? 'text-success' : 'text-danger')}>
             {Number(r.amount) >= 0 ? '+' : ''}{usd(Number(r.amount) || 0)}
           </b>
         </li>

@@ -41,6 +41,14 @@ interface TerminalLeftRailProps {
   onPanelsSelectCalc?: () => void;
 }
 
+/** Square icon control shared by the rail's buttons and links: idle
+ *  secondary text, hover surface, accent tint when the panel is active. */
+const RAIL_ITEM =
+  'w-10 h-10 rounded-lg flex items-center justify-center shrink-0 transition-colors duration-150 ' +
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45';
+const RAIL_IDLE = 'text-text-secondary hover:text-text-primary hover:bg-bg-hover';
+const RAIL_ACTIVE = 'bg-accent/10 text-accent';
+
 function RailBtn({
   active,
   title,
@@ -59,12 +67,7 @@ function RailBtn({
       aria-label={title}
       aria-pressed={active}
       onClick={onClick}
-      className={clsx(
-        'w-10 h-10 rounded-xl flex items-center justify-center transition-all shrink-0',
-        active
-          ? 'bg-accent/10 text-accent'
-          : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover',
-      )}
+      className={clsx(RAIL_ITEM, active ? RAIL_ACTIVE : RAIL_IDLE)}
     >
       {children}
     </button>
@@ -97,9 +100,9 @@ export default function TerminalLeftRail({
         <Link
           href="/accounts"
           title="Accounts"
-          className="w-10 h-10 rounded-xl bg-accent/10 shadow-lg shadow-accent/20 flex items-center justify-center hover:bg-accent/20 transition-all mb-2"
+          className={clsx(RAIL_ITEM, 'bg-accent/10 hover:bg-accent/20 mb-2')}
         >
-          <Image src="/marketing/powertradefx_fevicon.png" alt="PowerTradeFX" width={28} height={28} className="w-7 h-7 object-contain rounded-lg" />
+          <Image src="/marketing/powertradefx_fevicon.png" alt="PowerTradeFX" width={28} height={28} className="w-7 h-7 object-contain rounded-md" />
         </Link>
         {/* Search — opens the Markets panel with the instrument search focused. */}
         <RailBtn title="Search symbols" onClick={onFocusSymbolSearch}>
@@ -132,18 +135,10 @@ export default function TerminalLeftRail({
           </RailBtn>
         )}
         <div className="h-px w-8 bg-border-primary my-1" />
-        <Link
-          href="/support"
-          title="Support chat"
-          className="w-10 h-10 rounded-xl flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-all"
-        >
+        <Link href="/support" title="Support chat" className={clsx(RAIL_ITEM, RAIL_IDLE)}>
           <MessageCircle size={19} strokeWidth={1.75} />
         </Link>
-        <Link
-          href="/profile"
-          title="Settings"
-          className="w-10 h-10 rounded-xl flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-all"
-        >
+        <Link href="/profile" title="Settings" className={clsx(RAIL_ITEM, RAIL_IDLE)}>
           <Settings size={19} strokeWidth={1.75} />
         </Link>
       </div>
@@ -152,7 +147,7 @@ export default function TerminalLeftRail({
         <Link
           href="/profile"
           title="Your profile"
-          className="w-10 h-10 rounded-full border-2 border-border-primary hover:border-accent transition-all flex items-center justify-center text-text-secondary hover:text-accent"
+          className="w-10 h-10 rounded-full border-2 border-border-primary hover:border-accent transition-colors flex items-center justify-center text-text-secondary hover:text-accent"
         >
           <UserRound size={19} strokeWidth={1.75} />
         </Link>

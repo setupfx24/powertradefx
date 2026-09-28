@@ -11,8 +11,11 @@ import api from '@/lib/api/client';
 import { sounds, unlockAudio } from '@/lib/sounds';
 import { getDigits } from '@/lib/utils';
 import { getMarketStatus } from '@/lib/marketHours';
+import { quoteFreshness, staleQuoteMessage } from '@/lib/quoteStatus';
 import { wsManager } from '@/lib/ws/wsManager';
+import { Button, Input, Segmented } from '@/components/ui';
 import OrderPanelSymbolPicker from '@/components/trading/OrderPanelSymbolPicker';
+import SymbolIcon from '@/components/trading/SymbolIcon';
 
 type OrderSide = 'buy' | 'sell';
 type OrderType = 'market' | 'pending';
@@ -23,11 +26,46 @@ const ORDER_TAB_LABEL: Record<OrderType, string> = {
   pending: 'Limit / Stop',
 };
 const PENDING_KINDS: readonly PendingKind[] = ['limit', 'stop', 'stop_limit'];
+/** Quick-size chips: tap to set volume directly. */
+const QUICK_LOTS = ['0.01', '0.1', '1.00', '10', '100'] as const;
 
 /** MT5-style name for a pending order, e.g. "Buy Limit", "Sell Stop-Limit". */
 function pendingKindLabel(side: 'buy' | 'sell', kind: PendingKind): string {
   const s = side === 'buy' ? 'Buy' : 'Sell';
   return kind === 'limit' ? `${s} Limit` : kind === 'stop' ? `${s} Stop` : `${s} Stop-Limit`;
+}
+
+/** Eyebrow caption used above every control in the ticket. */
+function Caption({ children, tone = 'default', className }: { children: React.ReactNode; tone?: 'default' | 'danger' | 'success'; className?: string }) {
+  return (
+    <span
+      className={clsx(
+        'text-xxs font-semibold uppercase tracking-[0.12em]',
+        tone === 'danger' ? 'text-danger' : tone === 'success' ? 'text-success' : 'text-text-tertiary',
+        className,
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** Inline warning line under the ticket (danger / warning tone). */
+function Notice({ children, tone = 'danger', className }: { children: React.ReactNode; tone?: 'danger' | 'warning'; className?: string }) {
+  return (
+    <div className={clsx('text-xxs font-semibold text-center leading-tight', tone === 'danger' ? 'text-danger' : 'text-warning', className)}>
+      {children}
+    </div>
+  );
+}
+
+/** Market-closed reason box. */
+function ClosedBanner({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className={clsx('rounded-md px-3 py-2 text-xs text-danger leading-snug text-center bg-danger/10 border border-danger/20', className)}>
+      {children}
+    </div>
+  );
 }
 
 export default function OrderPanel({
@@ -88,6 +126,10 @@ export default function OrderPanel({
     () => getMarketStatus(selectedSymbol, segment),
     [selectedSymbol, segment, Math.floor(Date.now() / 60_000)],
   );
+  // Feed health for the selected symbol. 'stale' = market open but no live
+  // tick (upstream feed down). The backend refuses orders on a stale quote,
+  // so the panel says so up front instead of letting the click bounce.
+  const feedStale = quoteFreshness(tick, marketStatus.isOpen) === 'stale';
 
   const bid = tick?.bid ?? 0;
   const ask = tick?.ask ?? 0;
@@ -219,6 +261,10 @@ export default function OrderPanel({
     markRecentlyClicked();
     if (orderTab === 'market' && !marketStatus.isOpen) {
       toast.error(marketStatus.reason || 'Market is closed');
+      return;
+    }
+    if (orderTab === 'market' && feedStale) {
+      toast.error(staleQuoteMessage(tick));
       return;
     }
     if (!hasEnoughMargin) {
@@ -373,9 +419,24 @@ export default function OrderPanel({
   const isConnected = wsStatus === 'connected';
 
   const pad = isTradingTerminal ? 'px-2 py-2 space-y-2' : 'p-4 space-y-4';
-  const tabPad = isTradingTerminal ? 'py-1 text-[11px]' : 'py-1.5 text-xs';
-  const volBtn = isTradingTerminal ? 'w-8 h-8' : 'w-10 h-10';
-  const volIn = isTradingTerminal ? 'py-1.5 text-sm' : 'py-2.5 text-base';
+  const ctrl = isTradingTerminal ? 'sm' : 'md';
+  const priceStep = execPrice > 100 ? 0.01 : 0.00001;
+  const submitDisabled =
+    !recentlyClicked &&
+    (!hasEnoughMargin || !meetsMinBalance || !activeAccount || (orderTab === 'market' && (!marketStatus.isOpen || feedStale)) || !pendingTriggerValid);
+  /** Quick-size chip that matches the typed volume (so "1" and "1.00" both light "1.00"). */
+  const activeQuickLot = QUICK_LOTS.find((v) => parseFloat(v) === parseFloat(lots)) ?? '';
+
+  const submitLabel = (
+    <>
+      {`${submitAction} ${lotsNum} ${selectedSymbol}`}
+      {submitPrice > 0 && (
+        <span className="ml-1.5 font-mono font-bold tabular-nums opacity-85 normal-case">
+          @ {submitPrice.toFixed(digits)}
+        </span>
+      )}
+    </>
+  );
 
   return (
     <div className="h-full min-h-0 flex flex-col overflow-hidden bg-bg-base">
@@ -385,38 +446,28 @@ export default function OrderPanel({
       >
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
           <div className="relative flex items-center gap-1.5 min-w-0" ref={dropdownRef}>
-            <div
-              className={clsx('rounded-full shrink-0', isTradingTerminal ? 'w-3.5 h-3.5' : 'w-4 h-4')}
-              style={{ background: 'linear-gradient(135deg, #ffb300, #42a5f5)' }}
-              aria-hidden
-            />
-            <button
-              type="button"
+            <SymbolIcon symbol={selectedSymbol} size={isTradingTerminal ? 16 : 18} />
+            <Button
+              variant="ghost"
+              size="xs"
               onClick={() => setSymbolPickerOpen((o) => !o)}
-              className="flex items-center gap-1 hover:bg-card/[0.05] py-1 pl-0 pr-0.5 rounded-lg transition-colors min-w-0"
+              aria-haspopup="listbox"
+              aria-expanded={symbolPickerOpen}
+              className="!px-1 font-mono min-w-0"
+              rightIcon={
+                <ChevronDown
+                  size={isTradingTerminal ? 12 : 14}
+                  className={clsx('text-text-tertiary shrink-0 transition-transform', symbolPickerOpen && 'rotate-180')}
+                  aria-hidden
+                />
+              }
             >
-              <span
-                className={clsx(
-                  'font-bold text-text-primary font-mono truncate',
-                  isTradingTerminal ? 'text-xs' : 'text-sm',
-                )}
-              >
+              <span className={clsx('font-bold text-text-primary truncate', isTradingTerminal ? 'text-xs' : 'text-sm')}>
                 {selectedSymbol}
               </span>
-              {!isTradingTerminal ? (
-                <ChevronDown
-                  size={14}
-                  className={clsx('text-text-tertiary shrink-0 transition-transform', symbolPickerOpen && 'rotate-180')}
-                />
-              ) : (
-                <ChevronDown
-                  size={12}
-                  className={clsx('text-text-tertiary shrink-0 transition-transform', symbolPickerOpen && 'rotate-180')}
-                />
-              )}
-            </button>
+            </Button>
             {symbolPickerOpen && (
-              <div className="absolute top-full left-0 z-50 w-64 mt-1 rounded-lg border border-border-primary shadow-2xl bg-bg-secondary overflow-hidden">
+              <div className="absolute top-full left-0 z-50 w-64 mt-1 rounded-lg border border-border-primary shadow-lg bg-card overflow-hidden">
                 <OrderPanelSymbolPicker
                   onPick={(sym) => {
                     setSelectedSymbol(sym);
@@ -428,54 +479,51 @@ export default function OrderPanel({
           </div>
           {isTradingTerminal ? (
             <div className="flex items-center gap-1 shrink-0">
-              <button
-                type="button"
+              <Button
+                variant="outline"
+                size="xs"
                 onClick={() => {
                   setSymbolPickerOpen(false);
                   toggleTerminalMarkets();
                 }}
-                className="flex items-center gap-1 px-2 py-1 rounded-md border border-accent/40 text-accent hover:bg-accent/12 transition-colors"
                 aria-label={terminalMarketsOpen ? 'Hide markets' : 'Open markets'}
                 aria-expanded={terminalMarketsOpen}
+                className={clsx('uppercase tracking-wider !text-xxs', terminalMarketsOpen && 'text-accent border-accent/40')}
+                leftIcon={
+                  <ChevronLeft
+                    className={clsx('w-3.5 h-3.5 transition-transform duration-200', terminalMarketsOpen && '-rotate-90')}
+                    aria-hidden
+                  />
+                }
               >
-                <ChevronLeft
-                  className={clsx(
-                    'w-3.5 h-3.5 transition-transform duration-200',
-                    terminalMarketsOpen && '-rotate-90',
-                  )}
-                />
-                <span className="text-[9px] font-extrabold uppercase tracking-wider">Markets</span>
-              </button>
-              <button
-                type="button"
+                Markets
+              </Button>
+              <Button
+                variant={oneClickTrading ? 'primary' : 'ghost'}
+                size="sm"
+                iconOnly
                 title={oneClickTrading ? 'One-click trading on' : 'One-click trading off'}
                 aria-label={oneClickTrading ? 'Disable one-click trading' : 'Enable one-click trading'}
                 aria-pressed={oneClickTrading}
                 onClick={() => setOneClickTrading(!oneClickTrading)}
-                className={clsx(
-                  'flex items-center justify-center w-8 h-8 rounded-md border transition-colors',
-                  oneClickTrading
-                    ? 'border-accent/50 bg-accent/15 text-accent'
-                    : 'border-border-secondary text-text-tertiary hover:text-text-primary hover:bg-bg-hover',
-                )}
               >
-                <Zap size={15} strokeWidth={1.75} />
-              </button>
+                <Zap size={15} strokeWidth={1.75} aria-hidden />
+              </Button>
             </div>
           ) : null}
         </div>
         <div className="flex flex-col items-end shrink-0">
           <div className="flex items-center gap-1">
             <span
-              className={clsx('font-bold', isTradingTerminal ? 'text-[9px]' : 'text-[10px]')}
-              style={{ color: marketStatus.isOpen ? 'rgb(var(--accent-rgb))' : '#f57c00' }}
+              className={clsx('text-xxs font-bold', !marketStatus.isOpen || feedStale ? 'text-warning' : 'text-success')}
+              title={feedStale ? staleQuoteMessage(tick) : undefined}
             >
-              {marketStatus.isOpen ? 'OPEN' : 'CLOSED'}
+              {!marketStatus.isOpen ? 'CLOSED' : feedStale ? 'FEED OFFLINE' : 'OPEN'}
             </span>
             {isConnected ? (
-              <Wifi size={isTradingTerminal ? 11 : 12} className="text-accent" />
+              <Wifi size={isTradingTerminal ? 11 : 12} className="text-success" aria-label="Feed connected" />
             ) : (
-              <WifiOff size={isTradingTerminal ? 11 : 12} className="text-[#f57c00]" />
+              <WifiOff size={isTradingTerminal ? 11 : 12} className="text-warning" aria-label="Feed disconnected" />
             )}
           </div>
         </div>
@@ -499,52 +547,35 @@ export default function OrderPanel({
           <div className={pad}>
           {/* Market / Limit-Stop tabs. The pending tab is labelled by what it
               contains (MT5 users look for "limit" / "stop", not "pending"). */}
-          <div className="flex rounded-md overflow-hidden bg-bg-secondary border border-border-primary">
-            {(['market', 'pending'] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setOrderTab(t)}
-                className={clsx('flex-1 font-semibold capitalize transition-all', tabPad)}
-                style={{
-                  background: orderTab === t ? 'var(--bg-hover)' : 'transparent',
-                  color: orderTab === t ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                  borderBottom:
-                    orderTab === t
-                      ? '2px solid rgb(var(--accent-rgb))'
-                      : '2px solid transparent',
-                }}
-              >
-                {ORDER_TAB_LABEL[t]}
-              </button>
-            ))}
-          </div>
+          <Segmented
+            fullWidth
+            size={isTradingTerminal ? 'xs' : 'sm'}
+            aria-label="Order type"
+            value={orderTab}
+            onChange={setOrderTab}
+            options={(['market', 'pending'] as const).map((t) => ({ value: t, label: ORDER_TAB_LABEL[t] }))}
+          />
 
           {/* Side selector — split ticket: two price cards joined by a live
-              spread rail underneath (gradient rail red→green with the pip
-              cost pinned at the midpoint). The selected side tints and
-              glows instead of filling solid — deliberately not the
-              capsule-with-floating-badge every broker ships. */}
+              spread rail underneath (rail fades sell→buy with the pip cost
+              pinned at the midpoint). The selected side tints its card. */}
           <div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Side">
               <button
                 type="button"
+                role="radio"
+                aria-checked={side === 'sell'}
                 onClick={() => setSide('sell')}
                 className={clsx(
-                  'rounded-xl border-2 flex flex-col items-start transition-all duration-150 active:scale-[0.98]',
+                  'rounded-lg border flex flex-col items-start transition-colors duration-150 active:translate-y-px',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45',
                   isTradingTerminal ? 'px-3 py-2' : 'px-4 py-2.5',
                   side === 'sell'
-                    ? 'border-sell bg-sell/15 shadow-[0_6px_18px_rgb(var(--sell-rgb)/0.25)]'
+                    ? 'border-sell bg-sell/15'
                     : 'border-border-primary bg-bg-secondary hover:border-sell/40',
                 )}
-                aria-pressed={side === 'sell'}
               >
-                <span className={clsx(
-                  'text-[9px] font-bold tracking-[0.16em] uppercase',
-                  side === 'sell' ? 'text-sell' : 'text-text-tertiary',
-                )}>
-                  Sell
-                </span>
+                <Caption tone={side === 'sell' ? 'danger' : 'default'} className="font-bold tracking-[0.16em]">Sell</Caption>
                 <span className={clsx(
                   'font-mono font-bold tabular-nums',
                   isTradingTerminal ? 'text-base' : 'text-lg',
@@ -555,22 +586,19 @@ export default function OrderPanel({
               </button>
               <button
                 type="button"
+                role="radio"
+                aria-checked={side === 'buy'}
                 onClick={() => setSide('buy')}
                 className={clsx(
-                  'rounded-xl border-2 flex flex-col items-end transition-all duration-150 active:scale-[0.98]',
+                  'rounded-lg border flex flex-col items-end transition-colors duration-150 active:translate-y-px',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45',
                   isTradingTerminal ? 'px-3 py-2' : 'px-4 py-2.5',
                   side === 'buy'
-                    ? 'border-buy bg-buy/15 shadow-[0_6px_18px_rgb(var(--buy-rgb)/0.25)]'
+                    ? 'border-buy bg-buy/15'
                     : 'border-border-primary bg-bg-secondary hover:border-buy/40',
                 )}
-                aria-pressed={side === 'buy'}
               >
-                <span className={clsx(
-                  'text-[9px] font-bold tracking-[0.16em] uppercase',
-                  side === 'buy' ? 'text-buy' : 'text-text-tertiary',
-                )}>
-                  Buy
-                </span>
+                <Caption tone={side === 'buy' ? 'success' : 'default'} className="font-bold tracking-[0.16em]">Buy</Caption>
                 <span className={clsx(
                   'font-mono font-bold tabular-nums',
                   isTradingTerminal ? 'text-base' : 'text-lg',
@@ -589,14 +617,11 @@ export default function OrderPanel({
               const priceDiff = tick.spread.toFixed(digits);
               return (
                 <div className="relative h-6 mt-1" aria-hidden="true">
-                  <div
-                    className="absolute inset-x-2 top-1/2 -translate-y-1/2 h-px"
-                    style={{ background: 'linear-gradient(90deg, rgb(var(--sell-rgb) / 0.55), var(--border-primary) 35%, var(--border-primary) 65%, rgb(var(--buy-rgb) / 0.55))' }}
-                  />
+                  <div className="absolute inset-x-2 top-1/2 -translate-y-1/2 h-px bg-gradient-to-r from-sell/55 via-border-primary to-buy/55" />
                   <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-baseline gap-1 px-2 py-0.5 rounded-full border border-border-primary bg-card">
-                    <span className="text-[8px] font-bold uppercase tracking-[0.1em] text-text-tertiary">spread</span>
-                    <span className="text-[10px] font-mono font-bold tabular-nums text-accent">{pipsLabel}</span>
-                    <span className="text-[8px] font-mono text-text-tertiary tabular-nums">{priceDiff}</span>
+                    <span className="text-xxs font-bold uppercase tracking-[0.1em] text-text-tertiary">spread</span>
+                    <span className="text-xxs font-mono font-bold tabular-nums text-text-primary">{pipsLabel}</span>
+                    <span className="text-xxs font-mono text-text-tertiary tabular-nums">{priceDiff}</span>
                   </div>
                 </div>
               );
@@ -604,37 +629,31 @@ export default function OrderPanel({
           </div>
 
           {/* SL / TP — separate Add / Remove buttons. Click to toggle the
-              corresponding input field below; visually distinct red/blue
-              chips so the trader can tell them apart at a glance. */}
+              corresponding input field below; visually distinct red (SL) /
+              green (TP) chips so the trader can tell them apart at a glance. */}
           <div className={clsx('flex items-center flex-wrap', isTradingTerminal ? 'gap-2 pt-1' : 'gap-2 pt-2')}>
-            <button
-              type="button"
+            <Button
+              size="xs"
+              variant={slEnabled ? 'danger' : 'outline'}
               onClick={() => { setSlEnabled((p) => !p); if (slEnabled) setStopLoss(''); }}
-              className={clsx(
-                'inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-colors border',
-                slEnabled
-                  ? 'bg-sell/15 text-sell border-sell/40'
-                  : 'bg-bg-secondary text-text-secondary border-border-primary hover:border-sell/40 hover:text-sell',
-              )}
               title={slEnabled ? 'Remove Stop Loss' : 'Add Stop Loss'}
+              aria-pressed={slEnabled}
+              className="uppercase tracking-wider"
+              leftIcon={slEnabled ? <X size={11} aria-hidden /> : <Plus size={11} aria-hidden />}
             >
-              {slEnabled ? <X size={11} /> : <Plus size={11} />}
               SL
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
               onClick={() => { setTpEnabled((p) => !p); if (tpEnabled) setTakeProfit(''); }}
-              className={clsx(
-                'inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-colors border',
-                tpEnabled
-                  ? 'bg-accent/15 text-accent border-accent/40'
-                  : 'bg-bg-secondary text-text-secondary border-border-primary hover:border-accent/40 hover:text-accent',
-              )}
               title={tpEnabled ? 'Remove Take Profit' : 'Add Take Profit'}
+              aria-pressed={tpEnabled}
+              className={clsx('uppercase tracking-wider', tpEnabled && '!bg-success/10 !text-success !border-success/25 hover:!bg-success/20')}
+              leftIcon={tpEnabled ? <X size={11} aria-hidden /> : <Plus size={11} aria-hidden />}
             >
-              {tpEnabled ? <X size={11} /> : <Plus size={11} />}
               TP
-            </button>
+            </Button>
             {activeAccount && (
               <LeveragePicker
                 account={activeAccount}
@@ -646,64 +665,50 @@ export default function OrderPanel({
           {/* Volume */}
           <div className={isTradingTerminal ? 'pt-1' : 'pt-2'}>
             <div className={clsx('flex items-center justify-between', isTradingTerminal ? 'mb-1' : 'mb-1.5')}>
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">Volume</span>
+              <Caption>Volume</Caption>
               <div className="flex gap-0.5">
-                <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-bg-hover text-text-secondary">Lots</span>
-                <span className="px-1.5 py-0.5 rounded text-[9px] font-medium text-text-tertiary hover:text-text-secondary cursor-pointer transition-colors">Units</span>
+                <span className="px-1.5 py-0.5 rounded-sm text-xxs font-medium bg-bg-hover text-text-secondary">Lots</span>
+                <span className="px-1.5 py-0.5 rounded-sm text-xxs font-medium text-text-tertiary hover:text-text-secondary cursor-pointer transition-colors">Units</span>
               </div>
             </div>
             <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => adjustLots(-0.01)}
-                className={clsx(volBtn, 'rounded-lg flex items-center justify-center transition-colors text-text-secondary hover:text-text-primary bg-bg-secondary border border-border-primary')}
-              >
-                <Minus size={isTradingTerminal ? 12 : 14} />
-              </button>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={lots}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  if (v === '' || /^\d*\.?\d{0,2}$/.test(v)) setLots(v);
-                }}
-                onBlur={() => {
-                  const n = parseFloat(lots);
-                  if (!Number.isFinite(n) || n <= 0) setLots('0.01');
-                  else setLots(n.toFixed(2));
-                }}
-                className={clsx('flex-1 text-center font-mono font-bold rounded-lg focus:outline-none bg-bg-secondary border border-border-primary text-text-primary', volIn)}
-              />
-              <button
-                type="button"
-                onClick={() => adjustLots(0.01)}
-                className={clsx(volBtn, 'rounded-lg flex items-center justify-center transition-colors text-text-secondary hover:text-text-primary bg-bg-secondary border border-border-primary')}
-              >
-                <Plus size={isTradingTerminal ? 12 : 14} />
-              </button>
+              <Button variant="secondary" size={ctrl} iconOnly onClick={() => adjustLots(-0.01)} aria-label="Decrease volume">
+                <Minus size={isTradingTerminal ? 12 : 14} aria-hidden />
+              </Button>
+              <div className="flex-1 min-w-0">
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  size={ctrl}
+                  numeric
+                  value={lots}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === '' || /^\d*\.?\d{0,2}$/.test(v)) setLots(v);
+                  }}
+                  onBlur={() => {
+                    const n = parseFloat(lots);
+                    if (!Number.isFinite(n) || n <= 0) setLots('0.01');
+                    else setLots(n.toFixed(2));
+                  }}
+                  className="text-center font-bold"
+                  aria-label="Volume in lots"
+                />
+              </div>
+              <Button variant="secondary" size={ctrl} iconOnly onClick={() => adjustLots(0.01)} aria-label="Increase volume">
+                <Plus size={isTradingTerminal ? 12 : 14} aria-hidden />
+              </Button>
             </div>
             {/* Quick-size chips: tap to set volume directly. */}
-            <div className="flex items-center gap-1 mt-1.5">
-              {(['0.01', '0.1', '1.00', '10', '100'] as const).map((v) => {
-                const active = parseFloat(lots) === parseFloat(v);
-                return (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => setLots(v)}
-                    className={clsx(
-                      'flex-1 py-1 rounded-md text-[10px] font-bold font-mono tabular-nums border transition-colors',
-                      active
-                        ? 'border-accent/60 bg-accent/10 text-accent'
-                        : 'border-border-primary bg-bg-secondary text-text-secondary hover:text-text-primary hover:border-accent/30',
-                    )}
-                  >
-                    {v}
-                  </button>
-                );
-              })}
-            </div>
+            <Segmented
+              fullWidth
+              size="xs"
+              aria-label="Quick volume"
+              className="mt-1.5 font-mono"
+              value={activeQuickLot}
+              onChange={(v) => setLots(v)}
+              options={QUICK_LOTS.map((v) => ({ value: v as string, label: v }))}
+            />
           </div>
 
           {/* Pending order — type toggle + trigger price (+ stop-limit
@@ -711,37 +716,20 @@ export default function OrderPanel({
           {orderTab === 'pending' && (
             <div className="pt-2 space-y-2">
               <div>
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-text-tertiary block mb-1.5">
-                  Pending type
-                </span>
-                <div className="grid grid-cols-3 rounded-md overflow-hidden border border-border-primary bg-bg-secondary">
-                  {PENDING_KINDS.map((k) => {
-                    const label = pendingKindLabel(side, k);
-                    const active = pendingKind === k;
-                    return (
-                      <button
-                        key={k}
-                        type="button"
-                        onClick={() => setPendingKind(k)}
-                        className={clsx(
-                          'px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors whitespace-nowrap',
-                          active
-                            ? 'bg-accent/15 text-accent'
-                            : 'text-text-tertiary hover:text-text-primary',
-                        )}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
+                <Caption className="block mb-1.5">Pending type</Caption>
+                <Segmented
+                  fullWidth
+                  size="xs"
+                  aria-label="Pending order type"
+                  value={pendingKind}
+                  onChange={setPendingKind}
+                  options={PENDING_KINDS.map((k) => ({ value: k, label: pendingKindLabel(side, k) }))}
+                />
               </div>
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
-                    {pendingKind === 'stop_limit' ? 'Stop (trigger) price' : 'Trigger price'}
-                  </span>
-                  <span className="text-[9.5px] text-text-tertiary font-mono">
+                  <Caption>{pendingKind === 'stop_limit' ? 'Stop (trigger) price' : 'Trigger price'}</Caption>
+                  <span className="text-xxs text-text-tertiary font-mono tabular-nums">
                     {pendingKind === 'limit'
                       ? side === 'buy'
                         ? `< ${ask.toFixed(digits)}`
@@ -751,12 +739,14 @@ export default function OrderPanel({
                         : `< ${bid.toFixed(digits)}`}
                   </span>
                 </div>
-                <input
+                <Input
                   type="number"
                   inputMode="decimal"
+                  size={ctrl}
+                  numeric
                   value={triggerPrice}
                   onChange={(e) => setTriggerPrice(e.target.value)}
-                  step={execPrice > 100 ? 0.01 : 0.00001}
+                  step={priceStep}
                   placeholder={(
                     pendingKind === 'limit'
                       ? side === 'buy'
@@ -766,26 +756,26 @@ export default function OrderPanel({
                         ? ask * 1.001
                         : bid * 0.999
                   ).toFixed(digits)}
-                  className="w-full text-sm font-mono py-2 px-3 rounded-lg focus:outline-none bg-bg-secondary border border-border-primary text-text-primary placeholder:text-text-tertiary focus:border-accent/50"
+                  aria-label={pendingKind === 'stop_limit' ? 'Stop (trigger) price' : 'Trigger price'}
                 />
               </div>
               {/* Second price input only for stop-limit */}
               {pendingKind === 'stop_limit' && (
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
-                      Limit (target) price
-                    </span>
-                    <span className="text-[9.5px] text-text-tertiary font-mono">
+                    <Caption>Limit (target) price</Caption>
+                    <span className="text-xxs text-text-tertiary font-mono">
                       {side === 'buy' ? '< stop' : '> stop'}
                     </span>
                   </div>
-                  <input
+                  <Input
                     type="number"
                     inputMode="decimal"
+                    size={ctrl}
+                    numeric
                     value={stopLimitPrice}
                     onChange={(e) => setStopLimitPrice(e.target.value)}
-                    step={execPrice > 100 ? 0.01 : 0.00001}
+                    step={priceStep}
                     placeholder={
                       Number.isFinite(parseFloat(triggerPrice))
                         ? (
@@ -795,7 +785,7 @@ export default function OrderPanel({
                           ).toFixed(digits)
                         : '—'
                     }
-                    className="w-full text-sm font-mono py-2 px-3 rounded-lg focus:outline-none bg-bg-secondary border border-border-primary text-text-primary placeholder:text-text-tertiary focus:border-accent/50"
+                    aria-label="Limit (target) price"
                   />
                 </div>
               )}
@@ -805,14 +795,17 @@ export default function OrderPanel({
           {/* SL input */}
           {slEnabled && (
             <div className="pt-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-red-400 mb-1.5 block">Stop Loss</span>
-              <input
+              <Caption tone="danger" className="font-bold mb-1.5 block">Stop Loss</Caption>
+              <Input
                 type="number"
+                size={ctrl}
+                numeric
                 value={stopLoss}
                 onChange={(e) => setStopLoss(e.target.value)}
-                step={execPrice > 100 ? 0.01 : 0.00001}
+                step={priceStep}
                 placeholder={`e.g. ${(execPrice * (side === 'buy' ? 0.99 : 1.01)).toFixed(digits)}`}
-                className="w-full text-sm font-mono py-2.5 px-3 rounded-lg focus:outline-none bg-bg-secondary border border-red-500/30 text-red-400"
+                className="!border-danger/40 !text-danger"
+                aria-label="Stop loss price"
               />
             </div>
           )}
@@ -820,14 +813,17 @@ export default function OrderPanel({
           {/* TP input */}
           {tpEnabled && (
             <div className="pt-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-accent mb-1.5 block">Take Profit</span>
-              <input
+              <Caption tone="success" className="font-bold mb-1.5 block">Take Profit</Caption>
+              <Input
                 type="number"
+                size={ctrl}
+                numeric
                 value={takeProfit}
                 onChange={(e) => setTakeProfit(e.target.value)}
-                step={execPrice > 100 ? 0.01 : 0.00001}
+                step={priceStep}
                 placeholder={`e.g. ${(execPrice * (side === 'buy' ? 1.02 : 0.98)).toFixed(digits)}`}
-                className="w-full text-sm font-mono py-2.5 px-3 rounded-lg focus:outline-none bg-bg-secondary border border-accent/30 text-accent"
+                className="!border-success/40 !text-success"
+                aria-label="Take profit price"
               />
             </div>
           )}
@@ -835,52 +831,42 @@ export default function OrderPanel({
           {!isTradingTerminal ? (
             <>
               <div className="py-2" />
-              <div className="rounded-xl p-3 space-y-2 bg-bg-secondary border border-border-primary">
+              <div className="rounded-lg p-3 space-y-2 bg-bg-secondary border border-border-primary">
                 {[
-                  { label: 'Exec. Price', value: execPrice > 0 ? execPrice.toFixed(digits) : '—', color: 'var(--text-primary)' },
-                  { label: 'Margin Required', value: `$${marginRequired.toFixed(2)}`, color: !hasEnoughMargin ? 'rgb(var(--sell-rgb))' : 'var(--text-secondary)' },
-                  { label: 'Free Margin', value: `$${freeMargin.toFixed(2)}`, color: !hasEnoughMargin ? 'rgb(var(--sell-rgb))' : 'rgb(var(--accent-rgb))' },
-                  { label: 'Feed', value: isConnected ? '● Connected' : '○ Disconnected', color: isConnected ? 'rgb(var(--accent-rgb))' : '#f57c00' },
+                  { label: 'Exec. Price', value: execPrice > 0 ? execPrice.toFixed(digits) : '—', tone: 'text-text-primary' },
+                  { label: 'Margin Required', value: `$${marginRequired.toFixed(2)}`, tone: !hasEnoughMargin ? 'text-danger' : 'text-text-secondary' },
+                  { label: 'Free Margin', value: `$${freeMargin.toFixed(2)}`, tone: !hasEnoughMargin ? 'text-danger' : 'text-success' },
+                  { label: 'Feed', value: isConnected ? '● Connected' : '○ Disconnected', tone: isConnected ? 'text-success' : 'text-warning' },
                 ].map((row) => (
                   <div key={row.label} className="flex items-center justify-between">
-                    <span className="text-[11px] text-text-tertiary">{row.label}</span>
-                    <span className="text-[11px] font-mono font-semibold" style={{ color: row.color }}>{row.value}</span>
+                    <span className="text-xs text-text-tertiary">{row.label}</span>
+                    <span className={clsx('text-xs font-mono font-semibold tabular-nums', row.tone)}>{row.value}</span>
                   </div>
                 ))}
                 {!hasEnoughMargin && (
-                  <div className="text-[11px] text-red-500 font-bold text-center pt-2 mt-2" style={{ borderTop: '1px solid rgba(239,83,80,0.15)' }}>
-                    ⚠ Insufficient margin
-                  </div>
+                  <Notice className="pt-2 mt-2 border-t border-danger/15 !text-xs font-bold">⚠ Insufficient margin</Notice>
                 )}
                 {hasEnoughMargin && !meetsMinBalance && (
-                  <div className="text-[11px] text-red-500 font-bold text-center pt-2 mt-2 leading-snug" style={{ borderTop: '1px solid rgba(239,83,80,0.15)' }}>
+                  <Notice className="pt-2 mt-2 border-t border-danger/15 !text-xs font-bold leading-snug">
                     ⚠ Minimum ${minDepositGate.toFixed(0)} balance required
-                  </div>
+                  </Notice>
                 )}
               </div>
               <div className="py-2" />
-              <button
-                type="button"
+              <Button
+                variant={side}
+                size="lg"
+                fullWidth
                 onClick={handleSubmit}
-                disabled={!recentlyClicked && (!hasEnoughMargin || !meetsMinBalance || !activeAccount || (orderTab === 'market' && !marketStatus.isOpen) || !pendingTriggerValid)}
-                className="w-full py-4 rounded-xl text-[15px] font-black tracking-wide uppercase transition-[transform,opacity] duration-150 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97]"
-                style={{
-                  background: side === 'buy' ? 'rgb(var(--buy-rgb))' : 'rgb(var(--sell-rgb))',
-                  color: '#fff',
-                  boxShadow: side === 'buy' ? '0 4px 20px rgb(var(--buy-rgb) / 0.25)' : '0 4px 20px rgb(var(--sell-rgb) / 0.25)',
-                }}
+                disabled={submitDisabled}
+                className="font-black tracking-wide uppercase"
               >
-                {`${submitAction} ${lotsNum} ${selectedSymbol}`}
-                {submitPrice > 0 && (
-                  <span className="ml-2 font-mono font-bold tabular-nums opacity-85 normal-case">
-                    @ {submitPrice.toFixed(digits)}
-                  </span>
-                )}
-              </button>
-              {!marketStatus.isOpen && orderTab === 'market' && (
-                <div className="mt-4 rounded-lg px-3 py-2 text-[11px] text-red-400 leading-snug text-center" style={{ background: 'rgba(239,83,80,0.1)', border: '1px solid rgba(239,83,80,0.2)' }}>
-                  {marketStatus.reason}
-                </div>
+                {submitLabel}
+              </Button>
+              {orderTab === 'market' && (!marketStatus.isOpen || feedStale) && (
+                <ClosedBanner className="mt-4">
+                  {!marketStatus.isOpen ? marketStatus.reason : staleQuoteMessage(tick)}
+                </ClosedBanner>
               )}
             </>
           ) : null}
@@ -893,10 +879,10 @@ export default function OrderPanel({
               {/* Market orders show the required Margin here (the standalone
                   "Mrgn $.." line below was removed); pending orders keep the
                   Trigger price since that's the essential value to confirm. */}
-              <span className="text-[10px] text-text-tertiary">
+              <span className="text-xxs text-text-tertiary">
                 {orderTab === 'pending' ? 'Trigger' : 'Margin'}
               </span>
-              <span className="text-xs font-mono font-semibold text-text-primary">
+              <span className="text-xs font-mono font-semibold text-text-primary tabular-nums">
                 {orderTab === 'pending'
                   ? (Number.isFinite(parseFloat(triggerPrice)) && parseFloat(triggerPrice) > 0
                       ? parseFloat(triggerPrice).toFixed(digits)
@@ -904,55 +890,40 @@ export default function OrderPanel({
                   : `$${marginRequired.toFixed(2)}`}
               </span>
             </div>
-            <div className="flex items-center justify-between gap-1 px-1 text-[9px] text-text-tertiary">
-              <span className={clsx('shrink-0 font-mono', hasEnoughMargin ? 'text-accent' : 'text-sell')}>
+            <div className="flex items-center justify-between gap-1 px-1 text-xxs text-text-tertiary">
+              <span className={clsx('shrink-0 font-mono tabular-nums', hasEnoughMargin ? 'text-text-secondary' : 'text-danger')}>
                 Free ${freeMargin.toFixed(2)}
               </span>
               <span
-                className={clsx('shrink-0 font-mono', isConnected ? 'text-accent' : 'text-[#f57c00]')}
+                className={clsx('shrink-0 font-mono', isConnected ? 'text-success' : 'text-warning')}
                 title={isConnected ? 'Feed connected' : 'Feed disconnected'}
               >
                 {isConnected ? '●' : '○'}
               </span>
             </div>
             {!hasEnoughMargin && (
-              <div className="text-[10px] text-red-500 font-semibold text-center leading-tight">Insufficient margin</div>
+              <Notice>Insufficient margin</Notice>
             )}
             {hasEnoughMargin && !meetsMinBalance && (
-              <div className="text-[10px] text-red-500 font-semibold text-center leading-tight">
-                Min ${minDepositGate.toFixed(0)} balance required
-              </div>
+              <Notice>Min ${minDepositGate.toFixed(0)} balance required</Notice>
             )}
             {orderTab === 'pending' && !pendingTriggerValid && hasEnoughMargin && meetsMinBalance && (
-              <div className="text-[10px] text-warning font-semibold text-center leading-tight">
-                Enter a trigger price to place the order
-              </div>
+              <Notice tone="warning">Enter a trigger price to place the order</Notice>
             )}
-            <button
-              type="button"
+            <Button
+              variant={side}
+              size="md"
+              fullWidth
               onClick={handleSubmit}
-              disabled={!recentlyClicked && (!hasEnoughMargin || !meetsMinBalance || !activeAccount || (orderTab === 'market' && !marketStatus.isOpen) || !pendingTriggerValid)}
-              className="w-full py-2.5 rounded-lg text-sm font-black tracking-wide uppercase transition-[transform,opacity] duration-150 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97]"
-              style={{
-                background: side === 'buy' ? 'rgb(var(--buy-rgb))' : 'rgb(var(--sell-rgb))',
-                color: '#fff',
-                boxShadow: side === 'buy' ? '0 2px 12px rgb(var(--buy-rgb) / 0.25)' : '0 2px 12px rgb(var(--sell-rgb) / 0.25)',
-              }}
+              disabled={submitDisabled}
+              className="font-black tracking-wide uppercase"
             >
-              {`${submitAction} ${lotsNum} ${selectedSymbol}`}
-              {submitPrice > 0 && (
-                <span className="ml-1.5 font-mono font-bold tabular-nums opacity-85 normal-case">
-                  @ {submitPrice.toFixed(digits)}
-                </span>
-              )}
-            </button>
-            {!marketStatus.isOpen && orderTab === 'market' && (
-              <div
-                className="rounded px-2 py-1 text-[10px] text-red-400 leading-snug text-center"
-                style={{ background: 'rgba(239,83,80,0.1)', border: '1px solid rgba(239,83,80,0.2)' }}
-              >
-                {marketStatus.reason}
-              </div>
+              {submitLabel}
+            </Button>
+            {orderTab === 'market' && (!marketStatus.isOpen || feedStale) && (
+              <ClosedBanner className="!px-2 !py-1 !text-xxs">
+                {!marketStatus.isOpen ? marketStatus.reason : staleQuoteMessage(tick)}
+              </ClosedBanner>
             )}
           </div>
         ) : null}
@@ -1022,8 +993,9 @@ function LeveragePicker({
 
   return (
     <div className="ml-auto relative" ref={ref}>
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="xs"
         onClick={() => {
           if (locked) {
             toast(lockReason, { icon: '🔒', duration: 4000 });
@@ -1032,28 +1004,18 @@ function LeveragePicker({
           setOpen((p) => !p);
         }}
         disabled={saving}
-        className={clsx(
-          'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-mono font-semibold transition-colors disabled:opacity-50',
-          locked
-            ? 'text-text-tertiary cursor-not-allowed bg-bg-secondary'
-            : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover',
-        )}
+        aria-haspopup="listbox"
+        aria-expanded={open && !locked}
+        className={clsx('font-mono tabular-nums !text-xxs !px-1.5', locked && '!cursor-not-allowed text-text-tertiary')}
         title={locked ? lockReason : `Max 1:${maxLev} — click to change`}
+        rightIcon={!locked ? <ChevronDown size={10} aria-hidden /> : undefined}
       >
         {locked && <span aria-hidden>🔒</span>}
         1:{account.leverage}
-        {!locked && <ChevronDown size={10} />}
-      </button>
+      </Button>
       {open && !locked && (
-        <div
-          className="absolute right-0 bottom-full mb-1 w-28 rounded-lg border border-border-primary shadow-xl py-1"
-          style={{
-            backgroundColor: 'var(--bg-card)',
-            zIndex: 1000,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
-          }}
-        >
-          <div className="px-2 pb-1 pt-0.5 text-[9px] uppercase tracking-wider text-text-tertiary font-bold border-b border-border-primary mb-1">
+        <div className="absolute right-0 bottom-full mb-1 w-28 rounded-lg border border-border-primary bg-card shadow-lg py-1 z-[1000]" role="listbox">
+          <div className="px-2 pb-1 pt-0.5 text-xxs uppercase tracking-[0.12em] text-text-tertiary font-bold border-b border-border-primary mb-1">
             Max 1:{maxLev}
           </div>
           <div className="max-h-[220px] overflow-y-auto">
@@ -1061,9 +1023,11 @@ function LeveragePicker({
               <button
                 key={v}
                 type="button"
+                role="option"
+                aria-selected={v === account.leverage}
                 onClick={() => void apply(v)}
                 className={clsx(
-                  'w-full text-left px-2 py-1 text-[11px] font-mono transition-colors',
+                  'w-full text-left px-2 py-1 text-xs font-mono tabular-nums transition-colors',
                   v === account.leverage
                     ? 'bg-accent/15 text-accent font-bold'
                     : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary',

@@ -7,7 +7,8 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { clsx } from 'clsx';
-import { CandlestickChart, List, Minimize2, Search, X } from 'lucide-react';
+import { CandlestickChart, List, Minimize2, Minus, Plus, Search, X } from 'lucide-react';
+import { Badge, Button, EmptyState, Input } from '@/components/ui';
 import { useUIStore } from '@/stores/uiStore';
 import { TERMINAL_RESIZE, maxBottomPanelHeightPx } from '@/lib/terminalLayout';
 import PanelResizeHandle from '@/components/trading/PanelResizeHandle';
@@ -404,6 +405,17 @@ export default function TradingTerminalPage() {
         });
     };
 
+    /** Mobile sub-view header: back-to-chart link, centred title, spacer. */
+    const mobileViewHeader = (title: string) => (
+      <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-border-primary bg-bg-secondary">
+        <Button variant="link" size="xs" onClick={() => router.push(tradingTerminalUrl(accountId, { view: 'chart' }))}>
+          ← Chart
+        </Button>
+        <span className="text-xs font-bold text-text-primary uppercase tracking-wider">{title}</span>
+        <span className="w-14" aria-hidden />
+      </div>
+    );
+
     return (
       <div
         className={clsx(
@@ -426,18 +438,8 @@ export default function TradingTerminalPage() {
         <div className="flex-1 min-h-0 overflow-hidden relative flex flex-col scrollbar-none">
           {mobileView === 'watchlist' && <Watchlist />}
           {mobileView === 'news' && (
-            <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-bg-primary">
-              <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-border-glass bg-bg-secondary">
-                <button
-                  type="button"
-                  onClick={() => router.push(tradingTerminalUrl(accountId, { view: 'chart' }))}
-                  className="text-xs font-semibold text-buy"
-                >
-                  ← Chart
-                </button>
-                <span className="text-xs font-bold text-text-primary uppercase tracking-wider">Live news</span>
-                <span className="w-14" aria-hidden />
-              </div>
+            <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-bg-base">
+              {mobileViewHeader('Live news')}
               <div className="flex-1 min-h-0">
                 <TradingViewNewsTimeline />
               </div>
@@ -447,74 +449,87 @@ export default function TradingTerminalPage() {
             <div className="h-full flex flex-col min-h-0">
               {/* Dynamic Chart Tabs Header */}
               {!chartExpanded ? (
-              <div className="flex items-center gap-1.5 px-3 py-2 bg-bg-secondary border-b border-border-glass overflow-x-auto no-scrollbar scrollbar-none">
+              <div className="flex items-center gap-1.5 px-3 py-2 bg-bg-secondary border-b border-border-primary overflow-x-auto no-scrollbar scrollbar-none">
                 {chartTabs.map((symbol) => (
                   <button
                     key={symbol}
+                    type="button"
                     onClick={() => setSelectedSymbol(symbol)}
+                    aria-current={symbol === selectedSymbol ? 'true' : undefined}
                     className={clsx(
-                      'px-4 py-1.5 rounded-xl text-xs font-extrabold transition-all border whitespace-nowrap flex items-center gap-2 group',
+                      'h-8 px-3 rounded-md text-xs font-bold font-mono transition-colors border whitespace-nowrap flex items-center gap-2 group',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45',
                       symbol === selectedSymbol
-                        ? 'bg-bg-primary text-text-primary border-border-glass shadow-sm'
+                        ? 'bg-card text-text-primary border-border-primary shadow-sm'
                         : 'bg-transparent text-text-tertiary border-transparent hover:text-text-primary'
                     )}
                   >
                     {symbol}
-                    <div
+                    <span
+                      role="button"
+                      aria-label={`Close ${symbol} tab`}
                       onClick={(e) => removeTab(e, symbol)}
-                      className="p-0.5 rounded-md hover:bg-sell/10 hover:text-sell transition-colors opacity-60 group-hover:opacity-100"
+                      className="p-0.5 rounded-sm hover:bg-danger/10 hover:text-danger transition-colors opacity-60 group-hover:opacity-100"
                     >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 6 6 18M6 6l12 12"/></svg>
-                    </div>
+                      <X className="w-3.5 h-3.5" strokeWidth={3} aria-hidden />
+                    </span>
                   </button>
                 ))}
 
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  iconOnly
                   onClick={() => { setMobileSymbolSearch(true); setMobileSearchQuery(''); setTimeout(() => mobileSearchRef.current?.focus(), 100); }}
-                  className="shrink-0 w-10 h-[34px] flex items-center justify-center rounded-xl bg-bg-hover/80 text-text-primary border border-border-glass hover:bg-buy/10 transition-all active:scale-95"
+                  aria-label="Add symbol"
+                  className="shrink-0"
                 >
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14" /></svg>
-                </button>
-                <button
-                  type="button"
+                  <Plus className="w-5 h-5" strokeWidth={2.5} aria-hidden />
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={() => router.push(tradingTerminalUrl(accountId, { view: 'news' }))}
-                  className="shrink-0 px-3 h-[34px] rounded-xl bg-bg-hover/80 text-text-primary border border-border-glass text-[10px] font-extrabold uppercase tracking-wide hover:bg-buy/10 transition-all active:scale-95"
+                  className="shrink-0 uppercase tracking-wide !text-xxs"
                 >
                   News
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={() => router.push(tradingTerminalUrl(accountId, { view: 'order' }))}
-                  className="shrink-0 px-3 h-[34px] rounded-xl bg-bg-hover/80 text-text-primary border border-border-glass text-[10px] font-extrabold uppercase tracking-wide hover:bg-accent/10 transition-all active:scale-95"
+                  className="shrink-0 uppercase tracking-wide !text-xxs"
                   title="Open positions, pending orders, history"
                 >
                   Trades
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
                   onClick={() => setMobileOrderTicket(true)}
-                  className="shrink-0 px-3 h-[34px] rounded-xl bg-buy/10 text-buy border border-buy/30 text-[10px] font-extrabold uppercase tracking-wide hover:bg-buy/20 transition-all active:scale-95"
+                  className="shrink-0 uppercase tracking-wide !text-xxs"
                   title="Full order ticket — market, limit, stop, SL/TP"
                 >
                   New order
-                </button>
+                </Button>
               </div>
               ) : null}
 
               {/* ── Full order ticket sheet (pending orders + SL/TP) ── */}
               {mobileOrderTicket && (
-                <div className="fixed inset-0 z-[95] flex flex-col bg-bg-base">
-                  <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2.5 border-b border-border-glass bg-bg-secondary">
+                <div className="fixed inset-0 z-[95] flex flex-col bg-bg-base" role="dialog" aria-modal="true" aria-label="New order">
+                  <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-border-primary bg-bg-secondary">
                     <span className="text-xs font-bold text-text-primary uppercase tracking-wider">New order</span>
-                    <button
-                      type="button"
+                    <Button
+                      variant="ghost"
+                      size="md"
+                      iconOnly
                       onClick={() => setMobileOrderTicket(false)}
                       aria-label="Close order ticket"
-                      className="p-2 -mr-1 rounded-lg text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+                      className="-mr-1"
                     >
-                      <X className="w-5 h-5" />
-                    </button>
+                      <X className="w-5 h-5" aria-hidden />
+                    </Button>
                   </div>
                   <div className="flex-1 min-h-0 overflow-y-auto pb-[env(safe-area-inset-bottom,0px)]">
                     <OrderPanel onOrderPlaced={() => setMobileOrderTicket(false)} />
@@ -524,27 +539,23 @@ export default function TradingTerminalPage() {
 
               {/* ── Mobile Symbol Search Overlay ── */}
               {mobileSymbolSearch && (
-                <div className="fixed inset-0 z-[90] flex flex-col bg-bg-base">
+                <div className="fixed inset-0 z-[90] flex flex-col bg-bg-base" role="dialog" aria-modal="true" aria-label="Search symbol">
                   {/* Search header */}
-                  <div className="shrink-0 flex items-center gap-2 px-3 py-3 border-b border-border-glass bg-bg-secondary">
-                    <div className="relative flex-1 min-w-0">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-tertiary" />
-                      <input
+                  <div className="shrink-0 flex items-center gap-2 px-3 py-3 border-b border-border-primary bg-bg-secondary">
+                    <div className="flex-1 min-w-0">
+                      <Input
                         ref={mobileSearchRef}
                         type="text"
+                        icon={<Search aria-hidden />}
                         value={mobileSearchQuery}
                         onChange={(e) => setMobileSearchQuery(e.target.value)}
                         placeholder="Search symbol..."
-                        className="w-full pl-10 pr-3 py-2.5 text-sm rounded-xl border border-border-glass bg-bg-primary text-text-primary placeholder:text-text-tertiary outline-none focus:border-buy/50 focus:ring-1 focus:ring-buy/20"
+                        aria-label="Search symbol"
                       />
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setMobileSymbolSearch(false)}
-                      className="shrink-0 px-3 py-2.5 text-sm font-semibold text-text-secondary hover:text-text-primary transition-colors"
-                    >
+                    <Button variant="ghost" size="md" onClick={() => setMobileSymbolSearch(false)} className="shrink-0">
                       Cancel
-                    </button>
+                    </Button>
                   </div>
 
                   {/* Filtered instrument list */}
@@ -556,10 +567,11 @@ export default function TradingTerminalPage() {
                       );
                       if (matched.length === 0 && q !== '') {
                         return (
-                          <div className="flex flex-col items-center justify-center py-20 gap-3">
-                            <Search className="w-10 h-10 text-text-tertiary/40" />
-                            <p className="text-sm text-text-tertiary">No symbols match &ldquo;{mobileSearchQuery}&rdquo;</p>
-                          </div>
+                          <EmptyState
+                            icon={<Search />}
+                            title="No symbols match"
+                            description={<>No symbols match &ldquo;{mobileSearchQuery}&rdquo;</>}
+                          />
                         );
                       }
                       return matched.map((inst: InstrumentInfo) => {
@@ -575,14 +587,14 @@ export default function TradingTerminalPage() {
                               setMobileSymbolSearch(false);
                             }}
                             className={clsx(
-                              'w-full flex items-center justify-between gap-3 px-4 py-3.5 text-left transition-colors',
-                              isInTabs ? 'bg-buy/[0.06]' : 'hover:bg-bg-hover active:bg-buy/5',
+                              'w-full flex items-center justify-between gap-3 px-4 py-3.5 text-left transition-colors border-b border-border-secondary',
+                              isInTabs ? 'bg-accent/10' : 'hover:bg-bg-hover active:bg-bg-active',
                             )}
                           >
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
                                 <span className="text-base font-bold text-text-primary font-mono">{inst.symbol}</span>
-                                {isInTabs && <span className="text-buy text-[10px] font-bold">OPEN</span>}
+                                {isInTabs && <Badge variant="accent" size="sm">Open</Badge>}
                               </div>
                               <p className="text-xs text-text-tertiary mt-0.5 truncate uppercase tracking-wide">
                                 {inst.segment || ''}
@@ -595,7 +607,7 @@ export default function TradingTerminalPage() {
                                 </span>
                               ) : null}
                               {!isInTabs && (
-                                <span className="text-buy text-xs font-semibold">+ Open</span>
+                                <span className="text-accent text-xs font-semibold">+ Open</span>
                               )}
                             </div>
                           </button>
@@ -607,29 +619,29 @@ export default function TradingTerminalPage() {
               )}
 
               {!chartExpanded && activeAccount ? (
-                <div className="sm:hidden shrink-0 px-3 py-1.5 border-b border-border-glass bg-bg-secondary/40">
+                <div className="sm:hidden shrink-0 px-3 py-1.5 border-b border-border-primary bg-bg-secondary">
                   <ActiveAccountBadge account={activeAccount} variant="compact" />
                 </div>
               ) : null}
 
               <div
                 className={clsx(
-                  'flex flex-col flex-1 min-h-0 overflow-hidden bg-bg-primary',
+                  'flex flex-col flex-1 min-h-0 overflow-hidden bg-bg-base',
                   chartExpanded &&
                     'fixed inset-0 z-[100] h-[100dvh] pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)]',
                 )}
               >
                 {chartExpanded ? (
-                  <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-border-glass bg-bg-secondary">
-                    <span className="text-sm font-bold text-text-primary truncate">{selectedSymbol || 'Chart'}</span>
-                    <button
-                      type="button"
+                  <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-border-primary bg-bg-secondary">
+                    <span className="text-sm font-bold text-text-primary truncate font-mono">{selectedSymbol || 'Chart'}</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() => setChartExpanded(false)}
-                      className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-text-secondary border border-border-glass hover:bg-bg-hover hover:text-text-primary"
+                      leftIcon={<Minimize2 className="w-4 h-4 shrink-0" aria-hidden />}
                     >
-                      <Minimize2 className="w-4 h-4 shrink-0" aria-hidden />
                       Close
-                    </button>
+                    </Button>
                   </div>
                 ) : null}
                 <div className="flex-1 min-h-0 min-w-0 overflow-hidden relative">
@@ -643,86 +655,78 @@ export default function TradingTerminalPage() {
               </div>
 
               {/* Refined Quick Trade Bottom Bar */}
-              <div className="fixed bottom-0 left-0 right-0 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] bg-bg-secondary/95 backdrop-blur-xl border-t border-border-glass z-50">
+              <div className="fixed bottom-0 left-0 right-0 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] bg-bg-glass backdrop-blur-glass border-t border-border-primary z-50">
                 {!mobileMarketStatus.isOpen && (
-                  <div className="mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-sell/10 border border-sell/20">
-                    <span className="text-[9px] font-bold text-sell uppercase tracking-wider">● CLOSED</span>
-                    <span className="text-[10px] text-sell/80 truncate">{mobileMarketStatus.reason}</span>
+                  <div className="mb-2 flex items-center gap-2 px-3 py-1.5 rounded-md bg-danger/10 border border-danger/20">
+                    <span className="text-xxs font-bold text-danger uppercase tracking-wider">● CLOSED</span>
+                    <span className="text-xxs text-danger truncate">{mobileMarketStatus.reason}</span>
                   </div>
                 )}
                 <div className="flex items-center gap-2 mt-1 h-[52px]">
-                   {/* SELL button */}
-                   <button
-                     type="button"
+                   {/* SELL button — two-line content (side + live bid), so
+                       the height is forced to fill the bar. */}
+                   <Button
+                     variant="sell"
+                     size="lg"
                      disabled={!mobileMarketStatus.isOpen}
                      onClick={() => placeMarketOrder('sell')}
-                     className="flex-1 h-full bg-sell rounded-xl flex flex-col items-center justify-center shadow-lg shadow-sell/20 active:scale-[0.96] transition-transform duration-75 disabled:opacity-50 disabled:pointer-events-none min-w-0"
+                     className="flex-1 !h-full flex-col !gap-0 min-w-0 uppercase tracking-[0.05em] font-black"
                    >
-                     <span className="text-white text-[14px] font-black uppercase tracking-[0.05em]">Sell</span>
-                     <span className="text-white/70 text-[10px] font-mono font-bold leading-tight">{price?.bid.toFixed(digits) || '--'}</span>
-                   </button>
+                     <span className="text-md leading-tight">Sell</span>
+                     <span className="text-xxs font-mono font-bold leading-tight opacity-70 normal-case tracking-normal">{price?.bid.toFixed(digits) || '--'}</span>
+                   </Button>
 
                    {/* Lot size controls — center */}
                    <div className="shrink-0 flex flex-col items-center">
-                      <span className="text-[8px] font-bold text-text-tertiary uppercase tracking-wider leading-none mb-1">Lots</span>
+                      <span className="text-xxs font-bold text-text-tertiary uppercase tracking-wider leading-none mb-1">Lots</span>
                       <div className="flex items-center gap-1">
-                         <button
-                           onClick={() => handleLotChange(-0.01)}
-                           className="w-8 h-8 flex items-center justify-center rounded-lg bg-bg-primary border border-border-glass text-text-primary active:scale-90 transition-transform"
-                         >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12h14"/></svg>
-                         </button>
-                         <input
-                           type="text"
-                           inputMode="decimal"
-                           value={lotSize}
-                           onChange={(e) => {
-                             const v = e.target.value;
-                             if (v === '' || /^\d*\.?\d{0,2}$/.test(v)) setLotSize(v);
-                           }}
-                           onBlur={() => {
-                             const n = parseFloat(lotSize);
-                             if (!Number.isFinite(n) || n <= 0) setLotSize('0.01');
-                             else setLotSize(n.toFixed(2));
-                           }}
-                           className="w-16 h-9 text-[15px] font-black font-mono text-center bg-bg-primary border-2 border-border-glass rounded-lg text-text-primary outline-none"
-                         />
-                         <button
-                           onClick={() => handleLotChange(0.01)}
-                           className="w-8 h-8 flex items-center justify-center rounded-lg bg-bg-primary border border-border-glass text-text-primary active:scale-90 transition-transform"
-                         >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 5v14M5 12h14"/></svg>
-                         </button>
+                         <Button variant="secondary" size="sm" iconOnly onClick={() => handleLotChange(-0.01)} aria-label="Decrease lots">
+                            <Minus className="w-3.5 h-3.5" strokeWidth={3} aria-hidden />
+                         </Button>
+                         <div className="w-16">
+                           <Input
+                             type="text"
+                             inputMode="decimal"
+                             size="md"
+                             numeric
+                             value={lotSize}
+                             onChange={(e) => {
+                               const v = e.target.value;
+                               if (v === '' || /^\d*\.?\d{0,2}$/.test(v)) setLotSize(v);
+                             }}
+                             onBlur={() => {
+                               const n = parseFloat(lotSize);
+                               if (!Number.isFinite(n) || n <= 0) setLotSize('0.01');
+                               else setLotSize(n.toFixed(2));
+                             }}
+                             className="text-center font-bold !px-1"
+                             aria-label="Lot size"
+                           />
+                         </div>
+                         <Button variant="secondary" size="sm" iconOnly onClick={() => handleLotChange(0.01)} aria-label="Increase lots">
+                            <Plus className="w-3.5 h-3.5" strokeWidth={3} aria-hidden />
+                         </Button>
                       </div>
                    </div>
 
                    {/* BUY button */}
-                   <button
-                     type="button"
+                   <Button
+                     variant="buy"
+                     size="lg"
                      disabled={!mobileMarketStatus.isOpen}
                      onClick={() => placeMarketOrder('buy')}
-                     className="flex-1 h-full bg-buy rounded-xl flex flex-col items-center justify-center shadow-lg shadow-buy/20 active:scale-[0.96] transition-transform duration-75 disabled:opacity-50 disabled:pointer-events-none min-w-0"
+                     className="flex-1 !h-full flex-col !gap-0 min-w-0 uppercase tracking-[0.05em] font-black"
                    >
-                     <span className="text-white text-[14px] font-black uppercase tracking-[0.05em]">Buy</span>
-                     <span className="text-white/70 text-[10px] font-mono font-bold leading-tight">{price?.ask.toFixed(digits) || '--'}</span>
-                   </button>
+                     <span className="text-md leading-tight">Buy</span>
+                     <span className="text-xxs font-mono font-bold leading-tight opacity-70 normal-case tracking-normal">{price?.ask.toFixed(digits) || '--'}</span>
+                   </Button>
                 </div>
               </div>
             </div>
           )}
           {mobileView === 'order' && (
-            <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-bg-primary">
-              <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-border-glass bg-bg-secondary">
-                <button
-                  type="button"
-                  onClick={() => router.push(tradingTerminalUrl(accountId, { view: 'chart' }))}
-                  className="text-xs font-semibold text-buy"
-                >
-                  ← Chart
-                </button>
-                <span className="text-xs font-bold text-text-primary uppercase tracking-wider">Trades</span>
-                <span className="w-14" aria-hidden />
-              </div>
+            <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-bg-base">
+              {mobileViewHeader('Trades')}
               <div className="flex-1 min-h-0 overflow-auto">
                 <PositionsPanel />
               </div>
@@ -766,31 +770,27 @@ export default function TradingTerminalPage() {
         <div className="w-full shrink-0 border-b border-border-primary bg-bg-base flex items-center justify-end gap-2 px-2 py-1.5">
           {/* Markets — opens the instruments list (full-height panel on
               the right); chart + positions shrink to the left. Toggle. */}
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="sm"
             onClick={onPanelsSelectMarkets}
-            className={clsx(
-              'inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-bold border transition-colors whitespace-nowrap',
-              // Always highlighted (accent-tinted); stronger when open.
-              terminalMarketsOpen
-                ? 'bg-accent/20 border-accent/60 text-accent'
-                : 'bg-accent/10 border-accent/40 text-accent hover:bg-accent/15',
-            )}
+            aria-pressed={terminalMarketsOpen}
+            className={clsx(terminalMarketsOpen && '!border-accent/60 !bg-accent/10 text-accent')}
             title="Browse instruments"
+            leftIcon={<List className="w-4 h-4" aria-hidden />}
           >
-            <List className="w-4 h-4" aria-hidden />
             <span className="hidden sm:inline">Markets</span>
-          </button>
+          </Button>
           {/* Trade — pops the movable order window. */}
-          <button
-            type="button"
+          <Button
+            variant="primary"
+            size="sm"
             onClick={openOrderModal}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-bold text-white bg-accent border border-accent hover:bg-accent/90 transition-colors whitespace-nowrap"
             title="Open the order ticket"
+            leftIcon={<CandlestickChart className="w-4 h-4" aria-hidden />}
           >
-            <CandlestickChart className="w-4 h-4" aria-hidden />
             <span className="hidden sm:inline">Trade</span>
-          </button>
+          </Button>
         </div>
         <div className="flex-1 min-h-0 flex overflow-hidden">
           {/* LEFT: chart + positions stacked. When a right panel (Markets /
@@ -810,15 +810,15 @@ export default function TradingTerminalPage() {
                 <span className="text-xs font-semibold text-text-primary truncate">
                   {selectedSymbol ? `Chart — ${selectedSymbol}` : 'Chart'}
                 </span>
-                <span className="text-[10px] text-text-tertiary hidden sm:inline">Esc — normal view</span>
-                <button
-                  type="button"
+                <span className="text-xxs text-text-tertiary hidden sm:inline">Esc — normal view</span>
+                <Button
+                  variant="outline"
+                  size="xs"
                   onClick={() => setChartExpanded(false)}
-                  className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold text-text-secondary border border-border-primary hover:bg-bg-hover hover:text-text-primary"
+                  leftIcon={<Minimize2 className="w-3.5 h-3.5 shrink-0" aria-hidden />}
                 >
-                  <Minimize2 className="w-3.5 h-3.5 shrink-0" aria-hidden />
                   Normal view
-                </button>
+                </Button>
               </div>
             ) : null}
             <div className="flex-1 min-w-0 min-h-0 overflow-hidden relative">
@@ -869,28 +869,30 @@ export default function TradingTerminalPage() {
               </div>
             ) : terminalNewsOpen ? (
               <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-border-primary bg-bg-secondary">
-                  <button
-                    type="button"
+                <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-border-primary bg-bg-secondary">
+                  <Button
+                    variant="outline"
+                    size="xs"
                     onClick={() => {
                       setTerminalNewsOpen(false);
                       setTerminalMarketsOpen(true);
                     }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border-primary bg-card text-[11px] font-bold uppercase tracking-wide text-accent hover:bg-accent/10 hover:border-accent/40 transition-colors"
+                    className="uppercase tracking-wide"
                   >
                     ← Markets
-                  </button>
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-text-tertiary">Live News</span>
-                  <button
-                    type="button"
+                  </Button>
+                  <span className="text-xxs font-bold uppercase tracking-[0.12em] text-text-tertiary">Live News</span>
+                  <Button
+                    variant="ghost"
+                    size="xs"
                     onClick={() => {
                       setTerminalNewsOpen(false);
                       setTerminalMarketsOpen(false);
                     }}
-                    className="ml-auto px-3 py-1.5 rounded-lg border border-border-primary bg-card text-[11px] font-semibold text-text-secondary hover:text-text-primary hover:border-border-secondary transition-colors"
+                    className="ml-auto"
                   >
                     Close
-                  </button>
+                  </Button>
                 </div>
                 <div className="flex-1 min-h-0">
                   <TradingViewNewsTimeline />

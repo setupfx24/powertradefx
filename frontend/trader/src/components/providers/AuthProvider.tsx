@@ -37,21 +37,26 @@ function isPublicPath(pathname: string | null | undefined): boolean {
 
 function MaintenanceScreen() {
   return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 9999,
-      background: '#050707',
-      display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center',
-      gap: 16, padding: 24,
-    }}>
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#facc15" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center gap-4 bg-bg-base p-6">
+      <svg
+        width="48"
+        height="48"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="text-warning"
+        aria-hidden
+      >
         <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
         <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
       </svg>
-      <h1 style={{ color: '#f9fafb', fontSize: 22, fontWeight: 700, margin: 0 }}>
+      <h1 className="text-xl font-semibold tracking-tight text-text-primary">
         Platform Under Maintenance
       </h1>
-      <p style={{ color: '#9ca3af', fontSize: 14, textAlign: 'center', maxWidth: 360, margin: 0 }}>
+      <p className="max-w-sm text-center text-sm text-text-secondary">
         We&apos;re performing scheduled maintenance. Trading and account features are temporarily unavailable. Please check back shortly.
       </p>
     </div>
