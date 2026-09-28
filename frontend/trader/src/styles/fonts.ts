@@ -28,6 +28,10 @@ export const fontDisplay = Space_Grotesk({
   style: ['normal'],
   variable: '--font-display',
   display: 'swap',
+  // Marketing headlines only. Preloading it on every app page produced the
+  // DevTools "preloaded but not used" warning on the terminal; the
+  // @font-face still loads on demand where it is used.
+  preload: false,
 });
 
 // Body font — Plus Jakarta Sans. Clean, highly legible humanist
@@ -59,6 +63,9 @@ export const fontNumeric = Space_Grotesk({
   style: ['normal'],
   variable: '--font-numeric',
   display: 'swap',
+  // The terminal maps numerals to JetBrains Mono, so this face is unused
+  // there; load on demand instead of preloading on every page.
+  preload: false,
 });
 
 /** Joined `className` to drop straight onto <html>. */

@@ -70,9 +70,12 @@ export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ label, hint, error, icon, suffix, size = 'md', numeric, className, id, required, ...props }, ref) => {
+  ({ label, hint, error, icon, suffix, size = 'md', numeric, className, id, name, required, ...props }, ref) => {
     const autoId = useId();
     const inputId = id ?? autoId;
+    // Browsers warn when a field has neither id nor name (autofill mapping);
+    // every primitive control therefore always carries both.
+    const inputName = name ?? inputId;
     return (
       <Field label={label} hint={hint} error={error} required={required} htmlFor={inputId}>
         <div className="relative">
@@ -84,6 +87,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           <input
             ref={ref}
             id={inputId}
+            name={inputName}
             required={required}
             aria-invalid={error ? true : undefined}
             className={cn(
@@ -119,15 +123,17 @@ export interface SelectProps extends Omit<SelectHTMLAttributes<HTMLSelectElement
 }
 
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(
-  ({ label, hint, error, size = 'md', className, id, required, children, ...props }, ref) => {
+  ({ label, hint, error, size = 'md', className, id, name, required, children, ...props }, ref) => {
     const autoId = useId();
     const selectId = id ?? autoId;
+    const selectName = name ?? selectId;
     return (
       <Field label={label} hint={hint} error={error} required={required} htmlFor={selectId}>
         <div className="relative">
           <select
             ref={ref}
             id={selectId}
+            name={selectName}
             required={required}
             aria-invalid={error ? true : undefined}
             className={cn(CONTROL_CLASS, HEIGHT[size], 'appearance-none pr-9 cursor-pointer', error && CONTROL_ERROR, className)}
@@ -152,14 +158,16 @@ export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElemen
 }
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
-  ({ label, hint, error, className, id, required, rows = 4, ...props }, ref) => {
+  ({ label, hint, error, className, id, name, required, rows = 4, ...props }, ref) => {
     const autoId = useId();
     const areaId = id ?? autoId;
+    const areaName = name ?? areaId;
     return (
       <Field label={label} hint={hint} error={error} required={required} htmlFor={areaId}>
         <textarea
           ref={ref}
           id={areaId}
+          name={areaName}
           rows={rows}
           required={required}
           aria-invalid={error ? true : undefined}
