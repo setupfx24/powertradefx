@@ -1,17 +1,25 @@
-"""IB Commission distribution — shared by the gateway (market orders, copy
-trades) and the b-book engine (pending-order fills) so every filled trade
-from a referred user pays the IB chain identically.
+"""IB Commission — shared by the gateway (market orders, algo, copy trades)
+and the b-book engine (pending-order fills) so every trade from a referred
+user is treated identically.
 
-When a referred user's trade is filled:
-1. Find the referrer IB via the Referral table
-2. Resolve the per-lot rate (IB custom override > plan > nothing)
-3. Distribute up the MLM chain using the plan/global mlm_distribution
-4. Create IBCommission records and credit each IB's trading account
+Two phases, deliberately separated:
 
-The function only does ``db.add`` + attribute mutations on the passed
-session — it never commits. The caller owns the transaction (the gateway
-wraps it in a background session it commits; the b-book engine relies on
-its monitor loop's commit).
+ACCRUE (``distribute_ib_commission``, called at fill)
+  1. Find the referrer IB via the Referral table
+  2. Resolve the per-lot rate (IB custom override > plan > nothing)
+  3. Cap the pool at the commission the trader actually paid on this order —
+     the house never pays the chain more than it collected, so a referred
+     second account cannot be farmed for the difference
+  4. Split up the MLM chain and write IBCommission rows with status
+     ``pending``; bump IBProfile.pending_payout. NO balance is credited yet.
+
+SETTLE (``settle_ib_commissions``, run by the b-book engine every few seconds)
+  Every pending row whose source position is CLOSED is credited to the IB's
+  real trading account (atomic SQL), logged as a Transaction, and marked
+  ``paid``. A trade that is still open keeps its accrual pending, so an IB
+  cannot cash out on a position that was only just opened.
+
+Neither function commits; the caller owns the transaction.
 """
 import json
 import logging
@@ -23,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
     Referral, IBProfile, IBCommission, IBCommissionPlan,
-    TradingAccount, Transaction, SystemSetting, Order,
+    TradingAccount, Transaction, SystemSetting, Order, Position, PositionStatus,
 )
 
 logger = logging.getLogger("ib-engine")
@@ -126,6 +134,29 @@ async def distribute_ib_commission(
     if total_commission <= 0:
         return
 
+    # Cap at what this order earned the house. Commission is the only per-
+    # trade revenue that is recorded on the order (spreads are configurable
+    # and can be zero), so it is the safe ceiling: payout ≤ collected.
+    cap_q = await db.execute(
+        select(Order.commission, Position.commission)
+        .outerjoin(Position, Position.order_id == Order.id)
+        .where(Order.id == order_id)
+        .limit(1)
+    )
+    cap_row = cap_q.first()
+    if cap_row is not None:
+        collected = cap_row[0] if cap_row[0] is not None else cap_row[1]
+        if collected is not None:
+            collected = Decimal(str(collected))
+            if total_commission > collected:
+                logger.warning(
+                    "IB pool %.4f for order %s exceeds trader commission %.4f — capped",
+                    total_commission, order_id, collected,
+                )
+                total_commission = collected
+    if total_commission <= 0:
+        return
+
     # Prefer plan's MLM distribution; fall back to global SystemSetting; then default.
     mlm_dist: list[int] | None = None
     if plan and plan.mlm_distribution:
@@ -165,58 +196,104 @@ async def distribute_ib_commission(
             current_ib = await _get_parent_ib(current_ib, db)
             continue
 
-        commission_record = IBCommission(
+        # Accrue only. Settlement credits the account once the trade closes.
+        db.add(IBCommission(
             ib_id=current_ib.id,
             source_user_id=trader_user_id,
             source_trade_id=order_id,
             commission_type="trade_lot",
             amount=share,
             mlm_level=level,
-            status="paid",
-        )
-        db.add(commission_record)
-
-        # Atomic SQL increments: two fills paying the same IB at the same
-        # moment used to race on ORM read-modify-write and lose one credit.
+            status="pending",
+        ))
         await db.execute(
             update(IBProfile)
             .where(IBProfile.id == current_ib.id)
-            .values(total_earned=IBProfile.total_earned + share)
+            .values(pending_payout=IBProfile.pending_payout + share)
+        )
+        logger.info(
+            "IB commission L%d accrued: $%.2f to %s (%s %s lots, order %s)",
+            level, share, current_ib.referral_code, instrument_symbol, lots, order_id,
         )
 
-        ib_account_q = await db.execute(
+        current_ib = await _get_parent_ib(current_ib, db)
+
+
+async def settle_ib_commissions(db: AsyncSession, limit: int = 200) -> int:
+    """Credit every pending accrual whose source trade has CLOSED.
+
+    Locks the rows it settles (FOR UPDATE SKIP LOCKED) so two engine
+    replicas never pay the same accrual twice. Returns the number settled.
+    The caller commits.
+    """
+    rows_q = await db.execute(
+        select(IBCommission)
+        .join(Position, Position.order_id == IBCommission.source_trade_id)
+        .where(
+            IBCommission.status == "pending",
+            Position.status == PositionStatus.CLOSED,
+        )
+        .order_by(IBCommission.created_at.asc())
+        .limit(limit)
+        .with_for_update(of=IBCommission, skip_locked=True)
+    )
+    pending = rows_q.scalars().all()
+    settled = 0
+    for c in pending:
+        amount = Decimal(str(c.amount or 0))
+        if amount <= 0:
+            c.status = "void"
+            continue
+        ib_q = await db.execute(select(IBProfile).where(IBProfile.id == c.ib_id))
+        ib = ib_q.scalar_one_or_none()
+        if ib is None:
+            c.status = "void"
+            continue
+
+        acct_q = await db.execute(
             select(TradingAccount.id).where(
-                TradingAccount.user_id == current_ib.user_id,
+                TradingAccount.user_id == ib.user_id,
                 TradingAccount.is_demo == False,
                 TradingAccount.is_active == True,
             ).order_by(TradingAccount.created_at.asc()).limit(1)
         )
-        ib_account_id = ib_account_q.scalar_one_or_none()
-        if ib_account_id:
-            credited = await db.execute(
-                update(TradingAccount)
-                .where(TradingAccount.id == ib_account_id)
-                .values(
-                    balance=TradingAccount.balance + share,
-                    equity=TradingAccount.equity + share,
-                    free_margin=TradingAccount.free_margin + share,
-                )
-                .returning(TradingAccount.balance)
+        account_id = acct_q.scalar_one_or_none()
+        if account_id is None:
+            # IB has no live account to receive funds yet — leave it pending;
+            # it settles as soon as one exists.
+            continue
+
+        credited = await db.execute(
+            update(TradingAccount)
+            .where(TradingAccount.id == account_id)
+            .values(
+                balance=TradingAccount.balance + amount,
+                equity=TradingAccount.equity + amount,
+                free_margin=TradingAccount.free_margin + amount,
             )
-            balance_after = credited.scalar_one_or_none()
-
-            db.add(Transaction(
-                user_id=current_ib.user_id,
-                account_id=ib_account_id,
-                type="ib_commission",
-                amount=share,
-                balance_after=balance_after,
-                description=f"IB commission L{level}: {instrument_symbol} {lots} lots",
-            ))
-
-        logger.info(f"IB commission L{level}: ${share:.2f} to {current_ib.referral_code} ({instrument_symbol} {lots} lots)")
-
-        current_ib = await _get_parent_ib(current_ib, db)
+            .returning(TradingAccount.balance)
+        )
+        balance_after = credited.scalar_one_or_none()
+        await db.execute(
+            update(IBProfile)
+            .where(IBProfile.id == ib.id)
+            .values(
+                total_earned=IBProfile.total_earned + amount,
+                pending_payout=IBProfile.pending_payout - amount,
+            )
+        )
+        db.add(Transaction(
+            user_id=ib.user_id,
+            account_id=account_id,
+            type="ib_commission",
+            amount=amount,
+            balance_after=balance_after,
+            description=f"IB commission L{c.mlm_level} settled (trade closed)",
+        ))
+        c.status = "paid"
+        settled += 1
+        logger.info("IB commission settled: $%.2f to %s (L%d, order %s)", amount, ib.referral_code, c.mlm_level, c.source_trade_id)
+    return settled
 
 
 async def _get_parent_ib(ib: IBProfile, db: AsyncSession) -> IBProfile | None:

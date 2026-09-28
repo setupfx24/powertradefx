@@ -23,7 +23,7 @@ from packages.common.src.models import (
 )
 from packages.common.src.redis_client import redis_client, PriceChannel, is_tick_stale
 from packages.common.src.instrument_pricing import resolve_commission
-from packages.common.src.ib_commission import distribute_ib_commission
+from packages.common.src.ib_commission import distribute_ib_commission, settle_ib_commissions
 from packages.common.src.pending_orders import evaluate_trigger
 
 logger = logging.getLogger("b-book-engine")
@@ -46,7 +46,24 @@ class MatchingEngine:
     async def start(self):
         self._running = True
         logger.info("B-Book Matching Engine started")
-        await self._monitor_pending_orders()
+        await asyncio.gather(self._monitor_pending_orders(), self._settle_ib_loop())
+
+    async def _settle_ib_loop(self) -> None:
+        """Pay out IB accruals whose source trade has closed (every 10 s).
+
+        Lives here rather than on every close path (manual, SL/TP, stop-out,
+        copy, algo) so ONE loop is the single place money moves to an IB,
+        whatever closed the trade."""
+        while self._running:
+            try:
+                async with AsyncSessionLocal() as db:
+                    n = await settle_ib_commissions(db)
+                    await db.commit()
+                    if n:
+                        logger.info("IB settlement: %d commission(s) paid", n)
+            except Exception as e:
+                logger.error(f"IB settlement error: {e}")
+            await asyncio.sleep(10.0)
 
     async def stop(self):
         self._running = False
