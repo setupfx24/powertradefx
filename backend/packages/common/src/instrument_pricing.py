@@ -1,5 +1,6 @@
 """Resolve spread / commission / price impact for order execution (gateway, engines)."""
 
+from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional, Tuple
 from uuid import UUID
@@ -18,6 +19,23 @@ from packages.common.src.models import (
 # row applies. Historically this lived in overnight_fee_engine as a module-level
 # constant, but moving it here keeps the rate resolution in one file.
 DEFAULT_SWAP_DAILY_RATE = Decimal("0.0001")
+
+# Swap is configured as a signed percentage PER YEAR (negative = the trader
+# pays, positive = the trader receives), the unit the admin Swap Configuration
+# screen presents. A day of swap is 1/360 of the annual rate (money-market
+# day count). The default keeps the platform's documented charge of 0.01% per
+# day on the borrowed part of a leveraged trade: 0.01% x 360 = 3.6% a year.
+SWAP_DAYS_PER_YEAR = Decimal("360")
+DEFAULT_SWAP_PCT_YEAR = -(DEFAULT_SWAP_DAILY_RATE * 100 * SWAP_DAYS_PER_YEAR)  # -3.6
+#: Weekday that books three days of swap (covers the weekend), 0 = Monday.
+DEFAULT_TRIPLE_SWAP_DAY = 2  # Wednesday
+
+
+@dataclass(frozen=True)
+class SwapTerms:
+    pct_per_year: Decimal   # signed: negative = charge, positive = credit
+    swap_free: bool
+    triple_day: int         # 0 = Monday ... 6 = Sunday
 
 
 # ─── VIP brokerage discount ─────────────────────────────────────────
@@ -365,6 +383,17 @@ async def resolve_commission(
     pass apply_xp_discount=False to show the rack rate.
     """
     notional = lots * (instrument.contract_size or Decimal("100000")) * fill_price
+    # Percentage commission is a share of the trade's value in the ACCOUNT
+    # currency. lots x contract x price is in the quote currency (yen for
+    # USDJPY/EURJPY, euro for GER40), so convert it; unconverted it charged
+    # ~150x on JPY pairs. Per-lot and per-trade commission are unaffected.
+    try:
+        from packages.common.src.trading_service import quote_value_to_account
+        converted = await quote_value_to_account(notional, instrument, fill_price)
+        if converted is not None:
+            notional = converted
+    except Exception:  # never block an order on a conversion hiccup
+        pass
 
     base_commission: Optional[Decimal] = None
 
@@ -501,19 +530,21 @@ def _commission_from_config(cfg: ChargeConfig, lots: Decimal, notional: Decimal)
     return v * lots
 
 
-async def resolve_swap_rate(
+async def resolve_swap_terms(
     db: AsyncSession,
     instrument: Instrument,
     side: str,
     *,
     user_id: Optional[UUID] = None,
     account_group_id: Optional[UUID] = None,
-) -> Tuple[Decimal, bool]:
-    """Returns ``(daily_rate, is_swap_free)`` for one open position.
+) -> SwapTerms:
+    """Swap terms for one open position: signed % per year, swap-free flag
+    and the triple-swap weekday.
 
-    ``daily_rate`` is the per-day swap rate to apply to the position's
-    borrowed notional. ``is_swap_free`` is True when the resolved config
-    explicitly marks the position swap-free (admin can do this per scope).
+    Units follow the admin Swap Configuration screen and the usual broker
+    convention: ``swap_long`` / ``swap_short`` are a percentage PER YEAR of
+    the position's value; NEGATIVE = the trader pays, POSITIVE = the trader
+    receives. ``triple_swap_day`` is a weekday, 0 = Monday (Wednesday = 2).
 
     Priority chain (mirrors commission resolution):
       1. User override + this instrument
@@ -524,7 +555,7 @@ async def resolve_swap_rate(
       6. Per-segment SwapConfig
       7. Default SwapConfig
       8. InstrumentConfig.swap_long / swap_short
-      9. ``DEFAULT_SWAP_DAILY_RATE`` (hardcoded fallback so old positions still charge)
+      9. ``DEFAULT_SWAP_PCT_YEAR`` (platform default so leveraged trades are never free by omission)
 
     ``side`` is ``"long"`` / ``"short"`` (long positions pay swap_long, etc).
     SwapConfig.swap_free=True at any matched scope short-circuits with rate=0.
@@ -532,11 +563,12 @@ async def resolve_swap_rate(
     side_l = (side or "long").lower()
     is_long = side_l in ("long", "buy")
 
-    def _rate_from_swap_cfg(cfg: SwapConfig) -> Tuple[Decimal, bool]:
+    def _rate_from_swap_cfg(cfg: SwapConfig) -> SwapTerms:
+        tday = cfg.triple_swap_day if cfg.triple_swap_day is not None else DEFAULT_TRIPLE_SWAP_DAY
         if bool(getattr(cfg, "swap_free", False)):
-            return Decimal("0"), True
+            return SwapTerms(Decimal("0"), True, tday)
         raw = cfg.swap_long if is_long else cfg.swap_short
-        return Decimal(str(raw or 0)), False
+        return SwapTerms(Decimal(str(raw or 0)), False, tday)
 
     # 1-2. User scope
     if user_id is not None:
@@ -625,11 +657,27 @@ async def resolve_swap_rate(
     ic = await _get_instrument_config_row(db, instrument.id)
     if ic is not None:
         if bool(getattr(ic, "swap_free", False)):
-            return Decimal("0"), True
+            return SwapTerms(Decimal("0"), True, DEFAULT_TRIPLE_SWAP_DAY)
         raw = ic.swap_long if is_long else ic.swap_short
         if raw is not None and Decimal(str(raw)) != 0:
-            return Decimal(str(raw)), False
+            return SwapTerms(Decimal(str(raw)), False, DEFAULT_TRIPLE_SWAP_DAY)
 
     # 9. Last-resort hardcoded fallback so existing positions keep being charged
     # even before admins ever touch the swap config UI.
-    return DEFAULT_SWAP_DAILY_RATE, False
+    return SwapTerms(DEFAULT_SWAP_PCT_YEAR, False, DEFAULT_TRIPLE_SWAP_DAY)
+
+
+async def resolve_swap_rate(
+    db: AsyncSession,
+    instrument: Instrument,
+    side: str,
+    *,
+    user_id: Optional[UUID] = None,
+    account_group_id: Optional[UUID] = None,
+) -> Tuple[Decimal, bool]:
+    """Back-compat view of ``resolve_swap_terms``: ``(daily_charge_fraction,
+    is_swap_free)`` where a positive fraction is a charge to the trader."""
+    t = await resolve_swap_terms(
+        db, instrument, side, user_id=user_id, account_group_id=account_group_id,
+    )
+    return (-t.pct_per_year / Decimal("100") / SWAP_DAYS_PER_YEAR), t.swap_free

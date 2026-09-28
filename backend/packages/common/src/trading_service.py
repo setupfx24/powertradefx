@@ -16,7 +16,7 @@ from .models import (
     Instrument, InstrumentConfig, Order, OrderSide, OrderStatus,
     Position, PositionStatus, TradingAccount,
 )
-from .redis_client import redis_client, PriceChannel, is_tick_stale
+from .redis_client import redis_client, price_redis, PriceChannel, is_tick_stale
 
 logger = logging.getLogger("trading_service")
 
@@ -63,16 +63,21 @@ async def quote_to_account_rate(quote_currency: str, account_currency: str = "US
     a = (account_currency or "USD").upper()
     if not q or q == a:
         return Decimal("1")
+    # A conversion rate only scales an amount, so the durable last price is
+    # an acceptable fallback when the live tick has expired (weekend, feed
+    # gap). Reads go to db 0 from every service (see price_redis).
     for symbol, invert in ((f"{a}{q}", True), (f"{q}{a}", False)):
-        try:
-            raw = await redis_client.get(PriceChannel.tick_key(symbol))
-            if not raw:
+        for key in (PriceChannel.tick_key(symbol), PriceChannel.last_price_key(symbol)):
+            try:
+                raw = await price_redis.get(key)
+                if not raw:
+                    continue
+                data = json.loads(raw)
+                bid = Decimal(str(data["bid"] if isinstance(data, dict) else data))
+                if bid > 0:
+                    return (Decimal("1") / bid) if invert else bid
+            except Exception:  # malformed value — try the next key / pair
                 continue
-            bid = Decimal(str(json.loads(raw)["bid"]))
-            if bid > 0:
-                return (Decimal("1") / bid) if invert else bid
-        except Exception:  # malformed tick — try the other pair
-            continue
     return None
 
 
@@ -136,6 +141,84 @@ def calc_margin(
 ) -> Decimal:
     """Calculate required margin for a position."""
     return (lots * contract_size * price) / Decimal(str(leverage))
+
+
+def _instrument_currencies(instrument) -> tuple[str, str]:
+    base = (getattr(instrument, "base_currency", None) or "").upper()
+    quote = (getattr(instrument, "quote_currency", None) or "").upper()
+    if not base or not quote:
+        fb_base, fb_quote = _derive_currencies(getattr(instrument, "symbol", None))
+        base = base or (fb_base or "")
+        quote = quote or (fb_quote or "")
+    return base, quote
+
+
+async def quote_value_to_account(
+    value: Decimal,
+    instrument,
+    ref_price: Decimal,
+    account_currency: str = "USD",
+) -> Decimal | None:
+    """Convert an amount in the instrument's QUOTE currency to the account
+    currency. USDJPY notional is in JPY, GER40 in EUR, and so on; treating
+    those amounts as dollars overstated margin, swap and percentage
+    commission by the exchange rate (about 150x on JPY pairs).
+
+    Returns None when a needed live rate is unavailable, so each caller can
+    choose a safe fallback instead of silently using the wrong currency."""
+    value = Decimal(str(value))
+    if value == 0:
+        return value
+    base, quote = _instrument_currencies(instrument)
+    acct = (account_currency or "USD").upper()
+    if not quote or quote == acct:
+        return value
+    if base == acct:
+        ref = Decimal(str(ref_price or 0))
+        return value / ref if ref > 0 else None
+    rate = await quote_to_account_rate(quote, acct)
+    return value * rate if rate else None
+
+
+async def notional_in_account(
+    lots: Decimal,
+    price: Decimal,
+    instrument,
+    account_currency: str = "USD",
+) -> Decimal | None:
+    """Position notional (lots x contract size x price) in account currency,
+    or None when the conversion rate is unavailable."""
+    cs = Decimal(str(getattr(instrument, "contract_size", None) or "100000"))
+    raw = Decimal(str(lots)) * cs * Decimal(str(price))
+    return await quote_value_to_account(raw, instrument, price, account_currency)
+
+
+async def margin_for(
+    lots: Decimal,
+    price: Decimal,
+    instrument,
+    leverage,
+    account_currency: str = "USD",
+) -> Decimal:
+    """Required margin in account currency: converted notional / leverage.
+
+    The ONE margin formula for placement, pending fills, copy trades, admin
+    trades and every margin release, so what is reserved at open is exactly
+    what is released at close. If a conversion rate is missing the raw
+    quote-currency notional is used: that can only OVERSTATE margin (never
+    lets an account over-leverage) and self-corrects once the rate is back."""
+    lev = Decimal(str(leverage or 1))
+    if lev <= 0:
+        lev = Decimal("1")
+    notional = await notional_in_account(lots, price, instrument, account_currency)
+    if notional is None:
+        cs = Decimal(str(getattr(instrument, "contract_size", None) or "100000"))
+        notional = Decimal(str(lots)) * cs * Decimal(str(price))
+        logger.warning(
+            "margin_for: no %s conversion rate for %s; using unconverted notional",
+            account_currency, getattr(instrument, "symbol", "?"),
+        )
+    return notional / lev
 
 
 def calc_free_margin(account: TradingAccount) -> Decimal:

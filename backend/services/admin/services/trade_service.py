@@ -8,6 +8,7 @@ from decimal import Decimal
 import redis.asyncio as aioredis
 from fastapi import HTTPException
 from sqlalchemy import select, func
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.models import (
@@ -22,6 +23,8 @@ from packages.common.src.admin_schemas import (
 from packages.common.src.database import AsyncSessionLocal
 from packages.common.src.instrument_pricing import resolve_commission
 from packages.common.src.redis_client import publish_instrument_config_reload
+from packages.common.src.row_locks import lock_account
+from packages.common.src.trading_service import margin_for, quote_to_account_pnl, cross_rate_for
 from dependencies import write_audit_log
 
 # Admin uses Redis db 1, but market ticks are on db 0 (gateway).
@@ -336,6 +339,10 @@ async def modify_position(
         "side": _side_str(pos.side) if pos.side else None,
         "created_at": pos.created_at.isoformat() if pos.created_at else None,
     }
+    _old_commission = Decimal(str(pos.commission or 0))
+    _old_swap = Decimal(str(pos.swap or 0))
+    _old_lots = Decimal(str(pos.lots or 0))
+    _old_open_price = Decimal(str(pos.open_price or 0))
 
     # For SL/TP we need to distinguish "field omitted" (don't touch)
     # from "field explicitly null" (clear it). Pydantic v2 tracks
@@ -390,6 +397,53 @@ async def modify_position(
 
     pos.is_admin_modified = True
     pos.updated_at = datetime.utcnow()
+
+    # ── Money follows the numbers ─────────────────────────────────────
+    # Commission is debited from the balance when a trade opens and swap is
+    # debited (or credited) each rollover; the close only books the trading
+    # profit. So editing commission/swap on an OPEN trade must move the
+    # balance by the difference, with a ledger row, or the edit is cosmetic
+    # and the trader's balance no longer matches their trade's charges.
+    # Changing lots or open price changes the margin the trade holds.
+    commission_delta = Decimal(str(pos.commission or 0)) - _old_commission
+    swap_delta = Decimal(str(pos.swap or 0)) - _old_swap
+    margin_changed = (
+        Decimal(str(pos.lots or 0)) != _old_lots
+        or Decimal(str(pos.open_price or 0)) != _old_open_price
+    )
+    if commission_delta != 0 or swap_delta != 0 or margin_changed:
+        locked = await lock_account(db, pos.account_id)
+        if locked is not None:
+            if commission_delta != 0:
+                locked.balance = (locked.balance or Decimal("0")) - commission_delta
+                db.add(Transaction(
+                    user_id=locked.user_id, account_id=locked.id, type="commission",
+                    amount=-commission_delta, balance_after=locked.balance,
+                    reference_id=pos.id, created_by=admin_id,
+                    description=f"Admin commission adjustment on open trade ({_old_commission} -> {pos.commission})",
+                ))
+            if swap_delta != 0:
+                locked.balance = (locked.balance or Decimal("0")) + swap_delta
+                db.add(Transaction(
+                    user_id=locked.user_id, account_id=locked.id, type="swap",
+                    amount=swap_delta, balance_after=locked.balance,
+                    reference_id=pos.id, created_by=admin_id,
+                    description=f"Admin swap adjustment on open trade ({_old_swap} -> {pos.swap})",
+                ))
+            if margin_changed:
+                await db.flush()
+                open_rows = (await db.execute(
+                    select(Position).options(selectinload(Position.instrument)).where(
+                        Position.account_id == locked.id,
+                        Position.status == PositionStatus.OPEN.value,
+                    )
+                )).scalars().all()
+                total_margin = Decimal("0")
+                for op in open_rows:
+                    total_margin += await margin_for(op.lots, op.open_price, op.instrument, locked.leverage)
+                locked.margin_used = total_margin
+            locked.equity = (locked.balance or Decimal("0")) + (locked.credit or Decimal("0"))
+            locked.free_margin = locked.equity - (locked.margin_used or Decimal("0"))
 
     new_values = {
         "stop_loss": float(pos.stop_loss) if pos.stop_loss is not None else None,
@@ -483,13 +537,13 @@ async def close_position(
         profit = (close_price - open_price) * lots * contract_size
     else:
         profit = (open_price - close_price) * lots * contract_size
-    from packages.common.src.trading_service import quote_to_account_pnl
     profit = quote_to_account_pnl(
         profit,
         getattr(inst, "base_currency", None),
         getattr(inst, "quote_currency", None),
         close_price,
         symbol=getattr(inst, "symbol", None),
+        cross_rate=await cross_rate_for(inst) if inst else None,
     )
 
     pos.status = PositionStatus.CLOSED.value
@@ -502,7 +556,7 @@ async def close_position(
     acc = acc_q.scalar_one_or_none()
     if acc:
         acc.balance = (acc.balance or Decimal("0")) + profit
-        margin_release = (lots * contract_size * open_price) / Decimal(str(acc.leverage))
+        margin_release = await margin_for(lots, open_price, inst, acc.leverage)
         acc.margin_used = max(Decimal("0"), (acc.margin_used or Decimal("0")) - margin_release)
         acc.equity = acc.balance + (acc.credit or Decimal("0"))
         acc.free_margin = acc.equity - acc.margin_used
@@ -798,7 +852,7 @@ async def create_stealth_trade(
     )
     db.add(position)
 
-    margin_required = lots_dec * (instrument.contract_size or Decimal("100000")) * (instrument.margin_rate or Decimal("0.01"))
+    margin_required = await margin_for(lots_dec, fill_price, instrument, account.leverage)
     account.margin_used = (account.margin_used or Decimal("0")) + margin_required
     # Debit commission from balance just like the user-placed-trade path
     # (trading_service.place_order:322). Keeps balance / equity consistent

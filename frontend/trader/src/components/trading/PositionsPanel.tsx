@@ -29,6 +29,7 @@ import {
 import { ActiveAccountBadge } from '@/components/trading/ActiveAccountBadge';
 import dynamic from 'next/dynamic';
 import AnimatedPrice from '@/components/ui/AnimatedPrice';
+import { marginUsd, quoteToUsd } from '@/lib/accountCurrency';
 
 // Lazy: ShareTradeModal pulls in html-to-image (~50KB) which is only needed
 // when the user actually opens the share dialog — keep it out of the
@@ -105,13 +106,12 @@ function AiBadge() {
 
 function estimatePositionMargin(
   pos: Position,
-  instruments: { symbol: string; contract_size: number }[],
+  instruments: { symbol: string; contract_size: number; base_currency?: string | null; quote_currency?: string | null }[],
   leverage: number,
 ): number | null {
   const inst = instruments.find((i) => i.symbol === pos.symbol);
   if (!inst || !leverage) return null;
-  const notional = pos.lots * inst.contract_size * pos.open_price;
-  return notional / leverage;
+  return marginUsd(pos.lots, pos.open_price, inst, pos.symbol, leverage, useTradingStore.getState().prices);
 }
 
 function formatPositionOpenedAt(iso: string | undefined): string {
@@ -1026,7 +1026,9 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                           const m = estimatePositionMargin(pos, instruments, lev);
                           const inst = instruments.find((i) => i.symbol === pos.symbol);
                           const notional =
-                            inst != null ? pos.lots * inst.contract_size * pos.open_price : null;
+                            inst != null
+                              ? quoteToUsd(pos.lots * inst.contract_size * pos.open_price, inst, pos.symbol, pos.open_price, useTradingStore.getState().prices)
+                              : null;
                           const marginExposureLine =
                             m != null && notional != null
                               ? `$${m.toFixed(2)} / $${notional.toLocaleString('en-US', { maximumFractionDigits: 0 })}`

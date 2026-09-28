@@ -310,7 +310,7 @@ async def upsert_instrument_config(
                     instrument_id=instrument_id,
                     swap_long=Decimal(str(sl)) if sl is not None else Decimal("0"),
                     swap_short=Decimal(str(ss)) if ss is not None else Decimal("0"),
-                    triple_swap_day=body.get("triple_swap_day", 3),
+                    triple_swap_day=body.get("triple_swap_day", 2),  # Wednesday (0 = Monday)
                     swap_free=sf,
                     is_enabled=True,
                 )

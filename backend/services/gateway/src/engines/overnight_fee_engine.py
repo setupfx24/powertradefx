@@ -1,27 +1,40 @@
-"""Overnight leverage fee engine.
+"""Daily swap (overnight financing) engine.
 
-Per Trading_Mechanism.docx:
-  Fully funded (leverage = 1)  → no overnight fee.
-  Leveraged trades             → 0.01% per day on the borrowed portion only.
-  Borrowed portion             = notional × (L − 1) / L
-  Daily charge                 = borrowed_portion × 0.0001
+Swap is booked at a fixed daily ROLLOVER (21:00 UTC by default, the usual
+New York 5 pm close), not 24 hours after each trade opened, so every trader
+held over the same night pays or earns the same swap.
 
-Skipped:
-  - swap_free instruments (InstrumentConfig.swap_free = TRUE)
-  - swap_free account groups (Islamic; AccountGroup.swap_free = TRUE)
-  - leverage <= 1 (no borrowed portion)
+For each rollover a position was open through:
+  days     = 1 on Monday-Friday rollovers,
+             3 on the triple-swap weekday (covers Saturday and Sunday),
+             0 on Saturday/Sunday rollovers for session markets.
+           24/7 markets (crypto) book 1 day on every rollover, weekends
+           included, and have no triple day.
+  amount   = notional in account currency x borrowed part x (% per year / 100 / 360) x days
+  borrowed part = (L - 1) / L  (a fully funded 1:1 trade has none).
 
-Idempotency: each position has positions.last_swap_at; the engine charges
-when (now - last_swap_at) >= 24h, and only one charge fires per 24h window
-even if the engine ticks more often.
+The % per year is signed (negative = trader pays, positive = trader
+receives) and resolved per user, account type, instrument, segment and
+default rule (see resolve_swap_terms). With no rule the platform default
+of -3.6% a year (0.01% a day) applies.
+
+Skipped: swap-free rules, swap-free (Islamic) account types, Islamic users,
+fully funded positions and leverage <= 1.
+
+Idempotency: positions.last_swap_at stores the last rollover booked. A
+missed night (deploy, outage) is caught up on the next check, and a rollover
+is never booked twice. If an exchange rate needed to value the position is
+missing, the position is retried on the next check instead of being charged
+in the wrong currency.
 """
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -29,19 +42,51 @@ from packages.common.src.database import AsyncSessionLocal
 from packages.common.src.engine_lock import engine_lock
 from packages.common.src.row_locks import lock_account
 from packages.common.src.models import (
-    AccountGroup, InstrumentConfig, Position, PositionStatus,
+    AccountGroup, Position, PositionStatus,
     TradingAccount, Transaction, User,
 )
-from packages.common.src.instrument_pricing import (
-    resolve_swap_rate, DEFAULT_SWAP_DAILY_RATE,
-)
+from packages.common.src.instrument_pricing import resolve_swap_terms, SWAP_DAYS_PER_YEAR
+from packages.common.src.market_hours import trades_24_7
+from packages.common.src.trading_service import notional_in_account
 
 logger = logging.getLogger("overnight-fee-engine")
 
-# Kept as a module-level alias for back-compat with existing log lines;
-# actual per-position rate is resolved per tick via ``resolve_swap_rate``.
-DAILY_RATE = DEFAULT_SWAP_DAILY_RATE
-TICK_INTERVAL = 3600  # check hourly so a deploy mid-day catches up cleanly
+ROLLOVER_HOUR_UTC = int(os.getenv("SWAP_ROLLOVER_HOUR_UTC", "21"))
+# Check every 5 minutes so swap is booked shortly after the rollover.
+TICK_INTERVAL = 300
+
+
+def last_rollover_at_or_before(now: datetime) -> datetime:
+    r = now.replace(hour=ROLLOVER_HOUR_UTC, minute=0, second=0, microsecond=0)
+    return r if r <= now else r - timedelta(days=1)
+
+
+def rollovers_between(after: datetime, until: datetime) -> list[datetime]:
+    """Every rollover instant r with after < r <= until."""
+    r = after.replace(hour=ROLLOVER_HOUR_UTC, minute=0, second=0, microsecond=0)
+    if r <= after:
+        r += timedelta(days=1)
+    out: list[datetime] = []
+    while r <= until:
+        out.append(r)
+        r += timedelta(days=1)
+    return out
+
+
+def swap_days_for(rollover: datetime, triple_day: int, is_24_7: bool) -> int:
+    """Days of swap one rollover books (see module docstring)."""
+    if is_24_7:
+        return 1
+    wd = rollover.weekday()  # 0 = Monday
+    if wd >= 5:
+        return 0
+    return 3 if wd == triple_day else 1
+
+
+def _utc(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
 
 class OvernightFeeEngine:
@@ -50,7 +95,7 @@ class OvernightFeeEngine:
 
     async def start(self):
         self._running = True
-        logger.info("Overnight fee engine started (rate=%s/day, tick=%ds)", DAILY_RATE, TICK_INTERVAL)
+        logger.info("Swap engine started (rollover %02d:00 UTC, check every %ds)", ROLLOVER_HOUR_UTC, TICK_INTERVAL)
         asyncio.create_task(self._run())
 
     async def stop(self):
@@ -68,23 +113,22 @@ class OvernightFeeEngine:
                     if is_leader:
                         async with AsyncSessionLocal() as db:
                             n = await charge_due_positions(db)
+                            # Commit even when nothing was booked: exempt and
+                            # zero-rate positions still advance last_swap_at.
+                            await db.commit()
                             if n:
-                                await db.commit()
-                                logger.info("Overnight fee: charged %d positions", n)
+                                logger.info("Swap: booked rollover swap on %d positions", n)
             except Exception as e:
                 logger.error("Overnight fee engine error: %s", e, exc_info=True)
             await asyncio.sleep(TICK_INTERVAL)
 
 
 async def charge_due_positions(db: AsyncSession, now: Optional[datetime] = None) -> int:
-    """Charge the overnight fee on every open leveraged position whose last
-    charge (or open time, if never charged) was ≥24h ago. Returns the
-    number of positions charged."""
-    now = now or datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=24)
+    """Book swap on every open position for each rollover it was open
+    through since its last booking. Returns the number of positions booked."""
+    now = _utc(now) or datetime.now(timezone.utc)
+    latest = last_rollover_at_or_before(now)
 
-    # Load candidates eagerly with their instrument + account so we can
-    # check swap_free without N+1 queries.
     rows = (await db.execute(
         select(Position)
         .options(
@@ -93,111 +137,94 @@ async def charge_due_positions(db: AsyncSession, now: Optional[datetime] = None)
         )
         .where(
             Position.status == PositionStatus.OPEN,
-            or_(
-                Position.last_swap_at.is_(None),
-                Position.last_swap_at <= cutoff,
-            ),
+            func.coalesce(Position.last_swap_at, Position.created_at) < latest,
         )
     )).scalars().all()
 
-    charged = 0
+    booked = 0
     for pos in rows:
-        # Check open time when last_swap_at is NULL — don't charge a position
-        # that's been open less than 24h.
-        opened = pos.created_at
-        if opened is not None and opened.tzinfo is None:
-            opened = opened.replace(tzinfo=timezone.utc)
-        if pos.last_swap_at is None and opened is not None and opened > cutoff:
+        anchor = _utc(pos.last_swap_at) or _utc(pos.created_at)
+        if anchor is None:
             continue
+        rolls = rollovers_between(anchor, now)
+        if not rolls:
+            continue
+        last_roll = rolls[-1]
 
         account = pos.account
-        if account is None:
-            continue
-
-        # Skip swap-free account groups (Islamic group).
-        ag: AccountGroup | None = account.account_group if account else None
-        if ag is not None and bool(ag.swap_free):
-            pos.last_swap_at = now  # mark seen so we don't re-walk it every tick
-            continue
-
-        # Skip users who self-identify as Islamic (User.is_islamic) — they're
-        # exempt from overnight charges even if they wound up on a non-Islamic
-        # group. Cheap because we already loaded account → User isn't loaded
-        # eagerly here, so issue a small lookup once.
-        if account.user_id is not None:
-            is_islamic = (await db.execute(
-                select(User.is_islamic).where(User.id == account.user_id)
-            )).scalar_one_or_none()
-            if bool(is_islamic):
-                pos.last_swap_at = now
-                continue
-
-        leverage = int(account.leverage or 1)
-        if leverage <= 1:
-            # Account-level fully-funded — never charged. Stamp last_swap_at
-            # so the engine doesn't re-evaluate this position every hour.
-            pos.last_swap_at = now
-            continue
-
         instrument = pos.instrument
-        if instrument is None:
-            continue
-        contract_size = Decimal(str(instrument.contract_size or "100000"))
-        notional = Decimal(str(pos.lots or 0)) * Decimal(str(pos.open_price or 0)) * contract_size
-        if notional <= 0:
-            pos.last_swap_at = now
+        if account is None or instrument is None:
             continue
 
-        # Resolve the daily swap rate via the full SwapConfig priority chain
-        # (user → account_group → instrument → segment → default → InstrumentConfig
-        #  → hardcoded fallback). Side is "long" for BUY, "short" for SELL.
-        # ``is_swap_free`` short-circuits to no charge for this position.
-        pos_side = (pos.side or "long").lower()
-        rate, is_swap_free = await resolve_swap_rate(
-            db, instrument,
-            "long" if pos_side in ("buy", "long") else "short",
-            user_id=account.user_id,
-            account_group_id=account.account_group_id,
+        # Exemptions: mark the rollovers as handled so they are not re-walked.
+        ag: AccountGroup | None = account.account_group
+        exempt = bool(ag is not None and ag.swap_free) or bool(getattr(pos, "is_fully_funded", False))
+        if not exempt and account.user_id is not None:
+            exempt = bool((await db.execute(
+                select(User.is_islamic).where(User.id == account.user_id)
+            )).scalar_one_or_none())
+        leverage = int(account.leverage or 1)
+        if exempt or leverage <= 1:
+            pos.last_swap_at = last_roll
+            continue
+
+        side = (pos.side.value if hasattr(pos.side, "value") else str(pos.side or "buy")).lower()
+        terms = await resolve_swap_terms(
+            db, instrument, "long" if side in ("buy", "long") else "short",
+            user_id=account.user_id, account_group_id=account.account_group_id,
         )
-        if is_swap_free or rate <= 0:
-            pos.last_swap_at = now
+        segment_name = getattr(getattr(instrument, "segment", None), "name", None)
+        is_24_7 = trades_24_7(instrument.symbol, segment_name)
+        days = sum(swap_days_for(r, terms.triple_day, is_24_7) for r in rolls)
+        if terms.swap_free or terms.pct_per_year == 0 or days == 0:
+            pos.last_swap_at = last_roll
             continue
 
-        borrowed_fraction = (Decimal(leverage - 1) / Decimal(leverage))
-        fee = (notional * borrowed_fraction * rate).quantize(Decimal("0.00000001"))
-        if fee <= 0:
-            pos.last_swap_at = now
+        notional = await notional_in_account(pos.lots or 0, pos.open_price or 0, instrument)
+        if notional is None:
+            logger.warning(
+                "Swap: no conversion rate for %s yet; position %s retried next check",
+                instrument.symbol, pos.id,
+            )
+            continue
+        if notional <= 0:
+            pos.last_swap_at = last_roll
             continue
 
-        # C-TRADE-4: lock the account row before the balance mutation so the
-        # overnight charge can't race a concurrent close / transfer / withdrawal
-        # on the same account. Re-read balance under the lock (the selectinload'd
-        # `account` above is only used for the read-only eligibility checks).
+        borrowed = Decimal(leverage - 1) / Decimal(leverage)
+        amount = (
+            notional * borrowed * terms.pct_per_year / Decimal("100") / SWAP_DAYS_PER_YEAR * days
+        ).quantize(Decimal("0.00000001"))
+        if amount == 0:
+            pos.last_swap_at = last_roll
+            continue
+
+        # Lock the account row before touching the balance so swap can't race
+        # a close / transfer / withdrawal on the same account.
         locked = await lock_account(db, account.id)
         if locked is None:
             continue
-
-        # Apply fee — deduct from balance, mark on the position, and write
-        # a Transaction row for audit.
-        new_balance = (Decimal(str(locked.balance or 0))) - fee
-        locked.balance = new_balance
-        locked.equity = new_balance + Decimal(str(locked.credit or 0))
+        locked.balance = Decimal(str(locked.balance or 0)) + amount
+        locked.equity = locked.balance + Decimal(str(locked.credit or 0))
         locked.free_margin = locked.equity - Decimal(str(locked.margin_used or 0))
-        pos.swap = (Decimal(str(pos.swap or 0))) - fee  # swap is conventionally negative for charges
-        pos.last_swap_at = now
+        pos.swap = Decimal(str(pos.swap or 0)) + amount   # negative = charged
+        pos.last_swap_at = last_roll
 
         db.add(Transaction(
             user_id=locked.user_id,
             account_id=locked.id,
             type="swap",
-            amount=-fee,
-            balance_after=new_balance,
+            amount=amount,
+            balance_after=locked.balance,
             reference_id=pos.id,
-            description=f"Overnight fee {rate * 100}% × borrowed {borrowed_fraction:.4f} × notional {notional:.2f}",
+            description=(
+                f"Swap {instrument.symbol}: {days} day(s) at {terms.pct_per_year}% per year"
+                f" on {notional:.2f} (borrowed {borrowed:.4f})"
+            ),
         ))
-        charged += 1
+        booked += 1
 
-    return charged
+    return booked
 
 
 overnight_fee_engine = OvernightFeeEngine()

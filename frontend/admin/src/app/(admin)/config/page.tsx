@@ -263,8 +263,8 @@ export default function ConfigPage() {
               <table className="w-full min-w-[1000px]">
                 <thead>
                   <tr className="border-b border-border-primary bg-bg-tertiary/40">
-                    {['Symbol', 'Commission', 'Spread', 'Price Impact', 'Swap Long', 'Swap Short', 'Swap Free', ''].map(c => (
-                      <th key={c} className={cn('text-left px-3 py-2.5 text-xxs font-medium text-text-tertiary uppercase tracking-wide', ['Commission', 'Spread (pips)', 'Swap Long', 'Swap Short'].includes(c) && 'text-center')}>{c}</th>
+                    {['Symbol', 'Commission', 'Spread', 'Price Impact', 'Swap Long %/yr', 'Swap Short %/yr', 'Swap Free', ''].map(c => (
+                      <th key={c} className={cn('text-left px-3 py-2.5 text-xxs font-medium text-text-tertiary uppercase tracking-wide', ['Commission', 'Spread (pips)', 'Swap Long %/yr', 'Swap Short %/yr'].includes(c) && 'text-center')}>{c}</th>
                     ))}
                   </tr>
                 </thead>

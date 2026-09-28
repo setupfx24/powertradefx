@@ -14,6 +14,29 @@ redis_pool = aioredis.ConnectionPool.from_url(
 redis_client = aioredis.Redis(connection_pool=redis_pool)
 
 
+def _db0_url(url: str) -> str:
+    """Same server and credentials as ``url`` but pinned to db 0."""
+    head, sep, tail = url.rpartition("/")
+    if sep and tail.split("?")[0].isdigit():
+        return f"{head}/0"
+    return url
+
+
+# Market ticks are written to db 0 by market-data. Services that run their own
+# data on another db (admin-api uses db 1) still need to READ prices, e.g. to
+# convert a JPY or EUR amount to the account currency, so price reads that
+# must work from every service go through this client. It is the same client
+# as ``redis_client`` whenever the service already uses db 0.
+if _db0_url(settings.REDIS_URL) == settings.REDIS_URL:
+    price_redis = redis_client
+else:
+    price_redis = aioredis.Redis(
+        connection_pool=aioredis.ConnectionPool.from_url(
+            _db0_url(settings.REDIS_URL), max_connections=20, decode_responses=True,
+        )
+    )
+
+
 # Written by market-data every 30 s (TTL 120 s); read by the gateway /health
 # endpoint and the admin UI so a dead upstream feed is visible to operators
 # instead of silently freezing every non-crypto quote.

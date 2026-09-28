@@ -51,7 +51,7 @@ export default function SwapsPage() {
         _key: newKey(),
         scope: c.scope, instrument_id: c.instrument_id, segment_id: c.segment_id, user_id: c.user_id,
         account_group_id: c.account_group_id || null,
-        swap_long: c.swap_long, swap_short: c.swap_short, triple_swap_day: c.triple_swap_day ?? 3,
+        swap_long: c.swap_long, swap_short: c.swap_short, triple_swap_day: c.triple_swap_day ?? 2,
         swap_free: c.swap_free ?? false, is_enabled: c.is_enabled,
         _user_label: c.user_id ? `User ${c.user_id.slice(0, 8)}` : undefined,
       })));
@@ -138,7 +138,7 @@ export default function SwapsPage() {
       : scopeType === 'account_group' ? ['Account Group', 'Instrument']
       : scopeType === 'user' ? ['User', 'Instrument']
       : [];
-    const headers = leadingCols.concat(['Long', 'Short', 'Triple', 'Free', 'On', '']);
+    const headers = leadingCols.concat(['Long % / yr', 'Short % / yr', 'Triple day', 'Free', 'On', '']);
     return (
       <div className="bg-bg-secondary border border-border-primary rounded-md">
         <div className="px-4 py-2.5 border-b border-border-primary flex items-center justify-between">
@@ -211,9 +211,11 @@ export default function SwapsPage() {
           <div>
             <h1 className="text-lg font-semibold text-text-primary">Swap Configuration</h1>
             <p className="text-xxs text-text-tertiary mt-0.5">
-              Priority: User &gt; Account Group &gt; Instrument &gt; Default. Applied hourly by the
-              overnight engine on every position open ≥24h. Swap-free Islamic users and tiers
-              skip charges entirely.
+              Priority: User &gt; Account Group &gt; Instrument &gt; Default. Rates are % per year of the
+              trade&apos;s value: negative = trader pays, positive = trader receives. Booked at the
+              21:00 UTC rollover on the leveraged part of each trade; the triple day books 3 days,
+              forex/metals/indices have no weekend rollover, crypto rolls every day. With no rule,
+              -3.6% / yr applies. Swap-free Islamic users and tiers are never charged.
             </p>
           </div>
           <button onClick={saveAll} disabled={saving} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-buy rounded-md hover:bg-buy-light disabled:opacity-50 transition-fast">

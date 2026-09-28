@@ -57,6 +57,15 @@ INDEX_SEGMENTS = {"indices", "index", "equities"}
 # Public API
 # ---------------------------------------------------------------------------
 
+def trades_24_7(symbol: Optional[str], segment_name: Optional[str] = None) -> bool:
+    """True for instruments that trade every day (crypto). They roll over
+    daily, weekends included; session markets (forex, metals, energy,
+    indices) have no rollover on Saturday or Sunday."""
+    sym = (symbol or "").upper().strip()
+    seg = (segment_name or "").lower().strip()
+    return seg in CRYPTO_SEGMENTS or sym in CRYPTO_SYMBOLS
+
+
 def is_market_open(
     symbol: str,
     segment_name: Optional[str],

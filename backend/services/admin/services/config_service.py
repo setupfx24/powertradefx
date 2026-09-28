@@ -176,7 +176,7 @@ async def list_swaps(db: AsyncSession) -> list:
             account_group_id=str(c.account_group_id) if c.account_group_id else None,
             swap_long=float(c.swap_long or 0),
             swap_short=float(c.swap_short or 0),
-            triple_swap_day=c.triple_swap_day or 3,
+            triple_swap_day=c.triple_swap_day if c.triple_swap_day is not None else 2,
             swap_free=c.swap_free or False,
             is_enabled=c.is_enabled,
             created_at=c.created_at,

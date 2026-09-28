@@ -22,6 +22,7 @@ from packages.common.src.notify import create_notification
 from packages.common.src import corecen_trade_client
 from packages.common.src.engine_lock import engine_lock
 from packages.common.src.row_locks import lock_account
+from packages.common.src.trading_service import margin_for
 from ..services import wallet_service
 
 logger = logging.getLogger("gateway.sltp")
@@ -236,7 +237,7 @@ class SLTPEngine:
         # stop-out) can lose-update the balance. Position is already locked above.
         account = await lock_account(db, pos.account_id)
         if account:
-            margin_release = (pos.lots * contract_size * pos.open_price) / Decimal(str(account.leverage))
+            margin_release = await margin_for(pos.lots, pos.open_price, pos.instrument, account.leverage)
             account.balance += profit
             account.margin_used = max(Decimal("0"), (account.margin_used or Decimal("0")) - margin_release)
             account.equity = account.balance + (account.credit or Decimal("0"))

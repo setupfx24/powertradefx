@@ -7,6 +7,7 @@ import { clsx } from 'clsx';
 import toast from 'react-hot-toast';
 import { sounds, unlockAudio } from '@/lib/sounds';
 import AnimatedPrice from '@/components/ui/AnimatedPrice';
+import { marginUsd } from '@/lib/accountCurrency';
 
 interface MobileOrderSheetProps {
   symbol: string;
@@ -65,7 +66,7 @@ export default function MobileOrderSheet({ symbol, onClose, onGoToChart }: Mobil
   const contractSize = instrument?.contract_size ?? 100000;
   const execPrice = price ? price.ask : 0;
   const marginRequired = activeAccount && execPrice
-    ? (lots * contractSize * execPrice) / activeAccount.leverage
+    ? marginUsd(lots, execPrice, instrument, symbol, activeAccount.leverage, prices)
     : 0;
   const freeMargin = activeAccount?.free_margin || 0;
   const hasEnoughMargin = freeMargin >= marginRequired;

@@ -118,7 +118,7 @@ def side_val(side) -> str:
     return side.value if hasattr(side, 'value') else str(side)
 
 
-from packages.common.src.trading_service import quote_to_account_pnl, cross_rate_for
+from packages.common.src.trading_service import quote_to_account_pnl, cross_rate_for, margin_for
 
 
 def calc_pnl(
@@ -345,7 +345,7 @@ async def place_order(
         )
 
         contract_size = instrument.contract_size or Decimal("100000")
-        required_margin = calc_margin(req.lots, fill_price, contract_size, account.leverage)
+        required_margin = await margin_for(req.lots, fill_price, instrument, account.leverage)
 
         unrealized_pnl = Decimal("0")
         # Margin actually in use = sum of OPEN positions' margin, RECOMPUTED here
@@ -383,7 +383,7 @@ async def place_order(
             for pos in open_positions:
                 cs = pos.instrument.contract_size if pos.instrument else Decimal("100000")
                 # Count this open position's margin toward the (recomputed) total.
-                open_margin += (pos.lots * cs * pos.open_price) / Decimal(str(account.leverage))
+                open_margin += await margin_for(pos.lots, pos.open_price, pos.instrument, account.leverage)
                 sym = pos.instrument.symbol if pos.instrument else None
                 if not sym or sym not in price_map:
                     continue
@@ -1100,6 +1100,11 @@ async def close_position(
         partial_swap = (pos.swap or Decimal("0")) * ratio
 
         pos.lots -= close_lots
+        # The closed part takes its share of the charges with it; the part
+        # still open keeps only the rest. Otherwise the final close books the
+        # full commission and swap again and the history overstates them.
+        pos.commission = (pos.commission or Decimal("0")) - partial_commission
+        pos.swap = (pos.swap or Decimal("0")) - partial_swap
 
         history = TradeHistory(
             position_id=pos.id,
@@ -1119,7 +1124,7 @@ async def close_position(
         db.add(history)
 
         account.balance += partial_profit
-        partial_margin = (close_lots * contract_size * pos.open_price) / Decimal(str(account.leverage))
+        partial_margin = await margin_for(close_lots, pos.open_price, pos.instrument, account.leverage)
         account.margin_used = max(Decimal("0"), (account.margin_used or Decimal("0")) - partial_margin)
 
         result_msg = f"Partial close: {close_lots} lots"
@@ -1148,7 +1153,7 @@ async def close_position(
         db.add(history)
 
         account.balance += full_profit
-        margin_release = (pos.lots * contract_size * pos.open_price) / Decimal(str(account.leverage))
+        margin_release = await margin_for(pos.lots, pos.open_price, pos.instrument, account.leverage)
         account.margin_used = max(Decimal("0"), (account.margin_used or Decimal("0")) - margin_release)
 
         result_msg = "Position closed"
@@ -1165,8 +1170,7 @@ async def close_position(
     )
     _om = Decimal("0")
     for _p in _rem.scalars().all():
-        _cs = (_p.instrument.contract_size if _p.instrument else None) or Decimal("100000")
-        _om += (_p.lots * _cs * _p.open_price) / Decimal(str(account.leverage))
+        _om += await margin_for(_p.lots, _p.open_price, _p.instrument, account.leverage)
     account.margin_used = _om
     account.equity = account.balance + (account.credit or Decimal("0"))
     account.free_margin = account.equity - (account.margin_used or Decimal("0"))

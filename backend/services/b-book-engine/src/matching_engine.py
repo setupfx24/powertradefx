@@ -27,7 +27,7 @@ from packages.common.src.ib_commission import distribute_ib_commission, settle_i
 from packages.common.src.pending_orders import evaluate_trigger
 from packages.common.src.market_hours import is_market_open
 from packages.common.src.settings_store import get_bool_setting
-from packages.common.src.trading_service import quote_to_account_pnl, cross_rate_for
+from packages.common.src.trading_service import quote_to_account_pnl, cross_rate_for, margin_for
 
 logger = logging.getLogger("b-book-engine")
 
@@ -178,7 +178,7 @@ class MatchingEngine:
             return
 
         fill_price = Decimal(str(fill_price))
-        margin = (order.lots * instrument.contract_size * fill_price) / Decimal(str(account.leverage))
+        margin = await margin_for(order.lots, fill_price, instrument, account.leverage)
 
         # Margin check against RECOMPUTED values, not the stored
         # account.free_margin — the exact figure the gateway's place_order
@@ -197,7 +197,7 @@ class MatchingEngine:
         for pos in open_positions:
             p_inst = pos.instrument
             cs = (p_inst.contract_size if p_inst else None) or Decimal("100000")
-            open_margin += (pos.lots * cs * pos.open_price) / Decimal(str(account.leverage))
+            open_margin += await margin_for(pos.lots, pos.open_price, p_inst, account.leverage)
             if not p_inst:
                 continue
             tick_data = await redis_client.get(PriceChannel.tick_key(p_inst.symbol))

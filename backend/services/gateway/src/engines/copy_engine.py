@@ -32,6 +32,7 @@ from packages.common.src.admin_fees import credit_admin_fee
 from packages.common.src.copy_fees import apply_hwm_fee
 from packages.common.src.engine_lock import engine_lock
 from packages.common.src.row_locks import lock_account
+from packages.common.src.trading_service import margin_for
 from packages.common.src.notify import create_notification
 
 logging.basicConfig(level=logging.INFO)
@@ -526,9 +527,8 @@ class CopyTradeEngine:
                     instrument.symbol,
                 )
 
-        contract_size = float(instrument.contract_size or 100000)
-        required_margin = Decimal(
-            str(copy_lots * contract_size * float(open_price) / investor_account.leverage)
+        required_margin = await margin_for(
+            Decimal(str(copy_lots)), Decimal(str(open_price)), instrument, investor_account.leverage,
         )
 
         if required_margin > (investor_account.free_margin or Decimal("0")):
@@ -724,8 +724,8 @@ class CopyTradeEngine:
         investor_account = await lock_account(db, investor_pos.account_id)
         if investor_account:
             investor_account.balance = (investor_account.balance or Decimal("0")) + net_profit
-            margin_release = (investor_pos.lots * contract_size * investor_pos.open_price) / Decimal(
-                str(investor_account.leverage)
+            margin_release = await margin_for(
+                investor_pos.lots, investor_pos.open_price, instrument, investor_account.leverage,
             )
             investor_account.margin_used = max(
                 Decimal("0"), (investor_account.margin_used or Decimal("0")) - margin_release

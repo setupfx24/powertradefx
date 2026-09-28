@@ -503,7 +503,7 @@ class SwapConfigIn(BaseModel):
     account_group_id: Optional[str] = None
     swap_long: float = 0
     swap_short: float = 0
-    triple_swap_day: int = 3
+    triple_swap_day: int = Field(2, ge=0, le=6)  # 0 = Monday ... 6 = Sunday
     swap_free: bool = False
     is_enabled: bool = True
 

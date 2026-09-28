@@ -29,6 +29,7 @@ from packages.common.src.models import (
 )
 from packages.common.src.redis_client import redis_client, PriceChannel, is_tick_stale
 from packages.common.src.row_locks import lock_account
+from packages.common.src.trading_service import margin_for
 from packages.common.src.kafka_client import produce_event, KafkaTopics
 from packages.common.src.config import get_settings
 from packages.common.src import corecen_trade_client
@@ -235,7 +236,7 @@ class RiskEngine:
             pos.comment = "Auto-closed by STOP OUT"
 
             account.balance += profit
-            margin_release = (pos.lots * pos.instrument.contract_size * pos.open_price) / Decimal(str(account.leverage))
+            margin_release = await margin_for(pos.lots, pos.open_price, pos.instrument, account.leverage)
             account.margin_used = max(Decimal("0"), account.margin_used - margin_release)
             account.equity = account.balance + account.credit
             account.free_margin = account.equity - account.margin_used

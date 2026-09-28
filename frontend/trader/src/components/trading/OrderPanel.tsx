@@ -15,6 +15,7 @@ import { getMarketStatus } from '@/lib/marketHours';
 import { quoteFreshness, staleQuoteMessage } from '@/lib/quoteStatus';
 import { wsManager } from '@/lib/ws/wsManager';
 import OrderPanelSymbolPicker from '@/components/trading/OrderPanelSymbolPicker';
+import { marginUsd } from '@/lib/accountCurrency';
 
 type OrderSide = 'buy' | 'sell';
 type OrderType = 'market' | 'pending';
@@ -168,10 +169,11 @@ export default function OrderPanel({
   const marginLevelNow = marginUsedVal > 0 ? (equityVal / marginUsedVal) * 100 : null;
   const usd = (n: number) => `${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`;
 
+  // Converted to USD (USDJPY notional is in yen); matches the server's margin.
   const marginRequired = useMemo(() => {
     if (!execPrice || !activeAccount) return 0;
-    return (lotsNum * contractSize * execPrice) / activeAccount.leverage;
-  }, [execPrice, lotsNum, activeAccount, contractSize]);
+    return marginUsd(lotsNum, execPrice, instrumentInfo, selectedSymbol, activeAccount.leverage, prices);
+  }, [execPrice, lotsNum, activeAccount, instrumentInfo, selectedSymbol, prices]);
 
   const freeMargin = activeAccount?.free_margin || 0;
   const hasEnoughMargin = freeMargin >= marginRequired;

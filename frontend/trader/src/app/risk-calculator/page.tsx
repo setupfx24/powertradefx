@@ -6,6 +6,7 @@ import { Info, Calculator, Search, ChevronDown, X } from 'lucide-react';
 import DashboardShell from '@/components/layout/DashboardShell';
 import { useTradingStore, type InstrumentInfo, type TradingAccount } from '@/stores/tradingStore';
 import api from '@/lib/api/client';
+import { marginUsd } from '@/lib/accountCurrency';
 
 type CalcTab = 'margin' | 'pnl' | 'lotsize' | 'swap';
 
@@ -332,9 +333,9 @@ export default function RiskCalculatorPage() {
     const lev = accountLeverage;
     const lot = parseFloat(lots) || 0;
     if (!ep || !lot) return null;
-    const margin = (lot * contractSize * ep) / lev;
+    const margin = marginUsd(lot, ep, instrumentInfo, symbol, lev, prices);
     return { margin, ep, lot, lev };
-  }, [entryPrice, accountLeverage, lots, side, tick, contractSize]);
+  }, [entryPrice, accountLeverage, lots, side, tick, instrumentInfo, symbol, prices]);
 
   // ── P&L calc ──
   const pnlResult = useMemo(() => {

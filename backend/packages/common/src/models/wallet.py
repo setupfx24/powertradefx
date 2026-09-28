@@ -251,7 +251,7 @@ class SwapConfig(Base):
     account_group_id = Column(UUID(as_uuid=True), ForeignKey("account_groups.id"))
     swap_long = Column(Numeric(18, 8), default=0)
     swap_short = Column(Numeric(18, 8), default=0)
-    triple_swap_day = Column(Integer, default=3)
+    triple_swap_day = Column(Integer, default=2)  # weekday, 0 = Monday; 2 = Wednesday
     swap_free = Column(Boolean, default=False)
     is_enabled = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)

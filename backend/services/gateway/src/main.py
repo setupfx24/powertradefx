@@ -17,7 +17,7 @@ from packages.common.src.redis_client import redis_client, PriceChannel, BARS_UP
 from packages.common.src.price_cache import price_cache
 from packages.common.src.kafka_client import close_producer
 from packages.common.src.auth import decode_token, require_onboarded
-from packages.common.src.models import TradingAccount, SpreadConfig, Instrument, Position
+from packages.common.src.models import TradingAccount, SpreadConfig, Instrument, Position, AccountGroup
 from packages.common.src.instrument_pricing import symmetric_quote_from_mid
 from packages.common.src.instrumentation import init_sentry, add_middleware_stack
 
@@ -609,7 +609,7 @@ async def _load_user_spread_overrides(
                 group_blanket: tuple | None = None
                 for cfg in rows:
                     val = Decimal(str(cfg.value or 0))
-                    if val <= 0:
+                    if val < 0:
                         continue
                     st = (cfg.spread_type or "pips").lower()
                     scope = (cfg.scope or "").lower()
@@ -648,6 +648,47 @@ async def _load_user_spread_overrides(
                     pip = Decimal(str(inst.pip_size or "0.0001"))
                     digits = int(inst.digits or 5)
                     out[sym] = (eff[0], eff[1], pip, digits)
+
+            # ── Account-type default spread (AccountGroup.spread_markup_default) ──
+            # Execution (resolve_spread_config) falls back to the tier's default
+            # markup only when NO spread rule exists for the instrument at the
+            # instrument, segment or default scope and no user/tier rule matched.
+            # The broadcast tick then carries zero spread, so without this the
+            # trader saw one price and was filled at another.
+            if group_id is not None:
+                markup = (
+                    await db.execute(
+                        select(AccountGroup.spread_markup_default).where(AccountGroup.id == group_id)
+                    )
+                ).scalar_one_or_none()
+                if markup is not None and Decimal(str(markup)) > 0:
+                    base_rows = (
+                        await db.execute(
+                            select(SpreadConfig.scope, SpreadConfig.instrument_id, SpreadConfig.segment_id)
+                            .where(
+                                SpreadConfig.is_enabled == True,  # noqa: E712
+                                SpreadConfig.user_id.is_(None),
+                                func.lower(SpreadConfig.scope).in_(("instrument", "segment", "default")),
+                            )
+                        )
+                    ).all()
+                    has_default = any(
+                        (sc or "").lower() == "default" and iid is None and sid is None
+                        for sc, iid, sid in base_rows
+                    )
+                    if not has_default:
+                        inst_ids = {iid for sc, iid, _ in base_rows if (sc or "").lower() == "instrument"}
+                        seg_ids = {sid for sc, _, sid in base_rows if (sc or "").lower() == "segment"}
+                        for inst in insts:
+                            sym = (inst.symbol or "").strip().upper()
+                            if not sym or sym in out:
+                                continue
+                            if inst.id in inst_ids or (inst.segment_id and inst.segment_id in seg_ids):
+                                continue
+                            out[sym] = (
+                                Decimal(str(markup)), "pips",
+                                Decimal(str(inst.pip_size or "0.0001")), int(inst.digits or 5),
+                            )
 
             # ── Per-position spread override (TEMPORARY, highest priority) ──
             # An admin can set a spread on a RUNNING trade. While that position is

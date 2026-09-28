@@ -4,6 +4,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { clsx } from 'clsx';
 import { Info, Calculator, RotateCcw, Search, ChevronDown, X } from 'lucide-react';
 import { useTradingStore, type InstrumentInfo } from '@/stores/tradingStore';
+import { marginUsd } from '@/lib/accountCurrency';
 
 type CalcTab = 'margin' | 'pnl' | 'lotsize' | 'swap';
 
@@ -212,8 +213,8 @@ export default function RiskCalculator() {
     const lev = accountLeverage;
     const lot = parseFloat(lots) || 0;
     if (!ep || !lot) return null;
-    return { margin: (lot * contractSize * ep) / lev, ep, lot, lev };
-  }, [entryPrice, accountLeverage, lots, livePrice, contractSize]);
+    return { margin: marginUsd(lot, ep, instrumentInfo, symbol, lev, prices), ep, lot, lev };
+  }, [entryPrice, accountLeverage, lots, livePrice, instrumentInfo, symbol, prices]);
 
   // ── P&L ──
   const pnlResult = useMemo(() => {
