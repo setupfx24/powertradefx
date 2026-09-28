@@ -21,6 +21,10 @@ from packages.common.src.config import get_settings as _get_settings
 from . import wallet_service
 from packages.common.src.database import AsyncSessionLocal
 from packages.common.src.redis_client import redis_client, PriceChannel, is_tick_stale
+from packages.common.src.pending_orders import (
+    PendingOrderError,
+    validate_pending_price,
+)
 from packages.common.src.price_cache import price_cache
 from packages.common.src.kafka_client import produce_event, KafkaTopics
 from packages.common.src.notify import create_notification
@@ -72,7 +76,7 @@ async def get_current_price(symbol: str) -> tuple[Decimal, Decimal]:
     if is_tick_stale(tick):
         raise HTTPException(
             status_code=400,
-            detail=f"No live price for {symbol} right now — market data is reconnecting. Please try again in a few seconds.",
+            detail=f"No live price for {symbol} — the price feed is offline, so trading on it is paused until it recovers.",
         )
     return Decimal(str(tick["bid"])), Decimal(str(tick["ask"]))
 
@@ -423,59 +427,19 @@ async def place_order(
         account.free_margin = account.equity - account.margin_used
 
     else:
-        if not req.price:
-            raise HTTPException(status_code=400, detail="Price required for pending orders")
-        px = Decimal(str(req.price))
-        side_s = str(req.side).lower()
-
-        if req.order_type == "limit":
-            if side_s == "buy" and px >= ask:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Buy limit must be below the current ask ({ask}). To buy at market, use a market order.",
-                )
-            if side_s == "sell" and px <= bid:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Sell limit must be above the current bid ({bid}). To sell at market, use a market order.",
-                )
-        elif req.order_type == "stop":
-            if side_s == "buy" and px <= ask:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Buy stop must be above the current ask ({ask}).",
-                )
-            if side_s == "sell" and px >= bid:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Sell stop must be below the current bid ({bid}).",
-                )
-        elif req.order_type == "stop_limit":
-            if not req.stop_limit_price:
-                raise HTTPException(status_code=400, detail="stop_limit_price required for stop-limit orders")
-            slp = Decimal(str(req.stop_limit_price))
-            if side_s == "buy":
-                if px <= ask:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Buy stop price must be above the current ask ({ask}).",
-                    )
-                if slp >= px:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Buy stop-limit: limit price must be below the stop price.",
-                    )
-            else:
-                if px >= bid:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Sell stop price must be below the current bid ({bid}).",
-                    )
-                if slp <= px:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Sell stop-limit: limit price must be above the stop price.",
-                    )
+        px = Decimal(str(req.price)) if req.price is not None else None
+        slp_raw = getattr(req, "stop_limit_price", None)
+        slp = Decimal(str(slp_raw)) if slp_raw is not None else None
+        try:
+            validate_pending_price(req.order_type, req.side, px, slp, bid, ask)
+        except PendingOrderError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        # SL/TP must make sense against the price the order will FILL at (the
+        # limit for limit / stop-limit, the stop for stop). Without this a buy
+        # limit far below the market could carry an SL above its own entry and
+        # be closed by the SL engine the instant it filled.
+        entry_ref = slp if (str(req.order_type) == "stop_limit" and slp is not None) else px
+        check_sltp_levels(str(req.side).lower() == "buy", req.stop_loss, req.take_profit, entry_ref, "order price")
 
         order.status = "pending"
 
@@ -715,14 +679,49 @@ async def modify_order(order_id: UUID, req, user_id: UUID, db: AsyncSession) -> 
     if status_val != "pending":
         raise HTTPException(status_code=400, detail="Can only modify pending orders")
 
+    # Modify is validated EXACTLY like placement. QA 2026-09-28: without this
+    # a resting buy limit could be edited to a price above the ask and the
+    # engine filled it at market within 150 ms — a back door around the
+    # "use a market order" rule and the market-order checks.
+    instrument = await db.get(Instrument, order.instrument_id)
+    if not instrument:
+        raise HTTPException(status_code=400, detail="Instrument not found")
+    bid, ask = await get_current_price(instrument.symbol)
+
+    new_price = Decimal(str(req.price)) if req.price is not None else (
+        Decimal(str(order.price)) if order.price is not None else None
+    )
+    slp = Decimal(str(order.stop_limit_price)) if order.stop_limit_price is not None else None
+    try:
+        validate_pending_price(order.order_type, order.side, new_price, slp, bid, ask)
+    except PendingOrderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if req.lots is not None:
+        lots = Decimal(str(req.lots))
+        ic_row = await db.execute(
+            select(InstrumentConfig).where(InstrumentConfig.instrument_id == instrument.id)
+        )
+        ic = ic_row.scalar_one_or_none()
+        min_lot = ic.min_lot_size if ic and ic.min_lot_size is not None else instrument.min_lot
+        max_lot = ic.max_lot_size if ic and ic.max_lot_size is not None else instrument.max_lot
+        if lots <= 0 or lots < min_lot or lots > max_lot:
+            raise HTTPException(status_code=400, detail=f"Lot size must be between {min_lot} and {max_lot}")
+        order.lots = lots
+
+    new_sl = req.stop_loss if req.stop_loss is not None else order.stop_loss
+    new_tp = req.take_profit if req.take_profit is not None else order.take_profit
+    otype = order.order_type.value if hasattr(order.order_type, 'value') else str(order.order_type)
+    entry_ref = slp if (otype == "stop_limit" and slp is not None) else new_price
+    is_buy = (order.side.value if hasattr(order.side, 'value') else str(order.side)).lower() == "buy"
+    check_sltp_levels(is_buy, new_sl, new_tp, entry_ref, "order price")
+
     if req.stop_loss is not None:
         order.stop_loss = req.stop_loss
     if req.take_profit is not None:
         order.take_profit = req.take_profit
     if req.price is not None:
-        order.price = req.price
-    if req.lots is not None:
-        order.lots = req.lots
+        order.price = new_price
 
     await db.commit()
     return {"message": "Order modified"}
@@ -983,7 +982,7 @@ async def close_position(position_id: UUID, req, user_id: UUID, db: AsyncSession
     if is_tick_stale(tick):
         raise HTTPException(
             status_code=400,
-            detail=f"No live price for {pos.instrument.symbol} right now — market data is reconnecting. Please try again in a few seconds.",
+            detail=f"No live price for {pos.instrument.symbol} — the price feed is offline, so closing is paused until it recovers.",
         )
     sv = side_val(pos.side)
     c_bid = Decimal(str(tick["bid"]))

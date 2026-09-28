@@ -24,6 +24,7 @@ from packages.common.src.models import (
 from packages.common.src.redis_client import redis_client, PriceChannel, is_tick_stale
 from packages.common.src.instrument_pricing import resolve_commission
 from packages.common.src.ib_commission import distribute_ib_commission
+from packages.common.src.pending_orders import evaluate_trigger
 
 logger = logging.getLogger("b-book-engine")
 
@@ -92,30 +93,23 @@ class MatchingEngine:
                             continue
 
                         bid, ask = price_data
-                        triggered = False
-
-                        if order.order_type == OrderType.LIMIT:
-                            if order.side == OrderSide.BUY and ask <= order.price:
-                                triggered = True
-                            elif order.side == OrderSide.SELL and bid >= order.price:
-                                triggered = True
-
-                        elif order.order_type == OrderType.STOP:
-                            if order.side == OrderSide.BUY and ask >= order.price:
-                                triggered = True
-                            elif order.side == OrderSide.SELL and bid <= order.price:
-                                triggered = True
-
-                        elif order.order_type == OrderType.STOP_LIMIT:
-                            if order.side == OrderSide.BUY and ask >= order.price:
-                                if order.stop_limit_price and ask <= order.stop_limit_price:
-                                    triggered = True
-                            elif order.side == OrderSide.SELL and bid <= order.price:
-                                if order.stop_limit_price and bid >= order.stop_limit_price:
-                                    triggered = True
-
-                        if triggered:
-                            await self._execute_pending_order(order, bid, ask, db)
+                        decision = evaluate_trigger(
+                            order.order_type, order.side, order.price,
+                            order.stop_limit_price, bid, ask,
+                        )
+                        if decision.convert_to_limit is not None:
+                            # Stop leg of a stop-limit hit: it now rests as a
+                            # plain limit at the limit price (MT5 semantics).
+                            # stop_limit_price is kept on the row for audit.
+                            order.order_type = OrderType.LIMIT
+                            order.price = decision.convert_to_limit
+                            logger.info(
+                                "Stop-limit %s triggered: now a %s limit @ %s",
+                                order.id, order.side.value, order.price,
+                            )
+                            continue
+                        if decision.triggered:
+                            await self._execute_pending_order(order, decision.fill_price, db)
 
                     await db.commit()
 
@@ -124,15 +118,16 @@ class MatchingEngine:
 
             await asyncio.sleep(0.1)
 
-    async def _execute_pending_order(self, order: Order, bid: Decimal, ask: Decimal, db: AsyncSession):
+    async def _execute_pending_order(self, order: Order, fill_price: Decimal, db: AsyncSession):
+        """Open the position for a triggered pending order at `fill_price`
+        (limit price for limits, market for stops — see pending_orders)."""
         account = await db.get(TradingAccount, order.account_id)
         if not account or not account.is_active:
             order.status = OrderStatus.REJECTED
             return
 
         instrument = await db.get(Instrument, order.instrument_id)
-        # Redis quotes already include platform spread (symmetric).
-        fill_price = ask if order.side == OrderSide.BUY else bid
+        fill_price = Decimal(str(fill_price))
         margin = (order.lots * instrument.contract_size * fill_price) / Decimal(str(account.leverage))
 
         if margin > account.free_margin:
