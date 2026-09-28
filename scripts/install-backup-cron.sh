@@ -23,7 +23,9 @@ LOG="/var/log/powertradefx-backup.log"
 LINE="0 3 * * * $SCRIPT >> $LOG 2>&1"
 
 # Strip any prior powertradefx line, then append the new one.
-( crontab -l 2>/dev/null | grep -v -F "$SCRIPT"; echo "$LINE" ) | crontab -
+# `grep -v` exits 1 when the crontab is empty; under `set -e -o pipefail`
+# that aborted the subshell and installed an EMPTY crontab. Tolerate it.
+( { crontab -l 2>/dev/null | grep -v -F "$SCRIPT"; } || true; echo "$LINE" ) | crontab -
 
 # Ensure the log file exists and is writable so the first run doesn't
 # silently fail before we get a chance to tail it.
