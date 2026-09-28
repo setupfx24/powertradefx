@@ -12,6 +12,7 @@ from packages.common.src.config import get_settings
 from packages.common.src.redis_client import (
     BARS_UPDATES_CHANNEL,
     CONFIG_INSTRUMENTS_RELOAD_CHANNEL,
+    FEED_STATUS_KEY,
     PriceChannel,
     redis_client,
     publish_price,
@@ -50,6 +51,11 @@ JUMP_ACCEPT_AFTER = 5
 # crypto tick is dropped so the two feeds' slightly different mids can't
 # interleave. Binance silent longer than this → Infoway flows again.
 BINANCE_FRESH_SEC = 10.0
+# Feed-status heartbeat (Redis feed:status) cadence and how often a primary
+# feed outage is re-logged at ERROR while it persists.
+FEED_STATUS_INTERVAL_SEC = 30.0
+OUTAGE_LOG_EVERY_SEC = 300.0
+OUTAGE_SENTRY_EVERY_SEC = 3600.0
 
 
 class MarketDataService:
@@ -102,6 +108,18 @@ class MarketDataService:
         # Monotonic time of the last tick received from the PRIMARY feed
         # (Infoway) — drives the mid-flight reconnect watchdog below.
         self._last_feed_tick_mono: float = time.monotonic()
+        # Wall-clock (epoch ms) of the last REAL tick per symbol, and of the
+        # last primary-feed tick overall. Carried on stale republishes and in
+        # feed:status so operators and the UI can see HOW old a quote is.
+        self._last_live_wall_ms: dict[str, int] = {}
+        self._last_feed_tick_wall_ms: int = 0
+        self._primary_feed_name = (
+            "corecen" if isinstance(self.feed, CorecenLPFeed)
+            else "infoway" if isinstance(self.feed, InfowayFeed)
+            else "none"
+        )
+        self._outage_logged_mono = 0.0
+        self._outage_sentry_mono = 0.0
 
     async def start(self):
         logger.info("Starting Market Data Service...")
@@ -125,6 +143,7 @@ class MarketDataService:
             asyncio.create_task(self._spread_reload_loop()),
             asyncio.create_task(self._spread_config_subscriber()),
             asyncio.create_task(self._stale_quote_refresher()),
+            asyncio.create_task(self._feed_status_loop()),
             asyncio.create_task(self.aggregator.run_aggregation_loop()),
             asyncio.create_task(self._auto_seed_bars()),
         ]
@@ -172,11 +191,18 @@ class MarketDataService:
                     pass
 
     async def _seed_last_mid_from_redis(self) -> None:
-        """Prime last mid from existing tick:* keys so stale-quote refresh can fix spread after restart."""
+        """Prime last mid from the durable last_price:* keys.
+
+        Every symbol Redis knows about enters the stale-refresh set, so a
+        quote that stops ticking (dead upstream feed, expired API key) is
+        republished with stale=True within STALE_REFRESH_INTERVAL_SEC of a
+        restart instead of sitting in Redis flagged live for weeks. The
+        tick:* keys were used before, but they expire after 120 s, so after a
+        restart only live crypto was ever seeded."""
         try:
             mono = time.monotonic()
             n = 0
-            async for key in redis_client.scan_iter(f"{PriceChannel.TICK_PREFIX}*"):
+            async for key in redis_client.scan_iter(f"{PriceChannel.LAST_PRICE_PREFIX}*"):
                 raw = await redis_client.get(key)
                 if not raw:
                     continue
@@ -191,6 +217,16 @@ class MarketDataService:
                 self._last_mid[sym] = (b + a) / 2.0
                 self._last_quote[sym] = (b, a)
                 self._last_live_mono[sym] = mono - STALE_TICK_AFTER_SEC - 1.0
+                # A stale republish carries the real tick time in last_live_ms;
+                # a live tick's own ts_ms IS the real tick time.
+                try:
+                    live_ms = int(d.get("last_live_ms") or (0 if d.get("stale") else d.get("ts_ms") or 0))
+                except (TypeError, ValueError):
+                    live_ms = 0
+                if live_ms:
+                    self._last_live_wall_ms[sym] = live_ms
+                    if sym not in LIVE_CRYPTO_SYMBOLS:
+                        self._last_feed_tick_wall_ms = max(self._last_feed_tick_wall_ms, live_ms)
                 n += 1
             if n:
                 logger.info("Seeded last mid from Redis for %d symbols (stale refresh eligible)", n)
@@ -215,7 +251,10 @@ class MarketDataService:
                     # stale=True: this is a refresher republish (no real feed
                     # tick for >STALE_TICK_AFTER_SEC), so SL/TP / stop-out /
                     # liquidation consumers skip it and never phantom-close.
-                    await publish_price(symbol, bid, ask, ts, stale=True)
+                    await publish_price(
+                        symbol, bid, ask, ts, stale=True,
+                        last_live_ms=self._last_live_wall_ms.get(symbol),
+                    )
                 except Exception as exc:
                     logger.debug("Stale quote refresh failed for %s: %s", symbol, exc)
 
@@ -281,6 +320,10 @@ class MarketDataService:
             self._last_mid[symbol] = despiked_mid
             self._last_quote[symbol] = (bid, ask)
             self._last_live_mono[symbol] = time.monotonic()
+            now_wall_ms = int(time.time() * 1000)
+            self._last_live_wall_ms[symbol] = now_wall_ms
+            if symbol not in LIVE_CRYPTO_SYMBOLS:
+                self._last_feed_tick_wall_ms = now_wall_ms
             # 3. Spread engine: symmetric admin spread around the (de-spiked) mid.
             bid, ask = self.spread_cache.widen(symbol, bid, ask)
 
@@ -385,6 +428,7 @@ class MarketDataService:
                         now_mono = time.monotonic()
                         self._last_live_mono[symbol] = now_mono
                         self._binance_live_mono[symbol] = now_mono
+                        self._last_live_wall_ms[symbol] = int(time.time() * 1000)
                         bid, ask = self.spread_cache.widen(symbol, bid0, ask0)
                         await publish_price(symbol, bid, ask, ts)
                         await self.store.insert_tick(symbol, bid, ask, ts)
@@ -440,7 +484,18 @@ class MarketDataService:
             self._last_feed_tick_mono = time.monotonic()
 
     async def _infoway_fallback_watchdog(self) -> None:
-        """If Infoway never delivers ticks (bad key, network, symbol mismatch), use simulator."""
+        """Startup check: Infoway delivered nothing in the first 55 s.
+
+        Previously this STOPPED the Infoway feed for good and swapped in the
+        crypto-only simulator, so once an API key was rejected at boot the
+        service never tried again — and the frozen forex/metal quotes left in
+        Redis were served as live for weeks (observed 2026-09-07 → 09-28,
+        gold shown at 4,405 while spot was 4,200). Now the Infoway reconnect
+        loop keeps running with its own backoff (a renewed key heals without
+        a restart), crypto already flows from the Binance side feed, and
+        every non-crypto quote is flagged stale immediately so the UI and
+        the execution guards treat it as unavailable.
+        """
         try:
             await asyncio.sleep(55.0)
         except asyncio.CancelledError:
@@ -450,16 +505,100 @@ class MarketDataService:
         if not isinstance(self.feed, InfowayFeed):
             return
         logger.error(
-            "Infoway: no ticks in 55s — check INFOWAY_API_KEY, outbound HTTPS/WSS, and symbol codes. "
-            "Falling back to LIVE crypto only (Binance); forex/indices stay unquoted ('-')."
+            "Infoway: no ticks in 55s — check INFOWAY_API_KEY (HTTP 401 = key invalid/expired), "
+            "outbound WSS and symbol codes. Reconnect loop stays active; non-crypto quotes are "
+            "flagged STALE until the feed recovers."
         )
-        try:
-            await self.feed.stop()
-        except Exception as exc:
-            logger.warning("Stopping Infoway feed: %s", exc)
-        # Crypto-only live feed (no price simulation) so at least crypto keeps ticking.
-        self.feed = FeedSimulator(tick_rate_multiplier=1.0)
-        asyncio.create_task(self.feed.start())
+        await self._mark_non_crypto_stale()
+
+    async def _mark_non_crypto_stale(self) -> None:
+        """Republish every non-crypto quote with stale=True right now (the
+        refresher keeps doing so every STALE_REFRESH_INTERVAL_SEC)."""
+        mono = time.monotonic()
+        ts_dt = datetime.now(timezone.utc)
+        ts = ts_dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{ts_dt.microsecond // 1000:03d}Z"
+        n = 0
+        for symbol, (b0, a0) in list(self._last_quote.items()):
+            if symbol in LIVE_CRYPTO_SYMBOLS:
+                continue
+            self._last_live_mono[symbol] = mono - STALE_TICK_AFTER_SEC - 1.0
+            try:
+                bid, ask = self.spread_cache.widen(symbol, b0, a0)
+                await publish_price(
+                    symbol, bid, ask, ts, stale=True,
+                    last_live_ms=self._last_live_wall_ms.get(symbol),
+                )
+                n += 1
+            except Exception as exc:
+                logger.debug("Marking %s stale failed: %s", symbol, exc)
+        if n:
+            logger.warning("Flagged %d non-crypto quotes as STALE (primary feed down)", n)
+
+    async def _feed_status_loop(self) -> None:
+        """Heartbeat the feed state to Redis (feed:status, TTL 120 s) and keep
+        shouting while the primary feed is down during market hours.
+
+        The gateway /health endpoint and the admin UI read this key, so a
+        dead upstream feed shows up as `degraded` in monitoring instead of
+        being invisible until a client compares our chart with TradingView.
+        """
+        from packages.common.src.market_hours import is_market_open
+
+        while self.running:
+            try:
+                await asyncio.sleep(FEED_STATUS_INTERVAL_SEC)
+                if not self.running:
+                    break
+                now_mono = time.monotonic()
+                gap = now_mono - self._last_feed_tick_mono
+                primary_live = gap < STALE_TICK_AFTER_SEC
+                try:
+                    market_open, _ = is_market_open("EURUSD", "forex", None)
+                except Exception:
+                    market_open = True
+                crypto_live = any(now_mono - t < BINANCE_FRESH_SEC for t in self._binance_live_mono.values())
+                degraded = self._primary_feed_name != "none" and not primary_live and market_open
+                status = {
+                    "primary_feed": self._primary_feed_name,
+                    "primary_live": primary_live,
+                    "seconds_since_primary_tick": round(gap, 1),
+                    "last_primary_tick_ms": self._last_feed_tick_wall_ms or None,
+                    "non_crypto_stale": not primary_live,
+                    "market_open": market_open,
+                    "crypto_live": crypto_live,
+                    "degraded": degraded,
+                    "updated_ms": int(time.time() * 1000),
+                }
+                await redis_client.set(FEED_STATUS_KEY, json.dumps(status), ex=120)
+                if not degraded:
+                    continue
+                if now_mono - self._outage_logged_mono >= OUTAGE_LOG_EVERY_SEC:
+                    self._outage_logged_mono = now_mono
+                    last = (
+                        datetime.fromtimestamp(self._last_feed_tick_wall_ms / 1000, tz=timezone.utc).isoformat()
+                        if self._last_feed_tick_wall_ms else "never"
+                    )
+                    logger.error(
+                        "PRIMARY FEED OUTAGE (%s): no non-crypto ticks for %.0fs with the market open; "
+                        "last real tick %s. Forex / metals / indices are STALE and orders on them are "
+                        "refused. Check the provider API key / plan.",
+                        self._primary_feed_name, gap, last,
+                    )
+                if now_mono - self._outage_sentry_mono >= OUTAGE_SENTRY_EVERY_SEC:
+                    self._outage_sentry_mono = now_mono
+                    try:
+                        import sentry_sdk
+                        sentry_sdk.capture_message(
+                            f"Primary price feed outage ({self._primary_feed_name}): "
+                            f"no non-crypto ticks for {gap:.0f}s",
+                            level="error",
+                        )
+                    except Exception:
+                        pass
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug("feed status heartbeat failed: %s", exc)
 
     async def _auto_seed_bars(self) -> None:
         """Wait for first ticks to arrive, then seed historical bars if Redis is empty."""
