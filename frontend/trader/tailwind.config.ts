@@ -1,5 +1,11 @@
 import type { Config } from 'tailwindcss'
 
+/**
+ * Tailwind is a thin mapping onto the tokens in src/app/globals.css.
+ * Nothing here is a colour value — every entry resolves to a CSS variable
+ * so the whole app re-themes from one file. Add a token there first,
+ * then expose it here.
+ */
 const config: Config = {
   content: ['./src/**/*.{js,ts,jsx,tsx,mdx}'],
   darkMode: ['class', '[data-theme="dark"]'],
@@ -7,18 +13,19 @@ const config: Config = {
     extend: {
       colors: {
         bg: {
+          page: 'var(--bg-page)',
+          base: 'var(--bg-base)',
           primary: 'var(--bg-primary)',
           secondary: 'var(--bg-secondary)',
           tertiary: 'var(--bg-tertiary)',
           hover: 'var(--bg-hover)',
           active: 'var(--bg-active)',
           input: 'var(--bg-input)',
+          overlay: 'var(--bg-overlay)',
           glass: 'var(--bg-glass)',
           'glass-light': 'var(--bg-glass-light)',
           'glass-heavy': 'var(--bg-glass-heavy)',
-          base: 'var(--bg-base)',
         },
-        /* crucial-ui style surfaces */
         card: {
           DEFAULT: 'var(--bg-card)',
           nested: 'var(--bg-card-nested)',
@@ -26,6 +33,7 @@ const config: Config = {
         border: {
           primary: 'var(--border-primary)',
           secondary: 'var(--border-secondary)',
+          strong: 'var(--border-strong)',
           accent: 'var(--border-accent)',
           glass: 'var(--border-glass)',
           'glass-bright': 'var(--border-glass-bright)',
@@ -35,26 +43,26 @@ const config: Config = {
           secondary: 'var(--text-secondary)',
           tertiary: 'var(--text-tertiary)',
           inverse: 'var(--text-inverse)',
+          'on-accent': 'var(--text-on-accent)',
         },
-        /* Var-backed (triplets in globals.css) so the trading terminal's
-         * .term-theme block can flip buy/sell to green/red while the rest
-         * of the app keeps blue/red. Alpha still composes: bg-buy/10. */
+        /* Trade side. One convention everywhere: green buy / red sell.
+         * Alpha composes: bg-buy/10, border-sell/25. */
         buy: {
           DEFAULT: 'rgb(var(--buy-rgb) / <alpha-value>)',
           light: 'rgb(var(--buy-light-rgb) / <alpha-value>)',
           dark: 'rgb(var(--buy-dark-rgb) / <alpha-value>)',
-          bg: 'rgb(var(--buy-rgb) / 0.1)',
-          glow: 'rgb(var(--buy-rgb) / 0.22)',
         },
         sell: {
           DEFAULT: 'rgb(var(--sell-rgb) / <alpha-value>)',
           light: 'rgb(var(--sell-light-rgb) / <alpha-value>)',
           dark: 'rgb(var(--sell-dark-rgb) / <alpha-value>)',
-          bg: 'rgb(var(--sell-rgb) / 0.1)',
-          glow: 'rgb(var(--sell-rgb) / 0.2)',
         },
-        /* Brand accent — var-backed so the whole app re-themes from the
-         * BRAND PRIMITIVES block in globals.css. Never hardcode the hex. */
+        /* Status. success/danger share the buy/sell hues on purpose. */
+        success: 'rgb(var(--success-rgb) / <alpha-value>)',
+        danger: 'rgb(var(--danger-rgb) / <alpha-value>)',
+        warning: 'rgb(var(--warning-rgb) / <alpha-value>)',
+        info: 'rgb(var(--info-rgb) / <alpha-value>)',
+        /* Brand accent. */
         accent: {
           DEFAULT: 'rgb(var(--accent-rgb) / <alpha-value>)',
           hover: 'rgb(var(--accent-hover-rgb) / <alpha-value>)',
@@ -62,26 +70,16 @@ const config: Config = {
           light: 'rgb(var(--accent-bright-rgb) / <alpha-value>)',
           dark: 'rgb(var(--accent-hover-rgb) / <alpha-value>)',
         },
-        success: '#10B981',
-        warning: '#F59E0B',
-        info: '#29B6F6',
-        danger: '#DC2626',
-        rainbow: {
-          red: '#FF6B6B',
-          orange: '#FFA94D',
-          yellow: '#FFD43B',
-          green: '#69DB7C',
-          blue: '#4DABF7',
-          purple: '#9775FA',
-          pink: '#F06595',
-        },
-        /* Landing-page palette — PowerTradeFX brand */
-        'primary': {
+        /* Marketing (landing / portal) palette — outside the app tokens. */
+        primary: {
           bg: '#FFFFFF',
           secondary: '#FAFAFA',
           accent: 'rgb(var(--accent-rgb) / <alpha-value>)',
           purple: 'rgb(var(--accent-hover-rgb) / <alpha-value>)',
         },
+      },
+      ringColor: {
+        DEFAULT: 'var(--ring)',
       },
       backgroundImage: {
         'gradient-primary': 'linear-gradient(135deg, var(--accent-bright) 0%, var(--accent) 50%, var(--accent-hover) 100%)',
@@ -90,16 +88,12 @@ const config: Config = {
         'gradient-section-alt': 'linear-gradient(180deg, #FAFAFA 0%, #FFFFFF 100%)',
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
-        // `mono` now renders the numeric font (Space Grotesk, solid
-        // ValutaSolid-style) so every existing `font-mono tabular-nums`
-        // balance / price / P&L picks it up app-wide. JetBrains Mono
-        // stays as the fallback for any true monospace context.
-        mono: ['var(--font-numeric)', 'JetBrains Mono', 'Menlo', 'monospace'],
-        // ── Marketing-design-system fonts (next/font CSS vars) ───────
+        sans: ['var(--font-ui)'],
+        body: ['var(--font-ui)'],
+        /* `mono` is the numeric face: every balance / price / P&L. */
+        mono: ['var(--font-num)'],
+        numeric: ['var(--font-num)'],
         display: ['var(--font-display)', 'Space Grotesk', 'Inter', 'system-ui', 'sans-serif'],
-        body: ['var(--font-body)', 'Plus Jakarta Sans', 'Inter', 'system-ui', 'sans-serif'],
-        numeric: ['var(--font-numeric)', 'Space Grotesk', 'Menlo', 'monospace'],
       },
       fontSize: {
         'xxs': ['10px', { lineHeight: '14px' }],
@@ -111,9 +105,6 @@ const config: Config = {
         'xl': ['20px', { lineHeight: '28px' }],
         '2xl': ['28px', { lineHeight: '36px' }],
         '3xl': ['36px', { lineHeight: '44px' }],
-        // ── Marketing display scale (per design-system brief) ───────
-        // Use the responsive pair on H1/H2: e.g.
-        //   <h1 className="text-display-h1-sm md:text-display-h1">
         'display-h1-sm':  ['40px', { lineHeight: '1.02', letterSpacing: '-0.03em' }],
         'display-h1':     ['72px', { lineHeight: '1.02', letterSpacing: '-0.03em' }],
         'display-h2-sm':  ['32px', { lineHeight: '1.08', letterSpacing: '-0.025em' }],
@@ -133,28 +124,18 @@ const config: Config = {
       maxWidth: {
         'container':      '1280px',
       },
-      /* `boxShadow` is declared ONCE below at the bottom of `extend`. */
-      /* Three values, seven names. The names all stay so no component
-         changes — `rounded-3xl` still compiles — but the scale now has
-         three steps instead of seven near-identical ones, which is what
-         made surfaces look subtly mismatched next to each other.
-         6 control · 10 card · 16 panel/modal. */
-      /* Two steps on purpose, not five. `rounded-lg` and `rounded-xl` were
-         already the same 10px, but `rounded-2xl` sat at 16px and appears on
-         ten of the signed-in tabs, so a single screen could show 6, 10 and
-         16px card corners at once — the main thing that made the app read as
-         unfinished. Everything card-sized is now 10px and only small controls
-         (chips, inputs, badges) stay at 6px. Pills keep using rounded-full. */
+      /* Two radii on purpose: 6px controls (sm/md), 10px surfaces (lg…),
+       * 14px sheets (`rounded-sheet`). Pills use rounded-full. */
       borderRadius: {
-        sm: '6px', DEFAULT: '6px', md: '6px',
-        lg: '10px', xl: '10px',
-        '2xl': '10px', '3xl': '10px',
+        sm: 'var(--radius-sm)', DEFAULT: 'var(--radius-sm)', md: 'var(--radius-sm)',
+        lg: 'var(--radius-md)', xl: 'var(--radius-md)',
+        '2xl': 'var(--radius-md)', '3xl': 'var(--radius-md)',
+        sheet: 'var(--radius-lg)',
       },
       spacing: {
         '0.5': '2px', '1': '4px', '1.5': '6px', '2': '8px', '3': '12px',
         '4': '16px', '5': '20px', '6': '24px', '8': '32px', '10': '40px',
         '12': '48px',
-        // Marketing-section vertical rhythm (per brief: 64px mobile / 96px desktop)
         'section-y-mobile':   '64px',
         'section-y-desktop':  '96px',
         'gutter':             '24px',
@@ -164,75 +145,38 @@ const config: Config = {
         'fade-in': 'fadeIn 0.2s ease-out',
         'slide-up': 'slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
         'slide-down': 'slideDown 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
-        'flash-blue': 'flashBlue 0.15s ease-out',
-        'flash-red': 'flashRed 0.15s ease-out',
-        'glow-pulse': 'glowPulse 2s ease-in-out infinite',
+        'flash-up': 'flashUp 0.15s ease-out',
+        'flash-down': 'flashDown 0.15s ease-out',
         'float': 'float 6s ease-in-out infinite',
-        'shimmer': 'shimmer 2s linear infinite',
-        /** Wallet deposit/withdraw — Crucial-style neon tab + panel */
-        'wallet-neon-tab': 'walletNeonTabGlow 2.6s ease-in-out infinite',
-        'wallet-main-tab-glow': 'walletMainTabGlow 2.2s ease-in-out infinite',
-        'wallet-main-tab-text': 'walletMainTabText 0.55s cubic-bezier(0.34, 1.45, 0.64, 1) both',
-        'wallet-fund-enter': 'walletFundEnter 0.48s cubic-bezier(0.22, 1, 0.36, 1) both',
-        'wallet-fund-enter-lg': 'walletFundEnterLg 0.65s cubic-bezier(0.22, 1, 0.36, 1) both',
-        'wallet-sub-pill': 'walletSubPill 0.32s cubic-bezier(0.22, 1, 0.36, 1) both',
+        'shimmer': 'shimmer 1.6s linear infinite',
       },
       keyframes: {
         fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
         slideUp: { '0%': { opacity: '0', transform: 'translateY(8px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
         slideDown: { '0%': { opacity: '0', transform: 'translateY(-8px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
-        flashBlue: { '0%': { backgroundColor: 'rgba(41,98,255,0.22)' }, '100%': { backgroundColor: 'transparent' } },
-        flashRed: { '0%': { backgroundColor: 'rgba(239,68,68,0.2)' }, '100%': { backgroundColor: 'transparent' } },
-        glowPulse: { '0%, 100%': { boxShadow: '0 2px 6px rgba(0,0,0,0.25)' }, '50%': { boxShadow: '0 2px 6px rgba(0,0,0,0.25)' } },
+        flashUp: { '0%': { backgroundColor: 'rgb(var(--buy-rgb) / 0.22)' }, '100%': { backgroundColor: 'transparent' } },
+        flashDown: { '0%': { backgroundColor: 'rgb(var(--sell-rgb) / 0.2)' }, '100%': { backgroundColor: 'transparent' } },
         float: { '0%, 100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-10px)' } },
         shimmer: { '0%': { backgroundPosition: '-200% 0' }, '100%': { backgroundPosition: '200% 0' } },
-        walletNeonTabGlow: {
-          '0%, 100%': { boxShadow: '0 2px 6px rgba(0,0,0,0.25)' },
-          '50%': { boxShadow: '0 2px 6px rgba(0,0,0,0.25)' },
-        },
-        /** Deposit / Withdraw main tabs — stronger pulsing glow */
-        walletMainTabGlow: {
-          '0%, 100%': { boxShadow: '0 2px 6px rgba(0,0,0,0.25)' },
-          '50%': { boxShadow: '0 2px 6px rgba(0,0,0,0.25)' },
-        },
-        walletMainTabText: {
-          '0%': { opacity: '0.5', transform: 'scale(0.92) translateY(4px)' },
-          '100%': { opacity: '1', transform: 'scale(1) translateY(0)' },
-        },
-        walletFundEnter: {
-          '0%': { opacity: '0', transform: 'translateY(14px)' },
-          '100%': { opacity: '1', transform: 'translateY(0)' },
-        },
-        walletFundEnterLg: {
-          '0%': { opacity: '0', transform: 'translateY(22px) scale(0.98)' },
-          '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
-        },
-        walletSubPill: {
-          '0%': { opacity: '0.85', transform: 'scale(0.98)' },
-          '100%': { opacity: '1', transform: 'scale(1)' },
-        },
       },
-      /* All elevation tokens live HERE — keep boxShadow as a single
-         block; a second one silently overrides the first. */
-      /* One depth scale, three steps, all pure black — a shadow says how
-         far a surface is off the page and nothing else.
-         The `glow-*` / `neon-*` entries were coloured halos from the old
-         neon look; they are now plain depth. Names are kept so nothing
-         has to be edited at the call sites, and anything that wants
-         emphasis should use the accent border/background rather than a
-         coloured bloom. */
+      /* One depth scale, three steps. Legacy names stay so nothing breaks
+       * at call sites, but they all resolve to the same three tokens. */
       boxShadow: {
-        'modal':         '0 12px 32px rgba(0,0,0,0.45)',
-        'dropdown':      '0 6px 16px rgba(0,0,0,0.35)',
-        'glass':         '0 6px 16px rgba(0,0,0,0.35)',
-        'glass-sm':      '0 2px 6px rgba(0,0,0,0.25)',
-        'glass-lg':      '0 12px 32px rgba(0,0,0,0.45)',
-        'inner-light':   'inset 0 1px 0 0 rgba(255,255,255,0.04)',
-        'skeu':          'inset 0 1px 0 rgba(255,255,255,0.06), 0 2px 6px rgba(0,0,0,0.25)',
-        'glow-blue':     '0 2px 6px rgba(0,0,0,0.25)',
-        'glow-red':      '0 2px 6px rgba(0,0,0,0.25)',
-        'neon-green-sm': '0 2px 6px rgba(0,0,0,0.25)',
-        'neon-green-lg': '0 6px 16px rgba(0,0,0,0.35)',
+        sm: 'var(--shadow-sm)',
+        DEFAULT: 'var(--shadow-sm)',
+        md: 'var(--shadow-md)',
+        lg: 'var(--shadow-lg)',
+        'modal': 'var(--shadow-lg)',
+        'dropdown': 'var(--shadow-md)',
+        'glass': 'var(--shadow-md)',
+        'glass-sm': 'var(--shadow-sm)',
+        'glass-lg': 'var(--shadow-lg)',
+        'inner-light': 'inset 0 1px 0 0 rgba(255,255,255,0.04)',
+        'skeu': 'var(--shadow-sm)',
+        'glow-blue': 'var(--shadow-sm)',
+        'glow-red': 'var(--shadow-sm)',
+        'neon-green-sm': 'var(--shadow-sm)',
+        'neon-green-lg': 'var(--shadow-md)',
       },
     },
   },

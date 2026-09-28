@@ -100,7 +100,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: STORAGE_KEY_UI,
-      version: 15,
+      version: 16,
       onRehydrateStorage: () => (rehydrated, err) => {
         if (err || !rehydrated || typeof window === 'undefined') return;
         if (window.innerWidth < 768) return;
@@ -147,8 +147,10 @@ export const useUIStore = create<UIState>()(
           v < 9
             ? false
             : Boolean((state as UIState & { terminalNewsOpen?: boolean }).terminalNewsOpen);
-        // v14: dark theme removed — everyone is light-only now.
-        const theme = 'light' as Theme;
+        // v16: graphite dark is the app default. Reset everyone once so the
+        // new theme is what they see; a light choice made after this
+        // migration persists normally.
+        const theme: Theme = v < 16 ? 'dark' : (state.theme === 'light' ? 'light' : 'dark');
         return {
           ...state,
           theme,

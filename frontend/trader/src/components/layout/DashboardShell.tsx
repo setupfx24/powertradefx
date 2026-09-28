@@ -23,7 +23,6 @@ import {
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { Archivo, IBM_Plex_Mono } from 'next/font/google';
 import { Bell, ChevronDown, LogOut, Moon, MoreHorizontal, Search, Sun } from 'lucide-react';
 import { useUIStore } from '@/stores/uiStore';
 import { cn } from '@/lib/utils';
@@ -32,8 +31,6 @@ import { useAuthStore } from '@/stores/authStore';
 import DashboardFooter from './DashboardFooter';
 import FeatureTour from '@/components/onboarding/FeatureTour';
 
-const fontUi = Archivo({ subsets: ['latin'], weight: ['400', '500', '600', '700', '800'], variable: '--f-ui' });
-const fontNum = IBM_Plex_Mono({ subsets: ['latin'], weight: ['400', '500', '600'], variable: '--f-num' });
 
 /* ── shared desk state ─────────────────────────────────────────────── */
 export interface DeskAccount {
@@ -192,7 +189,7 @@ export default function DashboardShell({
 
   return (
     <DeskCtx.Provider value={desk}>
-      <div className={cn('desk', fontUi.variable, fontNum.variable, className)}>
+      <div className={cn('desk', className)}>
         {/* ── Row 1: navbar ─────────────────────────────────────────── */}
         <nav className="dk-nav">
           {/* The lockup already CONTAINS the wordmark, so it replaces both

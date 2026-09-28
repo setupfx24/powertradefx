@@ -27,7 +27,10 @@ export const viewport: Viewport = {
   // Pinch-zoom intentionally allowed for WCAG 2.1.4 compliance.
   // Earlier `maximumScale: 1` + `userScalable: false` blocked
   // low-vision users — dropped per accessibility audit.
-  themeColor: '#ffffff',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#F3F5F9' },
+    { media: '(prefers-color-scheme: dark)', color: '#0B0D10' },
+  ],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -55,9 +58,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" translate="no" suppressHydrationWarning className={fontVariableClass}>
       <head>
         <meta name="google" content="notranslate" />
+        {/* Pre-hydration theme bootstrap: read the persisted preference so the
+            first paint already has the right tokens (no light→dark flash).
+            Dark is the default. The trading terminal is pinned dark by
+            ThemeProvider after hydration. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var d=document.documentElement;d.setAttribute('data-theme','light');d.classList.add('theme-light');d.style.backgroundColor='#ffffff';d.style.color='#0A0A0A';}catch(e){document.documentElement.setAttribute('data-theme','light');document.documentElement.style.backgroundColor='#ffffff';document.documentElement.style.color='#0A0A0A';}})();`,
+            __html: `(function(){var t='dark';try{var s=JSON.parse(localStorage.getItem('powertradefx-ui')||'{}');if(s&&s.state&&s.state.theme==='light'&&location.pathname.indexOf('/trading/terminal')!==0)t='light';}catch(e){}var d=document.documentElement;d.setAttribute('data-theme',t);d.classList.add('theme-'+t);d.style.colorScheme=t;})();`,
           }}
         />
       </head>
