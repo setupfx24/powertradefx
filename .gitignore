@@ -90,10 +90,10 @@ build/
 # Client reference mockups dropped at the repo root (kept locally only)
 /ChatGPT Image*.png
 /ChatGPT Image*.jpg
-swisscresta_web/
+powertradefx_web/
 
 # Source APK drop-zone — redundant with the served copy at
-# frontend/trader/public/downloads/swisscresta1.apk. Keep locally, don't track.
+# frontend/trader/public/downloads/powertradefx1.apk. Keep locally, don't track.
 # (Scoped to the root folder only so the served public/ APK stays tracked.)
 /apk/
 
