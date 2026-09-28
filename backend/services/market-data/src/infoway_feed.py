@@ -35,9 +35,6 @@ CRYPTO_INFOWAY_CODES: Dict[str, str] = {
     "LTCUSD": "LTCUSDT",
     "XRPUSD": "XRPUSDT",
     "SOLUSD": "SOLUSDT",
-    "ADAUSD": "ADAUSDT",
-    "BNBUSD": "BNBUSDT",
-    "DOGEUSD": "DOGEUSDT",
 }
 
 # Infoway may use alternate product codes vs our DB symbols.
@@ -46,12 +43,6 @@ INFOWAY_SYMBOL_ALIASES: Dict[str, str] = {
     "XTIUSD": "USOIL",
     "WTIUSD": "USOIL",
     "CLUSD": "USOIL",
-    # Brent aliases → our UKOIL instrument
-    "XBRUSD": "UKOIL",
-    "BRNUSD": "UKOIL",
-    # Natural gas aliases → our NATGAS instrument
-    "XNGUSD": "NATGAS",
-    "NGAS": "NATGAS",
 }
 
 
@@ -72,8 +63,33 @@ def _trace() -> str:
     return secrets.token_hex(16)
 
 
+
+# How long to stay off the socket after a 429. Deliberately far longer than
+# the ordinary ladder: the upstream is refusing us BECAUSE of connection
+# frequency, so the usual "try again in 2s" makes the outage last longer.
+RATE_LIMIT_BACKOFF_SEC = 180.0
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    """True when the upstream rejected us with HTTP 429.
+
+    websockets surfaces this as a rejection string rather than a typed
+    error, and the exact class differs across versions, so match on both the
+    status attribute and the message.
+    """
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    if status == 429:
+        return True
+    return "429" in str(exc)
+
+
 class InfowayFeed:
     """Streams depth (best bid/ask) from Infoway `common` + `crypto` sockets."""
+
+    @property
+    def rate_limited_for(self) -> float:
+        """Seconds still to wait before the upstream will accept us, 0 if none."""
+        return max(0.0, self._rate_limited_until - time.monotonic())
 
     def __init__(self, api_key: str, instruments: Dict[str, dict]):
         self._api_key = api_key.strip()
@@ -82,11 +98,20 @@ class InfowayFeed:
 
         self._tick_queue: asyncio.Queue = asyncio.Queue(maxsize=50_000)
         self._running = False
+        # Monotonic deadline set when the upstream returns 429. The recovery
+        # probe in main.py reads it so it does not spawn a fresh connection
+        # attempt straight into a rate limit we are already serving.
+        self._rate_limited_until: float = 0.0
         self._tasks: List[asyncio.Task] = []
         # Monotonic timestamp of the last REAL data frame per socket. Set ONLY
         # on code-10005 depth frames — never on heartbeats/acks — so the
         # watchdog measures the provider's push liveness, not the TCP link's.
         self._last_data_mono: Dict[str, float] = {}
+        # Half of the most recent REAL depth spread per symbol. Trade
+        # pushes carry only a last price — we rebuild their quote as
+        # mid ± this half-spread so a trade tick never publishes a
+        # zero-width quote even when no admin spread is configured.
+        self._last_half: Dict[str, float] = {}
 
     @property
     def current_prices(self) -> Dict[str, float]:
@@ -198,6 +223,7 @@ class InfowayFeed:
         ask_r = round(ask, decimals)
         if ask_r < bid_r:
             ask_r = bid_r
+        self._last_half[symbol] = max(0.0, (ask_r - bid_r) / 2.0)
 
         ts_ms = data.get("t")
         if isinstance(ts_ms, (int, float)) and ts_ms > 0:
@@ -224,6 +250,56 @@ class InfowayFeed:
             "volume": max(volume, 1),
         }
         self._enqueue(tick)
+
+    def _emit_trade(self, data: dict) -> None:
+        """Code-10002 trade push → tick. The trade's last price is the
+        mid; the real spread from the latest depth push is re-applied
+        around it (and the spread engine downstream re-spreads from the
+        mid anyway when an admin spread is configured). This is what
+        makes actively-traded symbols move several times a second
+        instead of once — depth gives truth about the spread, trades
+        give speed."""
+        raw_sym = data.get("s") or ""
+        symbol = self._platform_symbol(str(raw_sym))
+        if not symbol or symbol not in self._instruments:
+            return
+        try:
+            price = float(data.get("p"))
+        except (TypeError, ValueError):
+            return
+        if price <= 0:
+            return
+
+        info = self._instruments[symbol]
+        decimals = int(info["decimals"])
+        half = self._last_half.get(symbol, 0.0)
+        bid_r = round(price - half, decimals)
+        ask_r = round(price + half, decimals)
+        if ask_r < bid_r:
+            ask_r = bid_r
+
+        ts_ms = data.get("t")
+        if isinstance(ts_ms, (int, float)) and ts_ms > 0:
+            sec = int(ts_ms // 1000)
+            ms = int(ts_ms % 1000)
+            dt = datetime.fromtimestamp(sec, tz=timezone.utc)
+            timestamp = dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{ms:03d}Z"
+        else:
+            ts = datetime.now(timezone.utc)
+            timestamp = ts.strftime("%Y-%m-%dT%H:%M:%S.") + f"{ts.microsecond // 1000:03d}Z"
+
+        try:
+            volume = int(float(data.get("v") or 0))
+        except (TypeError, ValueError):
+            volume = 0
+
+        self._enqueue({
+            "symbol": symbol,
+            "bid": bid_r,
+            "ask": ask_r,
+            "timestamp": timestamp,
+            "volume": max(volume, 1),
+        })
 
     async def _data_watchdog(self, ws, business: str) -> None:
         """Force-close the socket if no real data frame arrives for
@@ -297,6 +373,19 @@ class InfowayFeed:
                         business,
                         len(set(codes)),
                     )
+                    # Trade stream (code 10000 → 10002 pushes): several
+                    # updates/sec on active instruments vs depth's ~1/s.
+                    from packages.common.src.config import get_settings as _gs
+                    if getattr(_gs(), "INFOWAY_TRADE_STREAM_ENABLED", True):
+                        await ws.send(json.dumps({
+                            "code": 10000,
+                            "trace": _trace(),
+                            "data": {"codes": codes_str},
+                        }))
+                        logger.info(
+                            "Infoway [%s] subscribed trades for %d codes",
+                            business, len(set(codes)),
+                        )
                     # Healthy subscribe — reset the backoff counter so the
                     # next failure starts at 2s, not wherever we ended up.
                     reconnect_attempts = 0
@@ -316,10 +405,13 @@ class InfowayFeed:
                             continue
                         code = msg.get("code")
                         if code == 10005:
-                            # Real data frame — this, and ONLY this, resets the
-                            # data-silence watchdog.
+                            # Real data frame — resets the data-silence watchdog.
                             self._last_data_mono[business] = time.monotonic()
                             self._emit_depth(msg.get("data") or {})
+                        elif code == 10002:
+                            # Trade push — also proof the subscription is alive.
+                            self._last_data_mono[business] = time.monotonic()
+                            self._emit_trade(msg.get("data") or {})
                         elif code in (10004, 10001):
                             logger.debug("Infoway [%s] ack: %s", business, msg.get("msg"))
                         elif code and code >= 400:
@@ -333,6 +425,21 @@ class InfowayFeed:
             except Exception as exc:
                 reconnect_attempts += 1
                 delay = min(60.0, 2.0 ** min(reconnect_attempts, 6))
+                # A 429 is the upstream telling us we are connecting too
+                # often. Retrying it on the ordinary 2s/4s/8s ladder is the
+                # one response guaranteed to keep the door shut — the feed
+                # was rate-limited out for five minutes on 2026-09-10, during
+                # which every forex/metal/index order was refused with "no
+                # live price" while crypto (a separate socket) traded fine.
+                # Back off hard instead, and let the caller know why.
+                if _is_rate_limited(exc):
+                    delay = max(delay, RATE_LIMIT_BACKOFF_SEC)
+                    self._rate_limited_until = time.monotonic() + delay
+                    logger.warning(
+                        "Infoway [%s] RATE LIMITED (429) — backing off %.0fs "
+                        "instead of retrying immediately",
+                        business, delay,
+                    )
                 if reconnect_attempts % 5 == 0:
                     logger.error(
                         "Infoway [%s] still down after %d attempts: %s",

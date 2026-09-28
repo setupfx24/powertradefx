@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 export const metadata = {
-  title: 'Business Dashboard — PowerTradeFX',
+  title: 'Business Dashboard — SwissCresta',
   description: 'IB partner stats, commissions, and referral analytics.',
 }
 

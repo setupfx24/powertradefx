@@ -1,10 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Check, Clock, X, Trophy } from 'lucide-react';
+import { Check, Clock, X, Trophy, Loader2 } from 'lucide-react';
 import api from '@/lib/api/client';
-import { cn } from '@/lib/utils';
-import { Badge, Card, CardHeader, Skeleton } from '@/components/ui';
 
 type Eligibility = {
   active_days: number;
@@ -46,34 +44,44 @@ export default function MasterEligibilityBanner() {
 
   if (loading) {
     return (
-      <Card padding="sm" className="flex items-center gap-3 text-xs text-text-secondary" aria-busy>
-        <Skeleton className="h-4 w-4 rounded-full" />
-        Checking your eligibility…
-      </Card>
+      <div className="rounded-xl border border-border-primary bg-bg-secondary p-4 flex items-center gap-2 text-xs text-text-secondary">
+        <Loader2 size={14} className="animate-spin" /> Checking your eligibility…
+      </div>
     );
   }
   if (!data) return null;
 
   const allPassed = data.all_passed;
   return (
-    <Card className={cn('animate-fade-in', allPassed ? 'border-success/40' : 'border-warning/40')}>
-      <CardHeader
-        className="mb-3"
-        title={
-          <span className="inline-flex items-center gap-2">
-            <Trophy size={16} className={allPassed ? 'text-success' : 'text-warning'} aria-hidden />
+    <div
+      className={
+        'rounded-xl p-4 border ' +
+        (allPassed
+          ? 'border-emerald-500/40 bg-emerald-500/5'
+          : 'border-[#E94E1B]/35 bg-[#E94E1B]/5')
+      }
+    >
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <Trophy size={16} className={allPassed ? 'text-emerald-400' : 'text-[#E94E1B]'} />
+          <h3 className="text-sm font-semibold text-text-primary">
             {allPassed ? 'You qualify as a Master Trader' : 'Master Trader eligibility'}
-          </span>
-        }
-        actions={
-          <Badge variant={allPassed ? 'success' : 'warning'} size="sm">
-            {allPassed ? <Check size={10} aria-hidden /> : <Clock size={10} aria-hidden />}
-            {allPassed ? 'Ready to apply' : 'Not yet'}
-          </Badge>
-        }
-      />
+          </h3>
+        </div>
+        <span
+          className={
+            'inline-flex items-center gap-1 text-[10.5px] uppercase tracking-wider px-2 py-0.5 rounded-full ' +
+            (allPassed
+              ? 'text-emerald-400 border border-emerald-400/40 bg-emerald-400/10'
+              : 'text-[#E94E1B] border border-[#E94E1B]/40 bg-[#E94E1B]/10')
+          }
+        >
+          {allPassed ? <Check size={10} /> : <Clock size={10} />}
+          {allPassed ? 'Ready to apply' : 'Not yet'}
+        </span>
+      </div>
 
-      <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
         <Criterion
           label="Active for 30+ days"
           ok={data.active_days_ok}
@@ -97,12 +105,12 @@ export default function MasterEligibilityBanner() {
       </div>
 
       {!allPassed && (
-        <p className="mt-3 text-xs leading-relaxed text-text-tertiary">
+        <p className="text-[11px] text-text-tertiary mt-3 leading-relaxed">
           Don&apos;t meet the criteria yet? You can still apply with a verified external track record (e.g.
           MyFxBook URL, audited statement). Admin will review.
         </p>
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -110,17 +118,16 @@ function Criterion({ label, ok, progress }: { label: string; ok: boolean; progre
   return (
     <div className="flex items-start gap-2 py-1">
       <span
-        className={cn(
-          'mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full',
-          ok ? 'bg-success/15 text-success' : 'border border-border-primary bg-bg-tertiary text-text-tertiary',
-        )}
-        aria-hidden
+        className={
+          'mt-0.5 w-4 h-4 rounded-full flex items-center justify-center shrink-0 ' +
+          (ok ? 'bg-emerald-500/20 text-emerald-400' : 'bg-bg-base text-text-tertiary border border-border-primary')
+        }
       >
         {ok ? <Check size={10} /> : <X size={10} />}
       </span>
       <div className="min-w-0">
-        <p className={cn('font-medium', ok ? 'text-text-primary' : 'text-text-secondary')}>{label}</p>
-        <p className="font-mono text-xxs tabular-nums text-text-tertiary">{progress}</p>
+        <p className={'font-medium ' + (ok ? 'text-text-primary' : 'text-text-secondary')}>{label}</p>
+        <p className="text-[10.5px] text-text-tertiary tabular-nums">{progress}</p>
       </div>
     </div>
   );

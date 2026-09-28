@@ -18,7 +18,30 @@
  * trader-app fonts get migrated to next/font, drop the CDN line and
  * everything else still works.
  */
-import { Space_Grotesk, Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google';
+import { Space_Grotesk, Plus_Jakarta_Sans, JetBrains_Mono, Onest, Poppins, Instrument_Serif } from 'next/font/google';
+
+// Crextio dashboard theme font — Poppins, the soft geometric sans of
+// the Nixtio/Crextio reference. Bound to `font-crextio` in
+// tailwind.config.ts; applied on the DashboardShell wrapper.
+export const fontCrextio = Poppins({
+  subsets: ['latin'],
+  weight: ['300', '400', '500', '600'],
+  style: ['normal'],
+  variable: '--font-crextio',
+  display: 'swap',
+});
+
+// Textura landing theme font — Onest, ported from the
+// next16-claude-starter design system (obsidian/frontend/design-system.md).
+// Bound to `font-onest` in tailwind.config.ts; applied on the
+// (landing) route group wrapper.
+export const fontOnest = Onest({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  style: ['normal'],
+  variable: '--font-onest',
+  display: 'swap',
+});
 
 // Marketing-display font — Space Grotesk. Modern geometric sans
 // with subtle character, used for H1/H2/H3 marketing headlines.
@@ -28,10 +51,6 @@ export const fontDisplay = Space_Grotesk({
   style: ['normal'],
   variable: '--font-display',
   display: 'swap',
-  // Marketing headlines only. Preloading it on every app page produced the
-  // DevTools "preloaded but not used" warning on the terminal; the
-  // @font-face still loads on demand where it is used.
-  preload: false,
 });
 
 // Body font — Plus Jakarta Sans. Clean, highly legible humanist
@@ -63,9 +82,16 @@ export const fontNumeric = Space_Grotesk({
   style: ['normal'],
   variable: '--font-numeric',
   display: 'swap',
-  // The terminal maps numerals to JetBrains Mono, so this face is unused
-  // there; load on demand instead of preloading on every page.
-  preload: false,
+});
+
+// Editorial italic serif for the AI builder hero ("How can I help you
+// build today?") — the Mindora-style headline. Bound to `font-editorial`.
+export const fontEditorial = Instrument_Serif({
+  subsets: ['latin'],
+  weight: ['400'],
+  style: ['normal', 'italic'],
+  variable: '--font-editorial',
+  display: 'swap',
 });
 
 /** Joined `className` to drop straight onto <html>. */
@@ -74,4 +100,7 @@ export const fontVariableClass = [
   fontBody.variable,
   fontMono.variable,
   fontNumeric.variable,
+  fontOnest.variable,
+  fontCrextio.variable,
+  fontEditorial.variable,
 ].join(' ');

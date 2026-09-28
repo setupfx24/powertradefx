@@ -23,6 +23,7 @@ from packages.common.src.models import (
     MasterAccount, TradingAccount, TradeHistory, InvestorAllocation, Transaction,
 )
 from packages.common.src.admin_fees import credit_admin_fee
+from packages.common.src.row_locks import lock_account
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("stats-engine")
@@ -105,17 +106,67 @@ class StatsEngine:
         if not trades:
             return
 
-        # --- total_return_pct ---
+        # --- total_return_pct (REAL, flow-adjusted) ---
+        # The old estimate (starting equity = balance − cumulative profit)
+        # was distorted by every deposit/withdrawal: a withdrawal shrank
+        # the capital base and INFLATED the shown ROI — exactly the number
+        # investors use to pick a master, so it must not be gameable.
+        #
+        #   * PAMM masters → NAV method. Units are issued/redeemed at NAV
+        #     (NAV starts at 1.0), so (NAV − 1) × 100 is the exact return
+        #     an invested dollar has experienced, immune to money flowing
+        #     in or out of the pool. The gold-standard fund metric.
+        #   * Signal/copy masters → realized P&L ÷ GROSS capital
+        #     contributed (sum of positive deposit/transfer/adjustment
+        #     rows on the account). Gross, not net: withdrawing profits
+        #     can never shrink the denominator and pump the percentage.
+        #   * No funding rows (legacy account) → fall back to the old
+        #     estimate rather than showing 0 for a genuinely profitable
+        #     master.
         initial_balance = float(account.balance or 0)
         total_profit = sum(float(t.profit or 0) for t in trades)
-        # Estimate starting equity: current balance minus cumulative profit
+
+        # Equity at the start of the trade series: the balance today less
+        # every realised profit inside it. Bound HERE, unconditionally,
+        # because the drawdown curve below needs it on every path — it used
+        # to be assigned only inside the legacy ROI fallback, so any master
+        # priced by the NAV or gross-funding method reached the curve with
+        # the name unbound and the whole recalc raised, leaving that
+        # master's drawdown and Sharpe frozen.
         starting_equity = initial_balance - total_profit
-        if starting_equity > 0:
-            total_return_pct = (total_profit / starting_equity) * 100
-        elif total_profit > 0:
-            total_return_pct = 100.0
-        else:
-            total_return_pct = 0.0
+
+        total_return_pct: float | None = None
+        if (master.master_type or "").lower() == "pamm":
+            units_q = await db.execute(
+                select(func.coalesce(func.sum(InvestorAllocation.units), 0)).where(
+                    InvestorAllocation.master_id == master.id,
+                    InvestorAllocation.status == "active",
+                )
+            )
+            total_units = float(units_q.scalar() or 0)
+            if total_units > 0 and initial_balance > 0:
+                nav = initial_balance / total_units
+                total_return_pct = (nav - 1.0) * 100.0
+
+        if total_return_pct is None:
+            funding_q = await db.execute(
+                select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                    Transaction.account_id == master.account_id,
+                    Transaction.type.in_(("deposit", "transfer", "adjustment")),
+                    Transaction.amount > 0,
+                )
+            )
+            gross_in = float(funding_q.scalar() or 0)
+            if gross_in > 0:
+                total_return_pct = (total_profit / gross_in) * 100
+            else:
+                # Legacy fallback: the old balance-based estimate.
+                if starting_equity > 0:
+                    total_return_pct = (total_profit / starting_equity) * 100
+                elif total_profit > 0:
+                    total_return_pct = 100.0
+                else:
+                    total_return_pct = 0.0
 
         # --- max_drawdown_pct ---
         equity_curve = []
@@ -180,7 +231,9 @@ class StatsEngine:
             if daily_rate <= 0:
                 continue
 
-            master_account = await db.get(TradingAccount, master.account_id)
+            # C-TRADE-4 (Medium): lock the master pool row before crediting the
+            # management-fee share (held for the whole allocations loop below).
+            master_account = await lock_account(db, master.account_id)
             if not master_account:
                 continue
 
@@ -197,7 +250,10 @@ class StatsEngine:
                 if fee <= 0:
                     continue
 
-                investor_account = await db.get(TradingAccount, alloc.investor_account_id)
+                # C-TRADE-4 (Medium): lock the investor account, then re-check
+                # balance >= fee under the lock before debiting, so the mgmt-fee
+                # debit can't race a concurrent close / transfer / withdrawal.
+                investor_account = await lock_account(db, alloc.investor_account_id)
                 if not investor_account or (investor_account.balance or Decimal("0")) < fee:
                     logger.info(
                         "Skip mgmt fee: insufficient balance investor=%s fee=%s",

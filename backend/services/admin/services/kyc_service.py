@@ -8,19 +8,14 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.common.src.config import get_settings
 from packages.common.src.models import User, KYCDocument
 from packages.common.src.notify import create_notification
+from packages.common.src.email_branding import apply_email_brand
 from dependencies import write_audit_log
 
 
 async def get_kyc_file(document_id: uuid.UUID, db: AsyncSession) -> FileResponse:
-    """Stream a KYC document for admin review (no user-ownership check).
-
-    Same defense-in-depth as the gateway's get_kyc_file: the stored path must
-    resolve under KYC_UPLOAD_ROOT/{user_id}/, so a tampered file_url row can
-    never make the admin API stream an arbitrary server file.
-    """
+    """Stream a KYC document for admin review (no user-ownership check)."""
     result = await db.execute(
         select(KYCDocument).where(KYCDocument.id == document_id)
     )
@@ -28,32 +23,22 @@ async def get_kyc_file(document_id: uuid.UUID, db: AsyncSession) -> FileResponse
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    root_raw = (get_settings().KYC_UPLOAD_ROOT or "").strip() or "uploads/kyc"
-    root = Path(root_raw)
-    if not root.is_absolute():
-        root = Path.cwd() / root
-    user_base = (root / str(doc.user_id)).resolve()
-
     file_path = Path(doc.file_url)
-    if not file_path.is_absolute():
-        file_path = Path.cwd() / file_path
-    file_path = file_path.resolve()
-    try:
-        file_path.relative_to(user_base)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Document not found")
-
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found on server")
 
     return FileResponse(str(file_path), filename=file_path.name)
 
 
-async def list_kyc_pending(page: int, per_page: int, db: AsyncSession) -> dict:
+async def list_kyc_pending(page: int, per_page: int, db: AsyncSession,
+                user_ids: list | None = None) -> dict:
     query = select(User).where(
         User.kyc_status == "submitted",
         User.role.notin_(["admin", "super_admin"]),
     )
+    # White-label pool scoping (broker actors); None = unscoped.
+    if user_ids is not None:
+        query = query.where(User.id.in_(user_ids))
     count_q = select(func.count()).select_from(query.subquery())
     total = (await db.execute(count_q)).scalar() or 0
 
@@ -93,11 +78,15 @@ async def list_kyc_pending(page: int, per_page: int, db: AsyncSession) -> dict:
     return {"items": items, "total": total, "page": page, "per_page": per_page}
 
 
-async def list_kyc_approved(page: int, per_page: int, db: AsyncSession) -> dict:
+async def list_kyc_approved(page: int, per_page: int, db: AsyncSession,
+                user_ids: list | None = None) -> dict:
     query = select(User).where(
         User.kyc_status == "approved",
         User.role.notin_(["admin", "super_admin"]),
     )
+    # White-label pool scoping (broker actors); None = unscoped.
+    if user_ids is not None:
+        query = query.where(User.id.in_(user_ids))
     count_q = select(func.count()).select_from(query.subquery())
     total = (await db.execute(count_q)).scalar() or 0
 
@@ -139,11 +128,15 @@ async def list_kyc_approved(page: int, per_page: int, db: AsyncSession) -> dict:
     return {"items": items, "total": total, "page": page, "per_page": per_page}
 
 
-async def list_kyc_rejected(page: int, per_page: int, db: AsyncSession) -> dict:
+async def list_kyc_rejected(page: int, per_page: int, db: AsyncSession,
+                user_ids: list | None = None) -> dict:
     query = select(User).where(
         User.kyc_status == "rejected",
         User.role.notin_(["admin", "super_admin"]),
     )
+    # White-label pool scoping (broker actors); None = unscoped.
+    if user_ids is not None:
+        query = query.where(User.id.in_(user_ids))
     count_q = select(func.count()).select_from(query.subquery())
     total = (await db.execute(count_q)).scalar() or 0
 
@@ -229,9 +222,10 @@ async def approve_kyc(
         from packages.common.src.config import get_settings
         if smtp_configured() and user.email:
             settings = get_settings()
+            await apply_email_brand(db, user)
             subject, html, text = render_kyc_approved(
                 first_name=user.first_name,
-                trader_app_url=getattr(settings, "TRADER_APP_URL", "https://trade.powertradefx.com"),
+                trader_app_url=getattr(settings, "TRADER_APP_URL", "https://trade.swisscresta.com"),
             )
             fire_and_forget(send_email(user.email, subject, html, text=text))
     except Exception:
@@ -291,10 +285,11 @@ async def reject_kyc(
         from packages.common.src.config import get_settings
         if smtp_configured() and user.email:
             settings = get_settings()
+            await apply_email_brand(db, user)
             subject, html, text = render_kyc_rejected(
                 first_name=user.first_name,
                 reason=reason_str or None,
-                trader_app_url=getattr(settings, "TRADER_APP_URL", "https://trade.powertradefx.com"),
+                trader_app_url=getattr(settings, "TRADER_APP_URL", "https://trade.swisscresta.com"),
             )
             fire_and_forget(send_email(user.email, subject, html, text=text))
     except Exception:

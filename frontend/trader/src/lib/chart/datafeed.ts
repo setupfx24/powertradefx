@@ -1,5 +1,5 @@
 /**
- * TradingView Charting Library datafeed for PowerTradeFX.
+ * TradingView Charting Library datafeed for SwissCresta.
  *
  * History  → GET /api/v1/instruments/{symbol}/bars?resolution=&from=&to=
  *            (returns [{ time (epoch SECONDS), open, high, low, close, volume }])
@@ -162,7 +162,7 @@ export function createDatafeed(opts: {
         supports_time: true,
         supports_marks: false,
         supports_timescale_marks: false,
-        exchanges: [{ value: 'PowerTradeFX', name: 'PowerTradeFX', desc: 'PowerTradeFX' }],
+        exchanges: [{ value: 'SwissCresta', name: 'SwissCresta', desc: 'SwissCresta' }],
         symbols_types: [{ name: 'All', value: '' }],
       }), 0);
     },
@@ -176,7 +176,7 @@ export function createDatafeed(opts: {
           symbol: i.symbol,
           full_name: i.symbol,
           description: i.symbol,
-          exchange: 'PowerTradeFX',
+          exchange: 'SwissCresta',
           ticker: i.symbol,
           type: i.segment || 'forex',
         }));
@@ -195,8 +195,8 @@ export function createDatafeed(opts: {
         type: inst?.segment || 'forex',
         session: '24x7',
         timezone: 'Etc/UTC',
-        exchange: 'PowerTradeFX',
-        listed_exchange: 'PowerTradeFX',
+        exchange: 'SwissCresta',
+        listed_exchange: 'SwissCresta',
         format: 'price',
         minmov: 1,
         pricescale,
@@ -330,4 +330,4 @@ export function createDatafeed(opts: {
   };
 }
 
-export type PowerTradeFXDatafeed = ReturnType<typeof createDatafeed>;
+export type SwissCrestaDatafeed = ReturnType<typeof createDatafeed>;

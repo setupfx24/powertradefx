@@ -1,0 +1,153 @@
+/* ============================================================
+   Marketing site — design tokens + base typography
+   ============================================================
+
+   All tokens scoped under `[data-mkt]` so the trader-app's existing
+   dark theme (defined under `[data-theme="dark"]` in globals.css)
+   keeps working unchanged. The marketing wrapper in
+   `src/app/(landing)/layout.tsx` carries `data-mkt="true"`; everything
+   inside resolves to the warm-canvas / navy palette below.
+
+   Token names follow the design-system brief verbatim
+   (`--bg-canvas`, `--ink-primary`, `--accent`, etc.) but are
+   namespaced `--mkt-*` to avoid colliding with the trader app's
+   `--text-primary` / `--accent` (indigo). Tailwind utility names
+   pick them up via `extend.colors.mkt.*` in tailwind.config.ts —
+   e.g. `bg-mkt-canvas`, `text-mkt-ink-primary`, `border-mkt-line`.
+
+   Hairline philosophy: 1px var(--mkt-line) borders everywhere; no
+   shadows except the one sticky-nav stroke below. Sharp corners
+   (radius 0–4px). All deviations from this should be loud.
+   ============================================================ */
+
+[data-mkt] {
+  /* ── Surfaces ───────────────────────────────────────────── */
+  --mkt-bg-canvas:    #FFFFFF;   /* pure white — primary page bg */
+  --mkt-bg-surface:   #FFFFFF;   /* white — cards / elevated panels */
+  --mkt-bg-deep:      #0A0A0A;   /* dark band — utility bar, ticker, dark sections */
+  --mkt-bg-deep-2:    #1A1A1A;   /* elevated dark */
+
+  /* ── Ink ────────────────────────────────────────────────── */
+  --mkt-ink-primary:    #0A0A0A;
+  --mkt-ink-secondary:  #5B5B5B;
+  --mkt-ink-tertiary:   #9A9A9A;
+  --mkt-ink-inverse:    #FFFFFF;   /* light text on dark surfaces */
+
+  /* ── Lines ──────────────────────────────────────────────── */
+  --mkt-line:        #E5E5E5;   /* gray hairlines on canvas */
+  --mkt-line-dark:   #2A2A2A;   /* hairlines on deep */
+
+  /* ── Accent + signal ────────────────────────────────────── */
+  --mkt-accent:      #E94E1B;   /* Vantage orange — primary accent */
+  --mkt-positive:    #10B981;   /* up-moves on quote tables */
+  --mkt-negative:    #DC2626;   /* down-moves on quote tables */
+
+  /* ── One allowed elevation: sticky nav stroke ───────────── */
+  --mkt-nav-shadow:  0 1px 0 rgba(10, 10, 10, 0.06);
+
+  /* ── Base typography binding ────────────────────────────── */
+  background-color: var(--mkt-bg-canvas);
+  color: var(--mkt-ink-primary);
+  font-family: var(--font-body), system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-feature-settings: 'ss01', 'cv11';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Display family applies to native heading elements + `.display`
+   utility class. Section components that override should still use
+   `font-display` Tailwind utility for explicit intent. */
+[data-mkt] :where(h1, h2, h3, .display, [data-display]) {
+  font-family: var(--font-display), Georgia, 'Times New Roman', serif;
+  font-weight: 400;
+  letter-spacing: -0.025em;
+  line-height: 1.05;
+  color: var(--mkt-ink-primary);
+}
+
+[data-mkt] :where(h1) {
+  font-size: clamp(40px, 5.5vw, 72px);
+  font-weight: 400;
+  letter-spacing: -0.03em;
+  line-height: 1.02;
+}
+
+[data-mkt] :where(h2) {
+  font-size: clamp(32px, 4.2vw, 52px);
+  letter-spacing: -0.025em;
+}
+
+[data-mkt] :where(h3) {
+  font-size: clamp(22px, 2.2vw, 28px);
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+}
+
+[data-mkt] :where(p, li) {
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+[data-mkt] :where(.body-lg) {
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+/* Caption pattern — used by Eyebrow component + every "MARKET
+   ANALYSIS · 7 MIN READ" style strip. */
+[data-mkt] :where(.caption, [data-caption]) {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mkt-ink-tertiary);
+  font-weight: 500;
+}
+
+/* Mono — applied via Tailwind `font-mono` utility but also when a
+   parent sets `data-mono` for tabular data blocks. */
+[data-mkt] :where([data-mono], .mono, code, kbd) {
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Focus ring ─────────────────────────────────────────────
+   2px solid accent gold, offset 2px — per brief. Visible on every
+   keyboard-accessible element. Mouse users don't see it (because
+   :focus-visible is keyboard-only). */
+[data-mkt] :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--mkt-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ── Selection ──────────────────────────────────────────────
+   Selecting text shows the accent in a low-opacity wash on the
+   ink-primary text. Subtle but cohesive with the palette. */
+[data-mkt] ::selection {
+  background-color: rgba(233, 78, 27, 0.18);
+  color: var(--mkt-ink-primary);
+}
+
+/* ── Reduced motion ────────────────────────────────────────
+   Per brief: ticker pauses, framer-motion fades disabled. The
+   ticker's CSS animation respects this here; framer's reducedMotion
+   is configured per-component via `<MotionConfig reducedMotion="user">`. */
+@media (prefers-reduced-motion: reduce) {
+  [data-mkt] [data-marquee] {
+    animation: none !important;
+  }
+}
+
+/* ── Smooth scroll for in-page nav links ───────────────────
+   Only inside the marketing scope so the trader app's scroll
+   behaviour stays untouched. */
+[data-mkt] {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-mkt] {
+    scroll-behavior: auto;
+  }
+}

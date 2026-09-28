@@ -8,7 +8,7 @@ acknowledge them.
 import uuid
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.database import get_db
@@ -39,12 +39,12 @@ async def list_notifications(
     # Count of unread is cheap and useful to keep the badge correct even
     # when `unread=false` is passed for the dropdown listing.
     unread_q = await db.execute(
-        select(func.count(Notification.id)).where(
+        select(Notification.id).where(
             Notification.user_id == admin.id,
             Notification.is_read.is_(False),
         )
     )
-    unread_count = int(unread_q.scalar() or 0)
+    unread_count = len(unread_q.all())
 
     return {
         "items": [

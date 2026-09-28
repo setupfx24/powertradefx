@@ -3,7 +3,8 @@ import asyncio
 import json as _json
 import logging
 import time as _time
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request, HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.database import get_db, AsyncSessionLocal
@@ -11,6 +12,9 @@ from packages.common.src.redis_client import redis_client
 from packages.common.src.schemas import InstrumentResponse, TickData
 from packages.common.src.instrumentation import get_rate_limiter
 from packages.common.src.config import get_settings
+from packages.common.src.auth import get_current_user
+from packages.common.src.rate_limit import rate_limit_http
+from packages.common.src.models import Instrument
 from packages.common.src import bars_store, infoway_history
 from ..services import instrument_service
 
@@ -29,6 +33,13 @@ _TV_RESOLUTION_TO_BINANCE: dict[str, str] = {
     "1": "1m", "5": "5m", "15": "15m", "30": "30m",
     "60": "1h", "240": "4h", "D": "1d", "1D": "1d",
 }
+
+# Bar-window budget. DEFAULT_BARS is what a caller gets when it doesn't ask
+# for a specific count — comfortably more than any screen renders at once,
+# while a fraction of the old unconditional 5000-row (~445 KB) response.
+# Panning further back just issues another request with an older `to`.
+DEFAULT_BARS = 1000
+MAX_BARS = 5000
 
 # Platform symbol → Binance REST pair (crypto only)
 _BINANCE_PAIRS: dict[str, str] = {
@@ -223,10 +234,19 @@ def _schedule_bg_backfill(sym: str, tf: str, resolution: str) -> None:
 @_limiter.exempt
 async def get_bars(
     symbol: str,
+    request: Request,
     resolution: str = Query(default="5"),
     from_time: int = Query(default=0, alias="from"),
     to_time: int = Query(default=0, alias="to"),
     live: int = Query(default=0),
+    current_user: dict = Depends(get_current_user),
+    # How many bars the caller actually wants. The response used to be a
+    # hard-coded 5000 rows (~445 KB) for EVERY chart open regardless of the
+    # request — the mobile chart's `limit` was silently ignored, which is
+    # most of its load time on mobile data. `countback` is the TradingView
+    # UDF spelling; `limit` is what our own clients send.
+    countback: int = Query(default=0, ge=0, le=MAX_BARS),
+    limit: int = Query(default=0, ge=0, le=MAX_BARS),
     db: AsyncSession = Depends(get_db),
 ):
     """OHLCV bars for the charting library, served from the durable `ohlc_bars`
@@ -243,6 +263,19 @@ async def get_bars(
     """
     tf = _TV_RESOLUTION_TO_TF.get(resolution, "5m")
     sym = symbol.upper()
+
+    # H-TRADE-7: this endpoint can trigger outbound provider calls (Infoway /
+    # Binance) for the requested symbol, so it must be authenticated, per-user
+    # rate-limited, and the symbol validated against our instrument table before
+    # any external fetch — otherwise it was an unauthenticated SSRF-ish amplifier
+    # for arbitrary symbols.
+    rate_limit_http(request, f"instrument-bars:{current_user['user_id']}", 120, 60.0)
+    exists = (await db.execute(
+        select(Instrument.id).where(Instrument.symbol == sym).limit(1)
+    )).first()
+    if not exists:
+        raise HTTPException(status_code=404, detail="Unknown instrument")
+
     bar_sec = bars_store.TF_SECONDS.get(tf, 300)
     now_epoch = int(_time.time())
 
@@ -331,7 +364,11 @@ async def get_bars(
     #    (e.g. gold on a Saturday); flooring on `from` would return nothing and
     #    blank the chart. Returning the latest bars ≤ `to` keeps history visible,
     #    and `to` is what the library moves when the user pans back.
-    bars = await bars_store.read_bars(db, sym, tf, None, to_time or None, limit=5000)
+    # Newest-first slice: read_bars takes the most recent `limit` rows in the
+    # window and returns them ascending, so a smaller budget trims OLD bars
+    # and always keeps the live edge the user is looking at.
+    bar_budget = countback or limit or DEFAULT_BARS
+    bars = await bars_store.read_bars(db, sym, tf, None, to_time or None, limit=bar_budget)
 
     # Append the current in-progress bar so the last candle stays live.
     current_raw = await redis_client.get(f"bar:current:{sym}:{tf}")

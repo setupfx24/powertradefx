@@ -72,7 +72,12 @@ class IBCommission(Base):
     commission_type = Column(String(30))
     amount = Column(Numeric(18, 8), nullable=False)
     mlm_level = Column(Integer, default=1)
+    # pending → an admin has not released it yet (the engine only ever writes
+    # this) | paid → released and credited | rejected → voided, never credited.
     status = Column(String(20), default="pending")
+    # Stamped when an admin releases the payout, not when the commission was
+    # earned. NULL on rows that predate the approval flow (alembic 0065).
+    paid_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
@@ -134,6 +139,11 @@ class InvestorAllocation(Base):
     max_lot_override = Column(Numeric(10, 4))
     status = Column(String(20), default="active")
     total_profit = Column(Numeric(18, 8), default=0)
+    # High-water mark state for performance fees (alembic 0064). Fees are
+    # charged only on gross profit that lifts the follower above their
+    # previous peak — see packages/common/src/copy_fees.py.
+    gross_pnl_cum = Column(Numeric(18, 8), nullable=False, default=0, server_default="0")
+    hwm_profit = Column(Numeric(18, 8), nullable=False, default=0, server_default="0")
     last_distribution_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 

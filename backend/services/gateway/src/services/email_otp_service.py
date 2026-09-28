@@ -3,7 +3,7 @@
 Used for two flows:
 
   1. Wallet-first signup: user signed in via SIWE with a placeholder email
-     (`wallet_<addr>@wallet.powertradefx.local`). They land on the onboarding gate,
+     (`wallet_<addr>@wallet.swisscresta.local`). They land on the onboarding gate,
      enter their real email, get a 6-digit OTP via SMTP, and verify.
 
   2. Change email: any user (password / Google / wallet) can request a new
@@ -36,6 +36,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.models import EmailOtpCode, User, UserAuditLog
+from packages.common.src.email_branding import apply_email_brand
 
 logger = logging.getLogger("email_otp")
 
@@ -43,7 +44,7 @@ OTP_TTL_MINUTES = 10
 OTP_MAX_ATTEMPTS = 5
 SEND_COOLDOWN_SECONDS = 60        # min seconds between two sends to the same user
 SEND_HOURLY_CAP = 3               # max sends per user per rolling hour
-WALLET_PLACEHOLDER_DOMAIN = "wallet.powertradefx.local"
+WALLET_PLACEHOLDER_DOMAIN = "wallet.swisscresta.local"
 
 _EMAIL_RE_HINT = "user@example.com"
 
@@ -192,6 +193,7 @@ async def start_verification(
         raise HTTPException(status_code=503, detail="Email service unavailable. Try again shortly.")
 
     from packages.common.src.email_templates import render_email_otp
+    await apply_email_brand(db, user)
     subject, html, text = render_email_otp(
         first_name=user.first_name,
         code=code,

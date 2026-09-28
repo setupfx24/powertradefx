@@ -11,6 +11,7 @@ import {
   UserCog, ChevronDown, ChevronRight, Network, Share2,
   DollarSign, Percent, ArrowLeftRight, PanelLeftClose, PanelLeft,
   Receipt, Layers, ShieldCheck, ScrollText, BookOpen, X,
+  Building2, Palette,
 } from 'lucide-react';
 
 interface NavItem {
@@ -25,7 +26,6 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { label: 'Users', href: '/users', icon: Users, perm: 'users.view' },
-  { label: 'Fund Approvals', href: '/fund-approvals', icon: ShieldCheck, perm: 'users.view' },
   {
     label: 'Identity verification',
     href: '/kyc',
@@ -33,7 +33,7 @@ const NAV_ITEMS: NavItem[] = [
     perm: 'kyc.view',
   },
   { label: 'Trades', href: '/trades', icon: CandlestickChart, perm: 'trades.view' },
-  { label: 'Book Management', href: '/book', icon: BookOpen, perm: 'trades.view' },
+  { label: 'Book Management', href: '/book', icon: BookOpen, perm: '_platform:trades.view' },
   { label: 'Deposits', href: '/deposits', icon: Wallet, perm: 'deposits.view' },
   { label: 'Transactions', href: '/transactions', icon: Receipt, perm: 'deposits.view' },
   { label: 'Banks', href: '/banks', icon: Landmark, perm: 'banks.view' },
@@ -64,6 +64,8 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Bonus', href: '/bonus', icon: Gift, perm: 'bonus.view' },
   { label: 'Banners', href: '/banners', icon: Image, perm: 'banners.view' },
   { label: 'Support', href: '/support', icon: HeadphonesIcon, perm: 'tickets.view' },
+  { label: 'Brokers', href: '/brokers', icon: Building2, perm: 'sub_brokers.view' },
+  { label: 'Branding', href: '/branding', icon: Palette, perm: '_broker' },
   { label: 'Employees', href: '/employees', icon: UserCog, perm: '_super_admin' },
   { label: 'Settings', href: '/settings', icon: Settings, perm: '_super_admin' },
 ];
@@ -79,11 +81,11 @@ export default function AdminSidebar({
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<string[]>(['Config', 'Business']);
-  // Start with NO permissions so a restricted employee never sees the full
-  // nav flash (or keep it permanently if /auth/me fails). AdminLayout gates
-  // the pages themselves; this only controls nav visibility.
-  const [permissions, setPermissions] = useState<string[]>([]);
-  const [employeeRole, setEmployeeRole] = useState<string>('');
+  const [permissions, setPermissions] = useState<string[]>(['*']);
+  const [employeeRole, setEmployeeRole] = useState<string>('super_admin');
+  // White-label broker logins show THEIR brand in the sidebar header.
+  const [brandName, setBrandName] = useState<string>('');
+  const [brandLogo, setBrandLogo] = useState<string | null>(null);
 
   // Track viewport so the desktop "collapse" state never hides labels in the
   // mobile drawer (the drawer is always full-width on phones).
@@ -107,15 +109,41 @@ export default function AdminSidebar({
   useEffect(() => {
     (async () => {
       try {
-        const me = await adminApi.get<{ permissions: string[]; employee_role: string }>('/auth/me');
+        const me = await adminApi.get<{ permissions: string[]; employee_role: string; brand_name?: string | null; logo_url?: string | null; role?: string }>('/auth/me');
         setPermissions(me.permissions || []);
         setEmployeeRole(me.employee_role || '');
+        if (me.role === 'broker') {
+          const bn = (me.brand_name || '').trim() || 'Broker Panel';
+          setBrandName(bn);
+          setBrandLogo(me.logo_url || null);
+          // Tab identity follows the tenant everywhere in the panel.
+          document.title = `${bn} Admin`;
+          if (me.logo_url) {
+            const icon = document.querySelector('link[rel="icon"]') as HTMLLinkElement | null;
+            if (icon) icon.href = me.logo_url;
+            const link = document.createElement('link');
+            link.rel = 'icon';
+            link.href = me.logo_url;
+            link.setAttribute('data-wl-icon', '1');
+            document.head.appendChild(link);
+          }
+        }
       } catch {}
     })();
   }, []);
 
   const hasAccess = (perm?: string) => {
     if (!perm) return true;
+    // '_broker' marks broker-only surfaces (own Branding page) — checked
+    // before the '*' wildcard so a super admin doesn't see them.
+    if (perm === '_broker') return employeeRole === 'broker';
+    // '_platform:<perm>' — platform-only surfaces brokers never see,
+    // even when they hold the underlying permission (Book Management).
+    if (perm.startsWith('_platform:')) {
+      if (employeeRole === 'broker') return false;
+      const base = perm.slice('_platform:'.length);
+      return permissions.includes('*') || permissions.includes(base);
+    }
     if (permissions.includes('*')) return true;
     if (perm === '_super_admin') return employeeRole === 'super_admin';
     return permissions.includes(perm);
@@ -143,11 +171,29 @@ export default function AdminSidebar({
     )}>
       {/* Header */}
       <div className="flex items-center h-14 px-3 border-b border-border-primary/40">
-        {!showLabels ? (
-          <img src="/logo.png" alt="PowerTradeFX" className="w-7 h-7 object-contain mx-auto" />
+        {brandName ? (
+          showLabels ? (
+            <Link href="/" className="flex items-center min-w-0 gap-2">
+              {brandLogo ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={brandLogo} alt={brandName} className="h-7 w-auto max-w-[150px] object-contain shrink-0" />
+              ) : (
+                <span className="font-bold tracking-tight text-base text-text-primary truncate">{brandName}</span>
+              )}
+            </Link>
+          ) : brandLogo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={brandLogo} alt={brandName} className="w-7 h-7 object-contain rounded-md mx-auto" />
+          ) : (
+            <span className="font-bold text-base text-text-primary mx-auto select-none">
+              {brandName.slice(0, 2).toUpperCase()}
+            </span>
+          )
+        ) : !showLabels ? (
+          <img src="/logo.png" alt="SwissCresta" className="w-7 h-7 object-contain mx-auto" />
         ) : (
           <Link href="/" className="flex items-center min-w-0">
-            <img src="/powertradefx-logo.png" alt="PowerTradeFX" className="h-7 w-auto object-contain shrink-0" />
+            <img src="/swisscresta-logo.png" alt="SwissCresta" className="h-7 w-auto object-contain shrink-0" />
           </Link>
         )}
         {/* Desktop collapse toggle */}

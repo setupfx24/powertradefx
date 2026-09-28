@@ -7,7 +7,6 @@ from packages.common.src.database import get_db
 from dependencies import require_permission
 from packages.common.src.models import User
 from packages.common.src.admin_schemas import BonusOfferIn
-from packages.common.src.rate_limit import client_ip_for_inet
 from services import bonus_service
 
 router = APIRouter(prefix="/bonus", tags=["Bonus"])
@@ -30,7 +29,7 @@ async def create_bonus_offer(
 ):
     return await bonus_service.create_bonus_offer(
         body=body, admin_id=admin.id,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
 
 
@@ -44,7 +43,7 @@ async def update_bonus_offer(
 ):
     return await bonus_service.update_bonus_offer(
         offer_id=offer_id, body=body, admin_id=admin.id,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
 
 

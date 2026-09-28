@@ -1,128 +1,207 @@
-import { FileText } from 'lucide-react'
+import Link from 'next/link';
+import { Section, PageHero, CtaBanner } from '@/marketing/components';
+import {
+  LegalDoc, LegalSection, LegalClause, LegalP, LegalCallout, legalAnchor,
+} from '../_legal/LegalDoc';
+import { BRAND_NAME, BRAND_SUPPORT_EMAIL } from '@/lib/brand';
 
-export const metadata = { title: 'Terms and Conditions — PowerTradeFX' }
+/**
+ * Terms & Conditions — public legal page.
+ *
+ * Section copy is preserved verbatim from the client-supplied PDF
+ * "terms and condition.pdf" (delivered 2026-06-09). The 14-section
+ * structure + numbered clauses match the PDF; only the visual chrome
+ * follows the shared marketing design system. No clause has been
+ * reworded, reordered, merged or dropped.
+ */
+
+/* Official PDF links live in the footer "Legal documents" row now —
+   the on-page PDF grid was removed per client request. */
+
+/**
+ * 14 numbered sections preserving the client-PDF wording verbatim.
+ * Each clause is rendered as `[number] body…` so the on-screen layout
+ * mirrors a typical legal contract.
+ */
+const SECTIONS: { h: string; clauses: { n: string; body: string }[] }[] = [
+  {
+    h: '1. Acceptance of Terms',
+    clauses: [
+      { n: '1.1', body: `By accessing or using this website, or any software, platforms, tools, documentation, or services made available by ${BRAND_NAME} (hereinafter referred to as "${BRAND_NAME}"), you agree to be bound by these Terms of Service. If you do not agree with any part of these terms, you should not access or use this website or any ${BRAND_NAME} services.` },
+      { n: '1.2', body: `These Terms of Service apply to all visitors, prospective clients, and licensees of ${BRAND_NAME}. By accessing or using this website or our software, you acknowledge and accept these Terms of Service.` },
+    ],
+  },
+  {
+    h: '2. Nature of Our Relationship',
+    clauses: [
+      { n: '2.1', body: `${BRAND_NAME} is a software development company that builds and licenses trading technology to licensed brokers and proprietary trading firms. These Terms govern your use of this website and the general relationship between you and ${BRAND_NAME}; any software licence is additionally governed by a separate written agreement.` },
+      { n: '2.2', body: `You acknowledge that your continued use of this website and ${BRAND_NAME} services constitutes acceptance of these Terms of Service and any additional policies, notices, or legal documentation published by ${BRAND_NAME}.` },
+    ],
+  },
+  {
+    h: '3. Eligibility',
+    clauses: [
+      { n: '3.1', body: `To use ${BRAND_NAME} services, you must be at least eighteen (18) years old or the legal age required to enter into a binding agreement in your jurisdiction.` },
+      { n: '3.2', body: 'Where you access our services on behalf of a business, you confirm that you are authorised to bind that business to these Terms.' },
+      { n: '3.3', body: 'Providing false or misleading information about your identity, organisation, or intended use of our software is strictly prohibited and may result in suspension or termination of access.' },
+    ],
+  },
+  {
+    h: '4. Nature of Our Services',
+    clauses: [
+      { n: '4.1', body: `${BRAND_NAME} is a technology vendor. We design, build, license, and support trading software. ${BRAND_NAME} is not a broker, exchange, or financial institution, and does not provide brokerage, financial, investment, tax, or advisory services.` },
+      { n: '4.2', body: `${BRAND_NAME} does not solicit or accept investments, and does not execute, route, or manage trades for end users. Trading platforms built by ${BRAND_NAME} and placed into production are operated by our clients under their own brand, licence, and regulatory obligations.` },
+      { n: '4.3', body: 'Nothing on this website or within our materials constitutes an offer, solicitation, or recommendation to buy or sell any financial product or to engage in any trading activity.' },
+      { n: '4.4', body: 'Leveraged trading carries a high level of risk. Any references to trading functionality describe capabilities of the software; the availability and operation of that functionality for end users is the sole responsibility of the licensed operator of the platform.' },
+    ],
+  },
+  {
+    h: '5. Website Accounts and Security',
+    clauses: [
+      { n: '5.1', body: 'Where you create an account or submit an enquiry through this website, you must provide accurate, complete, and up-to-date information.' },
+      { n: '5.2', body: 'You are responsible for maintaining the confidentiality of any account credentials, passwords, and security information used to access this website or our services.' },
+      { n: '5.3', body: `${BRAND_NAME} shall not be liable for losses arising from unauthorized access resulting from your failure to protect your credentials.` },
+    ],
+  },
+  {
+    h: '6. Software Licensing and Services',
+    clauses: [
+      { n: '6.1', body: `Access to ${BRAND_NAME} software is provided under licence, on the terms set out in a separate written agreement between you and ${BRAND_NAME}.` },
+      { n: '6.2', body: 'Fees, delivery timelines, scope of work, and support arrangements are defined in the applicable order form, statement of work, or licence agreement.' },
+      { n: '6.3', body: `${BRAND_NAME} may require verification of your identity or organisation before granting access to certain software or services.` },
+      { n: '6.4', body: 'Delivery, configuration, and support timelines may vary depending on the scope of the engagement and the requirements agreed between the parties.' },
+    ],
+  },
+  {
+    h: '7. Intellectual Property',
+    clauses: [
+      { n: '7.1', body: `All software, source code, designs, documentation, trademarks, and other materials provided by ${BRAND_NAME} remain the exclusive property of ${BRAND_NAME} or its licensors.` },
+      { n: '7.2', body: 'Any licence granted is limited, non-exclusive, and non-transferable except as expressly set out in the applicable agreement, and confers no ownership rights in the underlying technology.' },
+      { n: '7.3', body: `You may not copy, resell, sublicense, reverse engineer, or create derivative works from ${BRAND_NAME} software except as expressly permitted by the applicable agreement or by law.` },
+    ],
+  },
+  {
+    h: '8. Acceptable Use',
+    clauses: [
+      { n: '8.1', body: `You agree to use this website and ${BRAND_NAME} software only for lawful purposes and in accordance with these Terms and any applicable licence agreement.` },
+      { n: '8.2', body: `${BRAND_NAME} reserves the right to restrict or suspend access where this website or our software is used in a manner that is fraudulent, unlawful, or in breach of these Terms.` },
+      { n: '8.3', body: 'You are responsible for ensuring that your use of our software, and the operation of any platform you deploy from it, complies with all laws and regulations applicable to you.' },
+    ],
+  },
+  {
+    h: '9. Compliance and Lawful Use',
+    clauses: [
+      { n: '9.1', body: `${BRAND_NAME} conducts its business in accordance with applicable laws, including applicable export-control and sanctions requirements.` },
+      { n: '9.2', body: 'You may be required to provide information about your organisation and intended use of our software as part of our client onboarding and compliance checks.' },
+      { n: '9.3', body: `Where you operate a platform built on ${BRAND_NAME} software, you are solely responsible for meeting your own licensing, regulatory, and other legal obligations.` },
+    ],
+  },
+  {
+    h: '10. Limitation of Liability',
+    clauses: [
+      { n: '10.1', body: `${BRAND_NAME} shall not be liable for any indirect, incidental, consequential, or special damages arising from the use of this website or its services.` },
+      { n: '10.2', body: `${BRAND_NAME} is not responsible for losses resulting from decisions made by operators of platforms built on our software, market activity, technical failures, internet disruptions, third-party service interruptions, or force majeure events.` },
+    ],
+  },
+  {
+    h: '11. Suspension and Termination',
+    clauses: [
+      { n: '11.1', body: `${BRAND_NAME} reserves the right to suspend, restrict, or terminate access to its website or services where these Terms of Service or applicable agreements are breached.` },
+      { n: '11.2', body: `Upon termination, you must immediately cease using the affected ${BRAND_NAME} website and services, subject to the terms of any applicable licence agreement.` },
+    ],
+  },
+  {
+    h: '12. Amendments',
+    clauses: [
+      { n: '12.1', body: `${BRAND_NAME} reserves the right to modify, update, or replace these Terms of Service at any time.` },
+      { n: '12.2', body: `Continued use of this website and ${BRAND_NAME} services after updates become effective constitutes acceptance of the revised Terms of Service.` },
+    ],
+  },
+  {
+    h: '13. Governing Law',
+    clauses: [
+      { n: '13.1', body: `These Terms of Service shall be governed by and interpreted in accordance with the laws applicable to the jurisdiction under which ${BRAND_NAME} operates.` },
+      { n: '13.2', body: 'Any disputes arising from these Terms of Service shall be subject to the exclusive jurisdiction of the relevant courts or arbitration authorities.' },
+    ],
+  },
+];
+
+const CONTACT_HEADING = '14. Contact Information';
+const RISK_HEADING = 'Risk Disclaimer';
+
+const TOC = [
+  ...SECTIONS.map((s) => ({ id: legalAnchor(s.h), label: s.h })),
+  { id: legalAnchor(CONTACT_HEADING), label: CONTACT_HEADING },
+  { id: legalAnchor(RISK_HEADING), label: RISK_HEADING },
+];
 
 export default function TermsPage() {
   return (
-    <div className="bg-white text-gray-900">
-      <section className="bg-white pt-16 pb-12">
-        <div className="w-full px-3 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-10 h-10 rounded-xl bg-accent-soft flex items-center justify-center">
-              <FileText className="w-5 h-5 text-accent" />
-            </div>
-            <h1 className="text-3xl font-extrabold text-gray-900">Terms and Conditions</h1>
-          </div>
-          <p className="text-lg font-semibold text-gray-900 mt-6 mb-1">PowerTradeFX — Terms and Conditions</p>
-          <p className="text-sm text-gray-500">Last updated: February 2026</p>
-        </div>
-      </section>
+    <main>
+      <PageHero
+        kicker="Legal"
+        title="Terms of Service"
+        lead={`The rules that govern your use of the ${BRAND_NAME} website and software. Please read them carefully.`}
+      />
 
-      <section className="py-12 bg-white">
-        <div className="w-full px-3 sm:px-6 lg:px-8 space-y-8">
-          <Section title="1. Acceptance of Terms">
-            By creating an account and using the PowerTradeFX platform, you acknowledge that you have read, understood, and agree to be bound by these Terms and Conditions. If you do not agree with any part of these terms, you must not use our services.
-          </Section>
+      <Section raised>
+        <LegalDoc toc={TOC} updated="June 2026">
+          {SECTIONS.map(({ h, clauses }) => (
+            <LegalSection key={h} id={legalAnchor(h)} heading={h}>
+              {clauses.map(({ n, body }) => (
+                <LegalClause key={n} n={n}>{body}</LegalClause>
+              ))}
+            </LegalSection>
+          ))}
 
-          <Section title="2. Eligibility">
-            You must be at least 18 years of age and legally permitted to engage in financial trading in your jurisdiction. You are responsible for ensuring compliance with all applicable laws and regulations.
-          </Section>
+          {/* Section 14 — Contact (special handling: includes contact card) */}
+          <LegalSection id={legalAnchor(CONTACT_HEADING)} heading={CONTACT_HEADING}>
+            <LegalP>
+              For any questions, support requests, or concerns regarding these Terms of Service, please contact:
+            </LegalP>
+            <LegalCallout>
+              <span style={{ color: 'var(--mk-text)', fontWeight: 700 }}>{BRAND_NAME} Support Team</span>
+              <br />
+              Email:{' '}
+              <a
+                href={`mailto:${BRAND_SUPPORT_EMAIL}`}
+                className="hover:underline"
+                style={{ color: 'var(--mk-accent)' }}
+              >
+                {BRAND_SUPPORT_EMAIL}
+              </a>
+            </LegalCallout>
+            <LegalP>
+              By using this website and {BRAND_NAME} services, you confirm that you have read, understood, and agreed to these Terms of Service.
+            </LegalP>
+          </LegalSection>
 
-          <Section title="3. Account Responsibilities">
-            You are solely responsible for maintaining the confidentiality of your account credentials. All activities conducted under your account are your responsibility. You agree to provide accurate and truthful information during registration and to keep your information up to date.
-          </Section>
+          {/* Risk Disclaimer — kept as the platform's standard trader-facing warning */}
+          <LegalSection id={legalAnchor(RISK_HEADING)} heading={RISK_HEADING}>
+            <LegalCallout tone="warn">
+              Trading in leveraged financial products carries a high level of risk. This company is a software vendor, not a broker or financial adviser, and nothing on this website constitutes an offer, solicitation, or investment advice. Any trading platform built with our software is operated by a licensed third party who is solely responsible for its own regulatory obligations and for the risk disclosures given to its clients. Where such a platform supports leveraged products, those products can amplify both gains and losses, and past performance is not indicative of future results.
+            </LegalCallout>
+            <LegalP>
+              These Terms work alongside our{' '}
+              <Link href="/privacy" className="hover:underline" style={{ color: 'var(--mk-accent)' }}>
+                Privacy Policy
+              </Link>{' '}
+              and{' '}
+              <Link href="/risk" className="hover:underline" style={{ color: 'var(--mk-accent)' }}>
+                Risk Disclaimer
+              </Link>
+              .
+            </LegalP>
+          </LegalSection>
+        </LegalDoc>
+      </Section>
 
-          <Section title="4. Trading Risks">
-            Trading forex and other financial instruments involves substantial risk of loss and is not suitable for all investors. Past performance is not indicative of future results. You should carefully consider your financial situation and risk tolerance before trading.
-          </Section>
-
-          <Section title="5. Deposits and Withdrawals">
-            All deposits are subject to the platform&apos;s processing policies. Cryptocurrency deposits are subject to a 2.5% processing fee. Withdrawals require email verification for security purposes. Processing times may vary depending on the payment method.
-          </Section>
-
-          <Section title="6. Bonus Terms">
-            Promotional bonuses, including the welcome bonus, are subject to specific terms and conditions. Bonus funds may have trading volume requirements and withdrawal restrictions. PowerTradeFX reserves the right to modify or discontinue bonus programs at any time.
-          </Section>
-
-          <Section title="7. Prohibited Conduct">
-            You agree not to engage in any of the following:
-            <List items={[
-              'Market manipulation, fraud, or any form of abusive trading practices.',
-              'Using the platform for money laundering or any illegal activity.',
-              'Attempting to exploit system vulnerabilities or interfere with platform operations.',
-              'Creating multiple accounts to circumvent platform rules or bonus limitations.',
-              'Engaging in defamatory, malicious, or harmful attacks against PowerTradeFX, its brand, employees, partners, or other users. This includes but is not limited to spreading false information, making threatening communications, filing fraudulent complaints, or conducting coordinated campaigns intended to damage the company’s reputation.',
-              'Making false or unsubstantiated accusations against PowerTradeFX, including but not limited to publicly or privately labeling the platform as a “scam,” “fraud,” or similar defamatory terms without legitimate basis. Such conduct undermines trust and will not be tolerated, and may result in immediate account suspension or termination.',
-            ]} />
-          </Section>
-
-          <Section title="8. Account Suspension and Termination">
-            PowerTradeFX reserves the right to suspend, restrict, or terminate any account at its sole discretion, including but not limited to cases where a user:
-            <List items={[
-              'Violates any provision of these Terms and Conditions.',
-              'Engages in malicious conduct against the brand, its affiliates, or other users.',
-              'Provides false or misleading information.',
-              'Is suspected of fraudulent or illegal activity.',
-            ]} />
-            <p className="mt-3">Upon suspension or termination, access to trading and withdrawal functions may be restricted pending investigation.</p>
-          </Section>
-
-          <Section title="9. Affiliate Program">
-            Participation in the affiliate program is subject to additional terms. Affiliates must promote PowerTradeFX responsibly and in compliance with all applicable advertising standards. Commissions are subject to review and may be adjusted or revoked in cases of abuse.
-          </Section>
-
-          <Section title="10. PAMM Investments">
-            PAMM (Percentage Allocation Management Module) investments carry inherent risks. Past performance of a PAMM manager does not guarantee future results. Investors should conduct their own due diligence before allocating funds.
-          </Section>
-
-          <Section title="11. Privacy and Data Protection">
-            Your personal data is processed in accordance with our Privacy Policy. By using our services, you consent to the collection, processing, and storage of your data as described therein. We implement industry-standard security measures to protect your information.
-          </Section>
-
-          <Section title="12. Limitation of Liability">
-            PowerTradeFX shall not be liable for any indirect, incidental, special, or consequential damages arising from your use of the platform. Our total liability shall not exceed the amount of funds deposited in your account.
-          </Section>
-
-          <Section title="13. Modifications">
-            PowerTradeFX reserves the right to modify these Terms and Conditions at any time. Continued use of the platform after changes are posted constitutes acceptance of the revised terms. Users will be notified of material changes via email or platform notification.
-          </Section>
-
-          <Section title="14. Governing Law">
-            These Terms and Conditions shall be governed by and construed in accordance with applicable laws. Any disputes shall be resolved through the appropriate legal channels.
-          </Section>
-
-          <div className="pt-4 border-t border-gray-200">
-            <p className="text-gray-500 text-sm leading-relaxed">
-              By checking the box and creating your account, you confirm that you have read, understood, and agree to these Terms and Conditions in their entirety.
-            </p>
-          </div>
-
-          {/* Risk Disclaimer */}
-          <div className="rounded-xl p-6 bg-gray-50 border border-gray-200">
-            <h2 className="text-lg font-bold text-gray-900 mb-3">Risk Disclaimer</h2>
-            <p className="text-gray-500 text-sm leading-relaxed">
-              Trading foreign exchange (forex) and other leveraged financial products carries a high level of risk and may not be suitable for all investors. Leverage can work both for and against you — while it amplifies potential profits, it equally amplifies potential losses. You could sustain a loss of some or all of your initial investment and should not invest money that you cannot afford to lose. You should be aware of all the risks associated with leveraged trading and seek independent financial advice if you have any doubts. Past performance is not indicative of future results.
-            </p>
-          </div>
-        </div>
-      </section>
-    </div>
-  )
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <h2 className="text-2xl font-bold text-gray-900 mb-4">{title}</h2>
-      <div className="text-gray-500 leading-relaxed space-y-3">{children}</div>
-    </div>
-  )
-}
-
-function List({ items }: { items: string[] }) {
-  return (
-    <ul className="list-disc list-inside space-y-2 mt-3 text-gray-500">
-      {items.map((item, i) => <li key={i}>{item}</li>)}
-    </ul>
-  )
+      <CtaBanner
+        title="Ready to see the platform?"
+        lead={`Book a walkthrough of the ${BRAND_NAME} platform and see how it runs under your brand.`}
+        primary={{ label: 'Book a demo', href: '/company/contact' }}
+        secondary={{ label: 'Contact Support', href: `mailto:${BRAND_SUPPORT_EMAIL}` }}
+      />
+    </main>
+  );
 }

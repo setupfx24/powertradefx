@@ -22,7 +22,6 @@ import {
   Loader2,
   LogIn,
   Minus,
-  MoreHorizontal,
   Plus,
   Power,
   Search,
@@ -326,16 +325,8 @@ export default function UsersPage() {
       } else if (modalType !== 'add-fund' && modalAccountId) {
         payload.account_id = modalAccountId;
       }
-      const res = await adminApi.post<{ status?: string; message?: string }>(
-        `/users/${modalUser.id}/${modalType}`, payload,
-      );
-      if (res.status === 'pending_approval') {
-        // Two-person rule: non-super-admin moves are staged for a second
-        // admin to approve on the Fund Approvals page.
-        toast.success(res.message || 'Sent for approval by a second admin');
-      } else {
-        toast.success(`${FUND_LABELS[modalType as FundAction]} successful`);
-      }
+      await adminApi.post(`/users/${modalUser.id}/${modalType}`, payload);
+      toast.success(`${FUND_LABELS[modalType as FundAction]} successful`);
       closeModal();
       fetchUsers();
     } catch (e) {
@@ -421,10 +412,22 @@ export default function UsersPage() {
     }
   };
 
+  // CSV formula-injection + delimiter safety: neutralise a leading
+  // = + - @ (or tab/CR) that spreadsheets execute as a formula, and always
+  // quote so a comma/quote/newline in a name or email can't break columns.
+  const csvCell = (value: unknown): string => {
+    let s = value == null ? '' : String(value);
+    if (/^[=+\-@\t\r]/.test(s) && !/^[-+]?\d+(\.\d+)?$/.test(s)) s = "'" + s;
+    return '"' + s.replace(/"/g, '""') + '"';
+  };
+
   const exportCsv = () => {
     const headers = ['ID', 'Name', 'Email', 'Balance', 'Equity', 'Group', 'KYC', 'Status'];
-    const rows = sorted.map(u => [u.id, u.name, u.email, u.balance, u.equity, u.group, u.kyc_status, u.status].join(','));
-    const blob = new Blob([[headers.join(','), ...rows].join('\n')], { type: 'text/csv' });
+    const rows = sorted.map(u =>
+      [u.id, u.name, u.email, u.balance, u.equity, u.group, u.kyc_status, u.status]
+        .map(csvCell).join(','),
+    );
+    const blob = new Blob([[headers.map(csvCell).join(','), ...rows].join('\r\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = 'users-export.csv'; a.click();
@@ -563,12 +566,22 @@ export default function UsersPage() {
                       <span className={cn('inline-flex px-2 py-0.5 rounded text-[10px] font-semibold', statusBadge(u.status))}>{u.status}</span>
                     </td>
                     <td className="px-2 py-3 text-center whitespace-nowrap" data-actions-menu>
+                      {/* Labelled trigger instead of a bare 3-dot icon — the
+                          actions (View Profile, funds, ban, login-as…) were
+                          hidden behind an unlabelled ⋯ that admins had to
+                          discover. Opens the same menu. */}
                       <button
                         type="button"
                         onClick={(e) => toggleActions(u.id, e)}
-                        className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-border-primary text-text-secondary transition-fast hover:bg-bg-hover hover:text-text-primary hover:border-border-secondary"
+                        className={cn(
+                          'inline-flex items-center gap-1.5 h-8 pl-3 pr-2 rounded-lg border text-xs font-medium transition-fast',
+                          openActionsId === u.id
+                            ? 'border-buy text-buy bg-buy/10'
+                            : 'border-border-primary text-text-secondary hover:bg-bg-hover hover:text-text-primary hover:border-border-secondary',
+                        )}
                       >
-                        <MoreHorizontal size={15} />
+                        Actions
+                        <ChevronDown size={13} className={cn('transition-transform', openActionsId === u.id && 'rotate-180')} />
                       </button>
                     </td>
                   </tr>
@@ -603,9 +616,15 @@ export default function UsersPage() {
                     <button
                       type="button"
                       onClick={(e) => toggleActions(u.id, e)}
-                      className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-border-primary text-text-secondary transition-fast hover:bg-bg-hover hover:text-text-primary"
+                      className={cn(
+                        'inline-flex items-center gap-1.5 h-8 pl-3 pr-2 rounded-lg border text-xs font-medium transition-fast',
+                        openActionsId === u.id
+                          ? 'border-buy text-buy bg-buy/10'
+                          : 'border-border-primary text-text-secondary hover:bg-bg-hover hover:text-text-primary',
+                      )}
                     >
-                      <MoreHorizontal size={15} />
+                      Actions
+                      <ChevronDown size={13} className={cn('transition-transform', openActionsId === u.id && 'rotate-180')} />
                     </button>
                   </div>
                 </div>

@@ -1,14 +1,9 @@
 'use client';
 
 import { ArrowRight } from 'lucide-react';
+import { useBrandDisplay } from '@/components/providers/BrandingProvider';
 
 type DisplayMode = 'pnl' | 'roi' | 'ticks';
-
-/* This card is rasterised to a PNG (html-to-image) and always drawn on its
-   own dark ground, so the trade-side colours are FIXED literals that mirror
-   the app tokens in globals.css: --buy-rgb (#00C087) / --sell-rgb (#F84960). */
-const BUY_HEX = '#00C087';
-const SELL_HEX = '#F84960';
 
 interface ShareTradeCardProps {
   symbol: string;
@@ -64,6 +59,7 @@ export default function ShareTradeCard({
   roiPct,
   ticks,
 }: ShareTradeCardProps) {
+  const brand = useBrandDisplay();
   const isBuy = side.toLowerCase() === 'buy';
   const positive = pnl >= 0;
   const digits = getDigits(symbol, pipSize);
@@ -83,14 +79,11 @@ export default function ShareTradeCard({
       : `${(ticks ?? derivedTicks).toFixed(1)} ticks`;
 
   const displaySign = positive ? '+' : '-';
-  const displayColor = positive ? BUY_HEX : SELL_HEX;
-  const sideStyle = isBuy
-    ? { background: 'rgba(0, 192, 135, 0.2)', color: BUY_HEX, borderColor: 'rgba(0, 192, 135, 0.4)' }
-    : { background: 'rgba(248, 73, 96, 0.2)', color: SELL_HEX, borderColor: 'rgba(248, 73, 96, 0.4)' };
+  const displayColor = positive ? '#10b981' : '#ef4444';
 
   return (
     <div
-      className="relative w-full aspect-[4/5] rounded-sheet overflow-hidden border border-white/10"
+      className="relative w-full aspect-[4/5] rounded-2xl overflow-hidden border border-white/10"
       style={{
         background:
           'radial-gradient(circle at 50% 0%, rgba(30, 64, 175, 0.35) 0%, rgba(8, 10, 24, 0.95) 50%, rgba(0, 0, 0, 1) 100%)',
@@ -122,13 +115,13 @@ export default function ShareTradeCard({
         <div className="flex flex-col items-center justify-center pt-1 pb-3 gap-1.5">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/marketing/powertradefx_fevicon.png"
-            alt="PowerTradeFX"
+            src={brand.logoUrl || '/marketing/swisscresta_fevicon.png'}
+            alt={brand.name}
             width={40}
             height={40}
             style={{ height: 40, width: 40, objectFit: 'contain', borderRadius: 8 }}
           />
-          <span className="text-white text-[11px] font-bold tracking-[0.32em]">POWERTRADEFX</span>
+          <span className="text-white text-[11px] font-bold tracking-[0.32em]">{brand.name.toUpperCase()}</span>
         </div>
 
         {/* Status + value */}
@@ -145,7 +138,11 @@ export default function ShareTradeCard({
 
           {/* Pills: side, lots, symbol, leverage */}
           <div className="flex items-center justify-center gap-2 flex-wrap">
-            <span className="px-3 py-1 rounded-md text-xs font-bold uppercase border" style={sideStyle}>
+            <span
+              className={`px-3 py-1 rounded-md text-xs font-bold uppercase ${
+                isBuy ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-red-500/20 text-red-400 border border-red-500/40'
+              }`}
+            >
               {side}
             </span>
             <span className="text-white text-sm font-bold">{lots.toFixed(2)} lots</span>

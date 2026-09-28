@@ -18,7 +18,7 @@ def render_bonus_credited(
     currency: str = "USD",
     new_bonus_balance: Decimal | float | None = None,
     expires_at: str | None = None,
-    trader_app_url: str = "https://trade.powertradefx.com",
+    trader_app_url: str = "https://trade.swisscresta.com",
 ) -> tuple[str, str, str]:
     name = (first_name or "trader").strip() or "trader"
     rows: list[tuple[str, str]] = [

@@ -3,6 +3,8 @@
  * Uses dynamic import so jspdf is not loaded until export.
  */
 
+import { closeReasonInfo } from '@/lib/closeReason';
+
 export type TradeStatementRow = {
   close_time?: string | null;
   open_time?: string | null;
@@ -29,14 +31,10 @@ function fmtUsd(n: number): string {
   }).format(n);
 }
 
+// Shared mapping — the statement must name an exit exactly the way the
+// portfolio and terminal do, or a downloaded PDF contradicts the screen.
 function exitReasonText(reason: string | null | undefined): string {
-  const r = (reason || 'manual').toLowerCase();
-  if (r === 'sl' || r === 'stop_loss') return 'Stop loss';
-  if (r === 'tp' || r === 'take_profit') return 'Take profit';
-  if (r === 'manual') return 'Manual close';
-  if (r === 'copy_close' || r === 'copy') return 'Copy close';
-  if (r === 'admin') return 'Admin';
-  return r.replace(/_/g, ' ');
+  return closeReasonInfo(reason).label;
 }
 
 function priceDigits(symbol: string): number {
@@ -101,7 +99,7 @@ export async function downloadTradeStatementPdf(
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
-  doc.text('PowerTradeFX', margin, 7);
+  doc.text('SwissCresta', margin, 7);
 
   // Brand logo, top-right under the band (best-effort — never blocks export).
   const { loadPdfLogo, stampPdfLogo } = await import('./pdfLogo');
@@ -230,7 +228,7 @@ export async function downloadTradeStatementPdf(
         doc.internal.pageSize.getHeight() - 6,
       );
       doc.text(
-        'PowerTradeFX — for information only. Not tax or legal advice.',
+        'SwissCresta — for information only. Not tax or legal advice.',
         margin,
         doc.internal.pageSize.getHeight() - 6,
       );
@@ -238,5 +236,5 @@ export async function downloadTradeStatementPdf(
   });
 
   const safeDate = new Date().toISOString().slice(0, 10);
-  doc.save(`powertradefx-trade-statement-${safeDate}.pdf`);
+  doc.save(`swisscresta-trade-statement-${safeDate}.pdf`);
 }

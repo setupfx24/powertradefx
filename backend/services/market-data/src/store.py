@@ -56,19 +56,14 @@ class TickStore:
 
         try:
             async with TimescaleSessionLocal() as session:
-                # One executemany round trip for the whole batch instead of
-                # 100 sequential single-row INSERTs — at high tick rates the
-                # per-statement latency was the flush bottleneck.
-                await session.execute(
-                    text(
-                        "INSERT INTO ticks (time, symbol, bid, ask) "
-                        "VALUES (:time, :symbol, :bid, :ask)"
-                    ),
-                    [
-                        {"time": ts, "symbol": symbol, "bid": bid, "ask": ask}
-                        for ts, symbol, bid, ask in batch
-                    ],
-                )
+                for ts, symbol, bid, ask in batch:
+                    await session.execute(
+                        text(
+                            "INSERT INTO ticks (time, symbol, bid, ask) "
+                            "VALUES (:time, :symbol, :bid, :ask)"
+                        ),
+                        {"time": ts, "symbol": symbol, "bid": bid, "ask": ask},
+                    )
                 await session.commit()
         except Exception as e:
             logger.error(f"Failed to flush ticks: {e}")

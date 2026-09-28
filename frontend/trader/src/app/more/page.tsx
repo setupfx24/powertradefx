@@ -2,11 +2,9 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ChevronRight, LogOut } from 'lucide-react';
 import { NotificationBell } from '@/components/NotificationListener';
 import { useAuthStore } from '@/stores/authStore';
 import DashboardShell from '@/components/layout/DashboardShell';
-import { Button, Card, PageHeader } from '@/components/ui';
 
 export default function MorePage() {
   const router = useRouter();
@@ -33,66 +31,68 @@ export default function MorePage() {
 
   return (
     <DashboardShell mainClassName="p-0">
-      <div className="flex-1 overflow-y-auto px-4 py-6 max-w-lg mx-auto w-full space-y-4 md:space-y-5 animate-fade-in">
-        <PageHeader title="More" className="mb-0" />
+      <div className="flex-1 overflow-y-auto px-4 py-6 max-w-lg mx-auto w-full space-y-6">
+        <h2 className="text-xl font-semibold text-text-primary">More</h2>
 
         {/* Profile Card */}
-        <Card className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-4 min-w-0">
-            <div className="w-12 h-12 shrink-0 rounded-full border border-border-primary bg-bg-tertiary flex items-center justify-center text-lg font-bold text-text-primary">
+        <div className="glass-card rounded-2xl p-5 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full glass-card flex items-center justify-center text-lg font-bold text-text-primary">
               {initials}
             </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-text-primary truncate">
+            <div>
+              <p className="text-sm font-semibold text-text-primary">
                 {user ? [user.first_name, user.last_name].filter(Boolean).join(' ') || user.email?.split('@')[0] : 'Trader'}
               </p>
-              <p className="text-xs text-text-tertiary truncate">{user?.email}</p>
+              <p className="text-xs text-text-tertiary">{user?.email}</p>
             </div>
           </div>
-
-          <Link
-            href="/profile"
-            className="inline-flex h-8 shrink-0 items-center rounded-md border border-border-primary bg-bg-tertiary px-3 text-xs font-semibold text-text-primary transition-colors hover:bg-bg-hover hover:border-border-strong"
-          >
+          
+          <Link href="/profile" className="px-3 py-1.5 rounded-lg text-xs font-medium border border-border-glass text-text-secondary hover:text-text-primary hover:bg-bg-hover">
             Manage
           </Link>
-        </Card>
+        </div>
 
         {/* Centralized Actions */}
-        <Card className="flex flex-col items-center justify-center gap-3">
-          <span className="text-xxs font-semibold uppercase tracking-[0.1em] text-text-secondary">Notifications</span>
-          <div className="transform scale-110">
-            <NotificationBell />
+        <div className="grid grid-cols-1 gap-3">
+          <div className="glass-card rounded-xl p-4 flex flex-col items-center justify-center gap-3">
+            <span className="text-xs text-text-tertiary font-medium">Notifications</span>
+            <div className="transform scale-110">
+              <NotificationBell />
+            </div>
           </div>
-        </Card>
+        </div>
 
         {/* Navigation Links */}
-        <Card padding="none" className="overflow-hidden divide-y divide-border-secondary">
+        <div className="glass-card rounded-2xl overflow-hidden divide-y divide-border-glass">
           {menuItems.map((item) => (
             <Link
               key={item.href}
               href={item.href}
-              className="flex items-center justify-between p-4 hover:bg-bg-hover transition-colors"
+              className="flex items-center justify-between p-4 hover:bg-bg-hover/50 transition-colors"
             >
               <div className="flex items-center gap-3">
                 <span className="text-xl">{item.icon}</span>
                 <span className="text-sm font-medium text-text-primary">{item.label}</span>
               </div>
-              <ChevronRight className="h-4 w-4 text-text-tertiary" aria-hidden />
+              <span className="text-text-tertiary text-xs">→</span>
             </Link>
           ))}
-        </Card>
+        </div>
 
         {/* Logout */}
-        <Button
-          variant="danger"
-          size="lg"
-          fullWidth
+        <button
+          type="button"
           onClick={handleLogout}
-          leftIcon={<LogOut className="h-4 w-4" aria-hidden />}
+          className="w-full glass-card rounded-2xl p-4 flex items-center justify-center gap-2 text-sell hover:bg-sell/10 transition-colors text-sm font-semibold"
         >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
           Logout
-        </Button>
+        </button>
       </div>
     </DashboardShell>
   );

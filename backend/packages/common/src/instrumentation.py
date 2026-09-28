@@ -88,7 +88,7 @@ def init_sentry(service_name: str) -> None:
             dsn=dsn,
             traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
             environment=settings.ENVIRONMENT,
-            release=f"powertradefx-{service_name}@1.0.0",
+            release=f"swisscresta-{service_name}@1.0.0",
             integrations=[
                 FastApiIntegration(transaction_style="endpoint"),
                 SqlalchemyIntegration(),
@@ -145,17 +145,79 @@ def add_rate_limit_handler(app):
 # ---------------------------------------------------------------------------
 # 3. Request Body Size Limit Middleware
 # ---------------------------------------------------------------------------
-class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    """Reject requests whose Content-Length exceeds MAX_REQUEST_SIZE."""
+class _BodyTooLarge(Exception):
+    pass
 
-    async def dispatch(self, request: Request, call_next):
-        content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > settings.MAX_REQUEST_SIZE:
-            return JSONResponse(
-                status_code=413,
-                content={"detail": f"Request body too large. Max {settings.MAX_REQUEST_SIZE // (1024*1024)} MB."},
-            )
-        return await call_next(request)
+
+class RequestSizeLimitMiddleware:
+    """Reject request bodies larger than MAX_REQUEST_SIZE.
+
+    Pure ASGI (not BaseHTTPMiddleware) so it can count the bytes ACTUALLY
+    streamed: the old version only trusted the Content-Length header, so a
+    chunked (Transfer-Encoding) upload with no Content-Length bypassed the cap
+    entirely, and a malformed Content-Length crashed with a 500. Now:
+      * declared Content-Length over the cap → 413 before reading anything;
+      * non-numeric Content-Length → 400;
+      * streamed body that grows past the cap (chunked) → 413.
+    """
+
+    def __init__(self, app, max_size: int | None = None):
+        self.app = app
+        self.max_size = max_size or settings.MAX_REQUEST_SIZE
+
+    async def _reply(self, send, status_code: int, detail: str) -> None:
+        resp = JSONResponse(status_code=status_code, content={"detail": detail})
+        await send({
+            "type": "http.response.start",
+            "status": resp.status_code,
+            "headers": resp.raw_headers,
+        })
+        await send({"type": "http.response.body", "body": resp.body})
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        too_large = f"Request body too large. Max {self.max_size // (1024 * 1024)} MB."
+        for name, value in scope.get("headers") or []:
+            if name == b"content-length":
+                try:
+                    declared = int(value)
+                except (ValueError, TypeError):
+                    await self._reply(send, 400, "Invalid Content-Length header.")
+                    return
+                if declared < 0:
+                    await self._reply(send, 400, "Invalid Content-Length header.")
+                    return
+                if declared > self.max_size:
+                    await self._reply(send, 413, too_large)
+                    return
+                break
+
+        received = 0
+        response_started = False
+
+        async def limited_receive():
+            nonlocal received
+            message = await receive()
+            if message.get("type") == "http.request":
+                received += len(message.get("body", b"") or b"")
+                if received > self.max_size:
+                    raise _BodyTooLarge()
+            return message
+
+        async def tracking_send(message):
+            nonlocal response_started
+            if message.get("type") == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, tracking_send)
+        except _BodyTooLarge:
+            if not response_started:
+                await self._reply(send, 413, too_large)
 
 
 # ---------------------------------------------------------------------------
@@ -201,18 +263,44 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
 
 
 def add_metrics_endpoint(app):
-    """Add /metrics endpoint for Prometheus scraping."""
+    """Add /metrics endpoint for Prometheus scraping — internal scrapers only."""
     if not _PROM_AVAILABLE:
         return
 
     @app.get("/metrics", include_in_schema=False)
-    async def metrics():
+    async def metrics(request: Request):
+        # Only INTERNAL scrapers may read metrics. Every request that reached
+        # this app through the public edge carries an X-Forwarded-* header
+        # (nginx/Cloudflare add it); a Prometheus scraper hitting the container
+        # directly on the internal network / loopback does not. Deny the
+        # forwarded ones so the full route inventory + traffic stats aren't
+        # exposed publicly on api.swisscresta.com/metrics. (The gateway binds
+        # 127.0.0.1 in prod, so non-forwarded requests are internal-only.)
+        if request.headers.get("x-forwarded-for") or request.headers.get("x-forwarded-host"):
+            return Response(status_code=404)
         return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 # ---------------------------------------------------------------------------
 # 5. Structured Request Logging Middleware
 # ---------------------------------------------------------------------------
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Assert baseline security headers on every API response. The nginx blocks
+    for the trader/admin hosts already set these, but the api.swisscresta.com
+    JSON host was missing HSTS / Referrer-Policy / Permissions-Policy — set them
+    at the app so they hold regardless of the (host-managed) proxy config."""
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        h = response.headers
+        # Only the three the nginx blocks were missing on the api host —
+        # X-Frame-Options / X-Content-Type-Options are already set by nginx
+        # everywhere, so setting them here too would just duplicate the header.
+        h.setdefault("Strict-Transport-Security", "max-age=15552000; includeSubDomains")
+        h.setdefault("Referrer-Policy", "no-referrer")
+        h.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+        return response
+
+
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         start = time.perf_counter()
@@ -245,6 +333,7 @@ def add_middleware_stack(app, *, include_rate_limit: bool = False):
     still have per-bucket rate_limit_http() guards where needed.
     """
     app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(PrometheusMiddleware)
     app.add_middleware(RequestSizeLimitMiddleware)
     add_metrics_endpoint(app)

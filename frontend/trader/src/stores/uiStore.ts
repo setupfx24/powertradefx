@@ -50,7 +50,7 @@ const WATCHLIST_DEFAULT_PX = WATCHLIST_LAYOUT.default;
 export const useUIStore = create<UIState>()(
   persist(
     (set) => ({
-      theme: 'dark' as Theme,
+      theme: 'light' as Theme,
       watchlistWidth: WATCHLIST_DEFAULT_PX,
       orderPanelWidth: 300,
       // Bottom panel only hosts the positions table now (the TradingView
@@ -66,13 +66,17 @@ export const useUIStore = create<UIState>()(
       terminalMarketsOpen: false,
       terminalNewsOpen: false,
 
-      // App-wide theme. ThemeProvider mirrors this onto <html>/<body>
-      // (data-theme + theme-* class), the var-backed Tailwind utilities
-      // and the .desk light-override block follow automatically. The
-      // trading terminal is the one surface that stays dark regardless
-      // (trading/layout.tsx pins the document dark while mounted).
-      setTheme: (t) => set({ theme: t }),
-      toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
+      // The uiStore theme is scoped to the trading TERMINAL only — its
+      // wrapper at trading/layout.tsx reads `theme` and applies the
+      // class + data-theme on the .trading-page div. We deliberately
+      // do NOT touch <html>.data-theme here: writing to the document
+      // root would flip every other page (dashboard, portfolio,
+      // wallet, etc.) into dark mode just because the user toggled
+      // the terminal's local theme.
+      // Dark theme has been removed — the website is light-only. Both actions
+      // are kept (call sites still reference them) but always resolve to light.
+      setTheme: () => set({ theme: 'light' }),
+      toggleTheme: () => set({ theme: 'light' }),
       setWatchlistWidth: (w) =>
         set({ watchlistWidth: Math.max(WATCHLIST_MIN_PX, Math.min(WATCHLIST_MAX_PX, w)) }),
       setOrderPanelWidth: (w) => set({ orderPanelWidth: Math.max(250, Math.min(560, w)) }),
@@ -100,9 +104,11 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: STORAGE_KEY_UI,
-      version: 16,
+      version: 14,
       onRehydrateStorage: () => (rehydrated, err) => {
         if (err || !rehydrated || typeof window === 'undefined') return;
+        // Dark theme removed — force any persisted 'dark' back to light.
+        if (rehydrated.theme !== 'light') useUIStore.setState({ theme: 'light' });
         if (window.innerWidth < 768) return;
         const w = rehydrated.watchlistWidth;
         if (w < WATCHLIST_MIN_PX) {
@@ -147,10 +153,8 @@ export const useUIStore = create<UIState>()(
           v < 9
             ? false
             : Boolean((state as UIState & { terminalNewsOpen?: boolean }).terminalNewsOpen);
-        // v16: graphite dark is the app default. Reset everyone once so the
-        // new theme is what they see; a light choice made after this
-        // migration persists normally.
-        const theme: Theme = v < 16 ? 'dark' : (state.theme === 'light' ? 'light' : 'dark');
+        // v14: dark theme removed — everyone is light-only now.
+        const theme = 'light' as Theme;
         return {
           ...state,
           theme,

@@ -3,41 +3,14 @@
 import { Suspense, useEffect } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { useTradingStore, type TradingAccount } from '@/stores/tradingStore';
+import { useTradingStore } from '@/stores/tradingStore';
 import { wsManager } from '@/lib/ws/wsManager';
 import { tradeSocket } from '@/lib/ws/tradeSocket';
 import { extractTicksFromPayload } from '@/lib/ws/normalizePricePayload';
+import { mapApiAccount } from '@/lib/mapApiAccount';
 import api from '@/lib/api/client';
 import { sounds, unlockAudio } from '@/lib/sounds';
 import DashboardShell from '@/components/layout/DashboardShell';
-
-function mapApiAccount(a: Record<string, unknown>): TradingAccount {
-  const g = a.account_group as Record<string, unknown> | null | undefined;
-  return {
-    id: String(a.id),
-    account_number: String(a.account_number ?? ''),
-    balance: Number(a.balance) || 0,
-    credit: Number(a.credit) || 0,
-    equity: Number(a.equity ?? a.balance) || 0,
-    margin_used: Number(a.margin_used) || 0,
-    free_margin: Number(a.free_margin ?? a.balance) || 0,
-    margin_level: Number(a.margin_level) || 0,
-    leverage: Number(a.leverage) || 100,
-    currency: String(a.currency ?? 'USD'),
-    is_demo: Boolean(a.is_demo),
-    account_group: g
-      ? {
-          id: String(g.id),
-          name: String(g.name ?? 'Account'),
-          spread_markup: Number(g.spread_markup) || 0,
-          commission_per_lot: Number(g.commission_per_lot) || 0,
-          minimum_deposit: Number(g.minimum_deposit) || 0,
-          swap_free: Boolean(g.swap_free),
-          leverage_default: Number(g.leverage_default) || 100,
-        }
-      : null,
-  };
-}
 
 function TradingSession({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -53,7 +26,6 @@ function TradingSession({ children }: { children: React.ReactNode }) {
   const setPendingOrders = useTradingStore((s) => s.setPendingOrders);
   const setInstruments = useTradingStore((s) => s.setInstruments);
   const refreshPositions = useTradingStore((s) => s.refreshPositions);
-  const refreshPendingOrders = useTradingStore((s) => s.refreshPendingOrders);
   const refreshAccount = useTradingStore((s) => s.refreshAccount);
   const accounts = useTradingStore((s) => s.accounts);
 
@@ -148,14 +120,10 @@ function TradingSession({ children }: { children: React.ReactNode }) {
     // Close sounds now come ONCE from the event-driven sources: the trade WS
     // (SL/TP hit, stop-out) and the manual-close response (PositionsPanel) —
     // both instant, neither on a timer.
-    let pollTick = 0;
     const positionPoll = setInterval(async () => {
       if (document.hidden) return;
       await refreshPositions();
       await refreshAccount();
-      // Pending orders change rarely (place / fill / cancel all refresh them
-      // directly); a slow background reconcile every ~6 s catches the rest.
-      if (++pollTick % 4 === 0) await refreshPendingOrders();
     }, 1500);
 
     // Returning to a hidden tab: reconcile immediately instead of waiting for
@@ -164,7 +132,6 @@ function TradingSession({ children }: { children: React.ReactNode }) {
       if (document.hidden) return;
       void pollPricesFromApi();
       void refreshPositions();
-      void refreshPendingOrders();
       void refreshAccount();
     };
     document.addEventListener('visibilitychange', onVisible);
@@ -177,7 +144,7 @@ function TradingSession({ children }: { children: React.ReactNode }) {
       clearInterval(positionPoll);
       clearInterval(pricePoll);
     };
-  }, [setAccounts, setInstruments, updatePrices, refreshPositions, refreshPendingOrders, refreshAccount]);
+  }, [setAccounts, setInstruments, updatePrices, refreshPositions, refreshAccount]);
 
   /* Picker vs terminal: active account + positions. */
   useEffect(() => {
@@ -209,16 +176,12 @@ function TradingSession({ children }: { children: React.ReactNode }) {
 
     setActiveAccount(acc);
 
-    // Pending orders load through the store (single mapper, same call the
-    // order ticket uses right after placing a limit/stop). It guards on the
-    // active account id itself, so it needs no `cancelled` check here.
-    void refreshPendingOrders();
-
     (async () => {
       try {
-        const positions = await api
-          .get<unknown[]>(`/positions/`, { account_id: acc.id, status: 'open' })
-          .catch(() => []);
+        const [positions, orders] = await Promise.all([
+          api.get<unknown[]>(`/positions/`, { account_id: acc.id, status: 'open' }).catch(() => []),
+          api.get<unknown[]>(`/orders/`, { account_id: acc.id, status: 'pending' }).catch(() => []),
+        ]);
         if (cancelled) return;
 
         const posList = Array.isArray(positions) ? positions : [];
@@ -244,6 +207,25 @@ function TradingSession({ children }: { children: React.ReactNode }) {
           }),
         );
 
+        const ordList = Array.isArray(orders) ? orders : [];
+        setPendingOrders(
+          ordList.map((row) => {
+            const o = row as Record<string, unknown>;
+            return {
+            id: String(o.id),
+            account_id: String(o.account_id),
+            symbol: String(o.symbol || (o.instrument as { symbol?: string })?.symbol || ''),
+            order_type: String(o.order_type),
+            side: o.side as 'buy' | 'sell',
+            status: String(o.status),
+            lots: Number(o.lots) || 0,
+            price: Number(o.price) || 0,
+            stop_loss: o.stop_loss != null ? Number(o.stop_loss) : undefined,
+            take_profit: o.take_profit != null ? Number(o.take_profit) : undefined,
+            created_at: String(o.created_at ?? ''),
+            };
+          }),
+        );
       } catch {
         /* ignore */
       }
@@ -252,7 +234,7 @@ function TradingSession({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [pathname, accountQueryId, accounts, setActiveAccount, setPositions, setPendingOrders, refreshPendingOrders]);
+  }, [pathname, accountQueryId, accounts, setActiveAccount, setPositions, setPendingOrders]);
 
   /* Trade-event WebSocket. Subscribes to /ws/trades/{accountId} which
    * forwards Redis pub/sub events from the SL/TP engine. Previously the
@@ -283,12 +265,9 @@ function TradingSession({ children }: { children: React.ReactNode }) {
       }
       // A pending order filled (limit/stop triggered by the b-book engine):
       // the fill creates a position, so pull it in so its chart line + row
-      // appear live, drop the order from the Pending tab (nothing else polls
-      // it — a filled limit would otherwise sit there looking unfilled),
-      // and refresh balance/margin.
+      // appear live, and refresh balance/margin.
       if (evt.type === 'order_filled') {
         void refreshPositions();
-        void refreshPendingOrders();
         void refreshAccount();
         return;
       }
@@ -346,7 +325,7 @@ function TradingSession({ children }: { children: React.ReactNode }) {
       unsub();
       tradeSocket.disconnect();
     };
-  }, [accountQueryId, refreshPositions, refreshPendingOrders, refreshAccount]);
+  }, [accountQueryId, refreshPositions, refreshAccount]);
 
   return <>{children}</>;
 }
@@ -362,15 +341,13 @@ export default function TradingLayout({ children }: { children: React.ReactNode 
   );
 
   if (terminalOnly) {
-    // Terminal runs the dedicated dark desk theme: the dark token block
-    // plus .term-theme (globals.css) which overrides the palette to the
-    // spec (#0a0b0d surfaces, #00c087/#f84960 buy/sell) and rebinds
-    // fonts to Plus Jakarta Sans + JetBrains Mono. The app-wide theme
-    // toggle never applies here (document pinned dark above).
+    // Light-only application — dark theme has been retired (no toggle, no
+    // uiStore.theme read here) so a stale persisted value can never flip the
+    // terminal back to dark.
     return (
       <div
-        className="trading-page theme-dark term-theme flex flex-col h-[100dvh] bg-bg-base min-h-0"
-        data-theme="dark"
+        className="trading-page theme-light flex flex-col h-[100dvh] bg-bg-base min-h-0"
+        data-theme="light"
       >
         <div className="flex-1 flex overflow-hidden min-h-0">
           <Suspense fallback={fallback}>

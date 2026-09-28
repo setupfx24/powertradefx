@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { adminApi } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { closeReasonInfo, CLOSE_REASON_CLASS } from '@/lib/closeReason';
 import { formatNumber, formatDateTime } from '@/lib/formatters';
 import { downloadReportPdf, fmtMoney, fmtWhen } from '@/lib/pdf';
 import {
@@ -27,8 +28,14 @@ interface UserDetail {
     phone: string | null;
     first_name: string | null;
     last_name: string | null;
+    date_of_birth: string | null;
     country: string | null;
     address: string | null;
+    city: string | null;
+    state: string | null;
+    postal_code: string | null;
+    pan_number: string | null;
+    aadhaar_masked: string | null;
     role: string;
     status: string;
     kyc_status: string;
@@ -307,7 +314,7 @@ export default function UserDetailPage() {
         a.account_number, fmtMoney(a.balance), fmtMoney(a.credit), fmtMoney(a.equity),
         fmtMoney(a.margin_used), fmtMoney(a.free_margin), `1:${a.leverage}`, a.is_demo ? 'Demo' : 'Real',
       ]),
-      filename: `powertradefx-statement-${name.replace(/\s+/g, '-').toLowerCase()}-${new Date().toISOString().slice(0, 10)}.pdf`,
+      filename: `swisscresta-statement-${name.replace(/\s+/g, '-').toLowerCase()}-${new Date().toISOString().slice(0, 10)}.pdf`,
     });
   };
 
@@ -386,10 +393,30 @@ export default function UserDetailPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <InfoRow label="Email" value={user.email} icon={Mail} />
               <InfoRow label="Phone" value={user.phone || '—'} icon={Phone} />
-              <InfoRow label="Country" value={user.country || '—'} icon={MapPin} />
-              <InfoRow label="Address" value={user.address || '—'} icon={MapPin} />
+              <InfoRow label="Date of Birth" value={user.date_of_birth ? new Date(user.date_of_birth).toLocaleDateString() : '—'} />
               <InfoRow label="Role" value={user.role} />
               <InfoRow label="Member Since" value={user.created_at ? new Date(user.created_at).toLocaleDateString() : '—'} />
+            </div>
+
+            {/* Full address. The street line was the only part ever shown, so
+                support saw an address with no city, state or postcode beside
+                it even though all three were on the user record. */}
+            {/* KYC identifiers. Aadhaar shows masked because only the last
+                four digits are stored — the full number is deliberately never
+                held, so there is nothing further to reveal. */}
+            <h3 className="text-sm font-semibold text-text-primary mt-6 mb-3">Identity Documents</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <InfoRow label="PAN" value={user.pan_number || '—'} />
+              <InfoRow label="Aadhaar" value={user.aadhaar_masked || '—'} />
+            </div>
+
+            <h3 className="text-sm font-semibold text-text-primary mt-6 mb-3">Address</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <InfoRow label="Street" value={user.address || '—'} icon={MapPin} />
+              <InfoRow label="City" value={user.city || '—'} icon={MapPin} />
+              <InfoRow label="State" value={user.state || '—'} icon={MapPin} />
+              <InfoRow label="Postal Code" value={user.postal_code || '—'} icon={MapPin} />
+              <InfoRow label="Country" value={user.country || '—'} icon={MapPin} />
             </div>
           </div>
 
@@ -478,7 +505,10 @@ export default function UserDetailPage() {
               <span className={cn('font-mono tabular-nums', t.stop_loss != null ? 'text-sell' : 'text-text-tertiary')}>{t.stop_loss ?? '—'}</span>,
               <span className={cn('font-mono tabular-nums', t.take_profit != null ? 'text-buy' : 'text-text-tertiary')}>{t.take_profit ?? '—'}</span>,
               <span className={cn('font-mono tabular-nums font-semibold', t.profit >= 0 ? 'text-success' : 'text-danger')}>{t.profit >= 0 ? '+' : ''}${fmt(t.profit)}</span>,
-              <span className={cn('inline-flex px-2 py-0.5 rounded text-xxs font-semibold capitalize', typeColor(t.close_reason || 'manual'))}>{t.close_reason || 'manual'}</span>,
+              /* Was rendering the raw DB value capitalized ("Ai_strategy",
+                 "Stop_out"). Shared mapping gives the same names the trades
+                 table and the trader's own history use. */
+              <span className={cn('inline-flex px-2 py-0.5 rounded text-xxs font-semibold', CLOSE_REASON_CLASS[closeReasonInfo(t.close_reason).tone])}>{closeReasonInfo(t.close_reason).label}</span>,
             ])}
           />
         </>

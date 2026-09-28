@@ -10,10 +10,11 @@
 
 /** Longest-prefix-first list so /admin-audit-logs wins over /audit-logs etc. */
 const PATH_PERMS: [prefix: string, perm: string][] = [
+  ['/branding', '_broker'],
+  ['/brokers', 'sub_brokers.view'],
   ['/admin-audit-logs', 'audit_logs.view'],
   ['/account-types', 'config.view'],
   ['/audit-logs', 'audit_logs.view'],
-  ['/fund-approvals', 'users.view'],
   ['/transactions', 'deposits.view'],
   ['/employees', '_super_admin'],
   ['/analytics', 'analytics.view'],
@@ -28,7 +29,7 @@ const PATH_PERMS: [prefix: string, perm: string][] = [
   ['/banks', 'banks.view'],
   ['/bonus', 'bonus.view'],
   ['/users', 'users.view'],
-  ['/book', 'trades.view'],
+  ['/book', '_platform:trades.view'],
   ['/kyc', 'kyc.view'],
 ];
 
@@ -46,6 +47,12 @@ export function hasPerm(
   perm: string | null,
 ): boolean {
   if (!perm) return true;
+  if (perm === '_broker') return employeeRole === 'broker';
+  if (perm.startsWith('_platform:')) {
+    if (employeeRole === 'broker') return false;
+    const base = perm.slice('_platform:'.length);
+    return permissions.includes('*') || base === '' || permissions.includes(base);
+  }
   if (permissions.includes('*')) return true;
   if (perm === '_super_admin') return employeeRole === 'super_admin';
   return permissions.includes(perm);

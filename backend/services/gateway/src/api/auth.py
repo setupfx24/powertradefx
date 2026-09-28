@@ -12,7 +12,7 @@ from packages.common.src.schemas import (
     GoogleAuthRequest,
     WalletNonceRequest, WalletNonceResponse, WalletVerifyRequest,
 )
-from packages.common.src.auth import get_current_user
+from packages.common.src.auth import get_current_user, require_full_session
 from ..services.auth_service import (
     AuthServiceError,
     register_user, login_user, demo_login as _demo_login,
@@ -46,18 +46,22 @@ async def platform_status():
         "allow_new_registrations": await get_bool_setting("allow_new_registrations", True),
         "allow_deposits": await get_bool_setting("allow_deposits", True),
         "allow_withdrawals": await get_bool_setting("allow_withdrawals", True),
+        # Admin-enforced identity verification. When false KYC stays optional
+        # (users may still verify to unlock higher leverage / card deposits).
+        "kyc_required": await get_bool_setting("kyc_required", False),
     }
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(req: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    """Legacy one-shot registration. Kept for back-compat (older mobile
-    builds, scripts) but the trader web frontend now uses the
-    register/start + register/verify pair so the `users` row isn't
-    created until the email is OTP-verified."""
+    """Registration entry point. H-AUTH-4: this now delegates to the pending
+    (OTP-first) flow instead of the legacy `register_user`, which reclaimed an
+    unverified stub in place and issued session cookies before the email was
+    verified. No `users` row is created and no session is issued until the OTP
+    is confirmed via /auth/register/verify."""
     try:
-        return await register_user(
-            email=req.email, password=req.password,
+        return await pending_registration_service.start_pending_registration(
+            email=str(req.email), password=req.password,
             first_name=req.first_name, last_name=req.last_name,
             phone=req.phone, country=req.country,
             referral_code=req.referral_code,
@@ -176,6 +180,7 @@ async def google_auth(req: GoogleAuthRequest, request: Request, db: AsyncSession
             referral_code=req.referral_code,
             request=request,
             db=db,
+            totp_code=req.totp_code,
         )
     except AuthServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
@@ -240,16 +245,11 @@ async def auth_refresh(request: Request, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
 
-@router.post("/bootstrap-session")
-async def bootstrap_session(
-    req: BootstrapSessionRequest, request: Request, db: AsyncSession = Depends(get_db),
-):
-    try:
-        return await _bootstrap_session(
-            access_token=req.access_token, request=request, db=db,
-        )
-    except AuthServiceError as e:
-        raise HTTPException(status_code=e.status_code, detail=e.detail)
+# NOTE: the public POST /auth/bootstrap-session route was removed. It let any
+# holder of an access token mint a fresh session + refresh token (and resurrect
+# logged-out tokens). The only legitimate use — admin impersonation — now goes
+# exclusively through the single-use code at /auth/impersonate/redeem, which
+# calls the bootstrap service function internally.
 
 
 class _ImpersonateRedeemRequest(BaseModel):
@@ -329,7 +329,7 @@ async def forgot_password(req: ForgotPasswordRequest, request: Request, db: Asyn
 @router.post("/reset-password", response_model=MessageResponse)
 async def reset_password(req: ResetPasswordRequest, request: Request, db: AsyncSession = Depends(get_db)):
     try:
-        result = await _reset_password(token=req.token, new_password=req.new_password, request=request, db=db)
+        result = await _reset_password(email=req.email, token=req.token, new_password=req.new_password, request=request, db=db)
         return MessageResponse(**result)
     except AuthServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
@@ -344,18 +344,27 @@ async def get_me(current_user: dict = Depends(get_current_user), db: AsyncSessio
 
 
 @router.post("/2fa/setup")
-async def setup_2fa(current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def setup_2fa(current_user: dict = Depends(require_full_session), db: AsyncSession = Depends(get_db)):
     try:
         return await _setup_2fa(user_id=current_user["user_id"], db=db)
     except AuthServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
 
+class _Verify2faRequest(BaseModel):
+    code: str
+
+
+class _ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+
 @router.post("/2fa/verify")
 async def verify_2fa(
-    code: str,
+    body: _Verify2faRequest,
     request: Request,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_full_session),
     db: AsyncSession = Depends(get_db),
 ):
     """Confirms the freshly-set TOTP secret and returns 8 one-time backup
@@ -369,31 +378,39 @@ async def verify_2fa(
     from ..services.auth_service import rate_limit_http
     rate_limit_http(request, "2fa-verify", 5, 600.0)
     try:
-        return await _verify_2fa(user_id=current_user["user_id"], code=code, db=db)
+        return await _verify_2fa(user_id=current_user["user_id"], code=body.code, db=db)
     except AuthServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
 
 @router.post("/2fa/regenerate-backup-codes")
 async def regenerate_2fa_backup_codes(
-    current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+    body: _Verify2faRequest,
+    request: Request,
+    current_user: dict = Depends(require_full_session), db: AsyncSession = Depends(get_db),
 ):
-    from ..services.auth_service import regenerate_2fa_backup_codes as _regen
+    """Mint a fresh backup-code sheet. Requires a current authenticator code
+    (backup codes bypass 2FA at login, so a bare session must not harvest them)."""
+    from ..services.auth_service import regenerate_2fa_backup_codes as _regen, rate_limit_http
+    rate_limit_http(request, "2fa-regen", 5, 600.0)
     try:
-        return await _regen(user_id=current_user["user_id"], db=db)
+        return await _regen(user_id=current_user["user_id"], code=body.code, db=db)
     except AuthServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
 
 @router.post("/password/change")
 async def change_password(
-    old_password: str, new_password: str,
-    current_user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+    body: _ChangePasswordRequest,
+    current_user: dict = Depends(require_full_session), db: AsyncSession = Depends(get_db),
 ):
+    # Phase 3: credentials arrive in the JSON body, not query params (which land
+    # in access logs / browser history / Referer).
     try:
         return await _change_password(
             user_id=current_user["user_id"],
-            old_password=old_password, new_password=new_password, db=db,
+            old_password=body.old_password, new_password=body.new_password, db=db,
+            keep_sid=current_user.get("sid"),
         )
     except AuthServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)

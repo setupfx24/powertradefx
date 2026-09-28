@@ -1,10 +1,8 @@
 'use client';
 
 import { useMemo, memo } from 'react';
-import { usePathname } from 'next/navigation';
 import { clsx } from 'clsx';
 import { useTradingStore } from '@/stores/tradingStore';
-import { useUIStore } from '@/stores/uiStore';
 import { toTradingViewSymbol } from '@/lib/tradingViewSymbols';
 
 const TIMELINE_EMBED_ORIGIN = 'https://www.tradingview-widget.com/embed-widget/timeline/';
@@ -61,11 +59,8 @@ function TradingViewNewsTimelineInner({
     [effectiveSymbol],
   );
 
-  // Follow the app theme toggle; the terminal is always the dark desk.
-  const appTheme = useUIStore((s) => s.theme);
-  const pathname = usePathname();
-  const colorTheme: 'dark' | 'light' =
-    pathname?.startsWith('/trading/terminal') ? 'dark' : appTheme;
+  // App is light-only.
+  const colorTheme: 'dark' | 'light' = 'light';
   /** Opaque dark panel reads as black; transparent can look grey on some shells */
   const isTransparent = false;
 

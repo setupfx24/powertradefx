@@ -172,7 +172,7 @@ export default function SocialPage() {
       <div className="p-6 space-y-4">
         <div>
           <h1 className="text-lg font-semibold text-text-primary">Social Trading Management</h1>
-          <p className="text-xxs text-text-tertiary mt-0.5">Trade Master, PAMM, and Copy Trading management</p>
+          <p className="text-xxs text-text-tertiary mt-0.5">Trade Master, PAMM, and Signal Provider management</p>
         </div>
 
         {/* Summary cards */}
@@ -441,7 +441,7 @@ export default function SocialPage() {
               <div>
                 <label className="block text-xxs text-text-tertiary mb-1">Master Type</label>
                 <select value={approveType} onChange={e => setApproveType(e.target.value)} className="w-full text-xs py-2 pl-3 pr-8 appearance-none bg-bg-input border border-border-primary rounded-md text-text-primary">
-                  <option value="signal_provider">Copy Trading</option>
+                  <option value="signal_provider">Signal Provider (Copy Trading)</option>
                   <option value="pamm">PAMM (Proportional Allocation)</option>
                   <option value="mamm">Trade Master (Multi-Account)</option>
                 </select>
@@ -596,8 +596,6 @@ const ADMIN_TXN_FILTERS = [
 function MasterHistoryModal({ master, onClose }: { master: ActiveMaster; onClose: () => void }) {
   const [filter, setFilter] = useState<(typeof ADMIN_TXN_FILTERS)[number]['id']>('all');
   const [page, setPage] = useState(1);
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
   const [data, setData] = useState<AdminMasterTxnResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -608,14 +606,9 @@ function MasterHistoryModal({ master, onClose }: { master: ActiveMaster; onClose
     setLoading(true);
     (async () => {
       try {
-        const params: Record<string, string> = {
-          page: String(page), per_page: String(perPage), filter_type: filter,
-        };
-        if (dateFrom) params.date_from = dateFrom;
-        if (dateTo) params.date_to = dateTo;
         const res = await adminApi.get<AdminMasterTxnResponse>(
           `/social/masters/${master.id}/transactions`,
-          params,
+          { page: String(page), per_page: String(perPage), filter_type: filter },
         );
         if (alive) setData(res);
       } catch (e: any) {
@@ -627,7 +620,7 @@ function MasterHistoryModal({ master, onClose }: { master: ActiveMaster; onClose
     return () => {
       alive = false;
     };
-  }, [filter, page, dateFrom, dateTo, master.id]);
+  }, [filter, page, master.id]);
 
   const typeLabel = (t: string) => {
     switch (t) {
@@ -680,35 +673,6 @@ function MasterHistoryModal({ master, onClose }: { master: ActiveMaster; onClose
               {f.label}
             </button>
           ))}
-          {/* Date window — inclusive; backend treats date_to as the whole day */}
-          <div className="flex items-center gap-1.5 ml-1">
-            <input
-              type="date"
-              value={dateFrom}
-              max={dateTo || undefined}
-              onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
-              aria-label="From date"
-              className="px-2 py-1 rounded-md text-[11px] border border-border-primary bg-bg-secondary text-text-primary outline-none focus:border-accent/50"
-            />
-            <span className="text-xxs text-text-tertiary">→</span>
-            <input
-              type="date"
-              value={dateTo}
-              min={dateFrom || undefined}
-              onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
-              aria-label="To date"
-              className="px-2 py-1 rounded-md text-[11px] border border-border-primary bg-bg-secondary text-text-primary outline-none focus:border-accent/50"
-            />
-            {(dateFrom || dateTo) && (
-              <button
-                type="button"
-                onClick={() => { setDateFrom(''); setDateTo(''); setPage(1); }}
-                className="px-2 py-1 rounded-md text-[10px] font-bold border border-border-primary bg-bg-secondary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
-              >
-                Clear
-              </button>
-            )}
-          </div>
         </div>
 
         {data && (

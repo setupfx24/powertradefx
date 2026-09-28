@@ -4,7 +4,6 @@ import { useEffect } from 'react'
 import Link from 'next/link'
 import { RefreshCw, Home } from 'lucide-react'
 import * as Sentry from '@sentry/nextjs'
-import { Button } from '@/components/ui'
 
 /**
  * Trader-app error boundary. Catches uncaught exceptions in any route
@@ -50,26 +49,31 @@ export default function Error({
   }, [error])
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-bg-base text-text-primary px-6">
+    <div className="min-h-screen flex items-center justify-center bg-[#0a0a0a] text-white px-6">
       <div className="max-w-md w-full text-center">
-        <p className="text-xxs font-bold uppercase tracking-[0.12em] text-text-tertiary mb-4">Error 500</p>
-        <h1 className="text-2xl font-semibold tracking-tight mb-3">Something broke on our end.</h1>
-        <p className="text-sm text-text-secondary mb-8 leading-relaxed">
+        <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-4">Error 500</p>
+        <h1 className="text-3xl font-bold mb-3">Something broke on our end.</h1>
+        <p className="text-gray-400 mb-8 leading-relaxed">
           A part of the platform failed to load. The error has been logged. You can retry,
           or head back to the dashboard.
         </p>
         {error.digest && (
-          <p className="text-xs text-text-tertiary font-mono mb-6">Reference: {error.digest}</p>
+          <p className="text-xs text-gray-600 font-mono mb-6">Reference: {error.digest}</p>
         )}
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
-          <Button variant="primary" size="lg" onClick={reset} leftIcon={<RefreshCw className="w-4 h-4" aria-hidden />}>
+          <button
+            onClick={reset}
+            type="button"
+            className="inline-flex items-center justify-center gap-2 bg-[#E94E1B] hover:bg-[#C73E11] text-white font-semibold px-6 py-3 rounded-lg transition-colors"
+          >
+            <RefreshCw className="w-4 h-4" />
             Try again
-          </Button>
+          </button>
           <Link
             href="/dashboard"
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-border-strong px-5 text-md font-semibold text-text-primary transition-colors hover:bg-bg-hover"
+            className="inline-flex items-center justify-center gap-2 border border-white/15 hover:border-white/30 text-white font-medium px-6 py-3 rounded-lg transition-colors"
           >
-            <Home className="w-4 h-4" aria-hidden />
+            <Home className="w-4 h-4" />
             Dashboard
           </Link>
         </div>

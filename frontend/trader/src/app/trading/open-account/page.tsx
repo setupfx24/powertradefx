@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import api from '@/lib/api/client';
-import { Badge, Button, Card, EmptyState, PageHeader, Skeleton } from '@/components/ui';
+import { Button } from '@/components/ui/Button';
 import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import { tradingTerminalUrl, setPersistedTradingAccountId } from '@/lib/tradingNav';
@@ -30,16 +30,6 @@ interface GroupItem {
 
 function fmtMoney(n: number, currency = 'USD') {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: 2 }).format(n);
-}
-
-/** Label + monospace value pair inside an account-type card. */
-function Spec({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="text-xxs text-text-tertiary">
-      {label}{' '}
-      <span className="text-text-primary font-mono tabular-nums">{value}</span>
-    </div>
-  );
 }
 
 function OpenAccountPageInner() {
@@ -93,93 +83,104 @@ function OpenAccountPageInner() {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto bg-bg-base">
-      <div className="page-main max-w-3xl mx-auto py-6 sm:py-8 space-y-4 md:space-y-5">
-        <PageHeader
-          title="Open live account"
-          description="Choose an account type configured by your broker. If a minimum opening amount is set and you already have funded live accounts, that amount is moved from your existing balances into this new account. Your first account opens at $0 until you deposit; you must meet the minimum balance before placing trades."
-        />
+    <div className="flex-1 overflow-y-auto bg-bg-primary">
+      <div className="page-main max-w-3xl mx-auto py-6 sm:py-8 space-y-6">
+        <div>
+          <h1 className="text-lg sm:text-xl font-bold text-text-primary">Open live account</h1>
+          <p className="text-xs sm:text-sm text-text-tertiary mt-1">
+            Choose an account type configured by your broker. If a minimum opening amount is set and you already have
+            funded live accounts, that amount is moved from your existing balances into this new account. Your first
+            account opens at $0 until you deposit; you must meet the minimum balance before placing trades.
+          </p>
+        </div>
 
         {loading ? (
-          <div className="space-y-3" aria-busy>
-            <Skeleton className="h-24 w-full" />
-            <Skeleton className="h-24 w-full" />
-            <Skeleton className="h-24 w-full" />
-          </div>
+          <div className="text-sm text-text-tertiary py-12 text-center">Loading account types…</div>
         ) : groups.length === 0 ? (
-          <Card>
-            <EmptyState title="No account types available" description="No account types are available yet. Please contact support." />
-          </Card>
+          <div className="rounded-xl border border-border-glass bg-bg-secondary p-8 text-center text-sm text-text-tertiary">
+            No account types are available yet. Please contact support.
+          </div>
         ) : (
           <ul className="space-y-3">
             {groups.map((g) => {
               const isSel = selected === g.id;
               return (
-                <li key={g.id}>
-                  <Card
-                    padding="none"
-                    interactive={!isSel}
-                    className={clsx('overflow-hidden', isSel && 'border-accent bg-accent/5')}
+                <li
+                  key={g.id}
+                  className={clsx(
+                    'rounded-xl border overflow-hidden transition-colors',
+                    isSel ? 'border-buy bg-buy/5' : 'border-border-glass bg-bg-secondary',
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setSelected(g.id)}
+                    className="w-full text-left p-4 sm:p-5 space-y-2"
                   >
-                    <button
-                      type="button"
-                      onClick={() => setSelected(g.id)}
-                      aria-pressed={isSel}
-                      className="w-full text-left p-4 sm:p-5 space-y-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 rounded-lg"
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-md font-semibold text-text-primary">{g.name}</span>
-                        {g.swap_free ? <Badge variant="success" size="sm">Swap-free</Badge> : null}
-                      </div>
-                      {g.description ? (
-                        <p className="text-xs text-text-secondary">{g.description}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-bold text-text-primary">{g.name}</span>
+                      {g.swap_free ? (
+                        <span className="text-xxs font-bold uppercase px-2 py-0.5 rounded-full bg-buy/15 text-buy">
+                          Swap-free
+                        </span>
                       ) : null}
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1">
-                        <Spec label="Min. balance (to trade)" value={fmtMoney(g.minimum_deposit)} />
-                        <Spec label="Leverage" value={`1:${g.leverage_default}`} />
-                        <Spec label="Commission / lot" value={g.commission_per_lot} />
-                      </div>
-                    </button>
-                    {isSel ? (
-                      <div className="px-4 sm:px-5 pb-4 sm:pb-5 pt-0 flex flex-col sm:flex-row gap-2 sm:justify-end">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="md"
-                          onClick={() => setSelected(null)}
-                          className="sm:w-auto"
-                        >
-                          Cancel
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="primary"
-                          size="md"
-                          loading={opening === g.id}
-                          onClick={() => openAccount(g.id)}
-                          className="sm:w-auto"
-                        >
-                          Open this account
-                        </Button>
-                      </div>
+                    </div>
+                    {g.description ? (
+                      <p className="text-xxs sm:text-xs text-text-tertiary">{g.description}</p>
                     ) : null}
-                  </Card>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xxs text-text-tertiary">
+                      <div>
+                        Min. balance (to trade){' '}
+                        <span className="text-text-primary font-mono">{fmtMoney(g.minimum_deposit)}</span>
+                      </div>
+                      <div>
+                        Leverage <span className="text-text-primary font-mono">1:{g.leverage_default}</span>
+                      </div>
+                      <div>
+                        Commission / lot{' '}
+                        <span className="text-text-primary font-mono">{g.commission_per_lot}</span>
+                      </div>
+                    </div>
+                  </button>
+                  {isSel ? (
+                    <div className="px-4 sm:px-5 pb-4 sm:pb-5 pt-0 flex flex-col sm:flex-row gap-2 sm:justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="md"
+                        onClick={() => setSelected(null)}
+                        className="sm:w-auto"
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="md"
+                        loading={opening === g.id}
+                        onClick={() => openAccount(g.id)}
+                        className="sm:w-auto"
+                      >
+                        Open this account
+                      </Button>
+                    </div>
+                  ) : null}
                 </li>
               );
             })}
           </ul>
         )}
 
-        <p className="text-xs text-text-tertiary">
-          <Link href="/trading" className="text-accent hover:underline underline-offset-4">
+        <p className="text-xxs text-text-tertiary">
+          <Link href="/trading" className="text-buy hover:underline">
             Back to trading
           </Link>
           {' · '}
-          <Link href="/dashboard" className="text-accent hover:underline underline-offset-4">
+          <Link href="/dashboard" className="text-buy hover:underline">
             Dashboard
           </Link>
           {' · '}
-          <Link href="/accounts" className="text-accent hover:underline underline-offset-4">
+          <Link href="/accounts" className="text-buy hover:underline">
             Accounts
           </Link>
         </p>
@@ -192,7 +193,7 @@ export default function OpenAccountPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex-1 overflow-y-auto bg-bg-base">
+        <div className="flex-1 overflow-y-auto bg-bg-primary">
           <div className="page-main max-w-3xl mx-auto py-6 sm:py-8">
             <div className="text-sm text-text-tertiary py-12 text-center">Loading…</div>
           </div>

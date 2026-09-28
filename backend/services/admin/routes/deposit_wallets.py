@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.common.src.database import get_db
 from dependencies import require_permission
 from packages.common.src.models import User
-from packages.common.src.rate_limit import client_ip_for_inet
 from services import deposit_wallet_service
 
 router = APIRouter(prefix="/deposit-wallets", tags=["DepositWallets"])
@@ -35,7 +34,7 @@ async def upsert_deposit_wallet(
 ):
     return await deposit_wallet_service.upsert_wallet(
         db=db, admin_id=admin.id,
-        ip_address=client_ip_for_inet(request),
+        ip_address=request.client.host if request.client else None,
         network=body.network, address=body.address,
         min_confirmations=body.min_confirmations,
     )

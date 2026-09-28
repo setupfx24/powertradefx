@@ -18,18 +18,20 @@
  */
 import Link from 'next/link';
 import { AlertTriangle } from 'lucide-react';
+import { useBrandDisplay } from '@/components/providers/BrandingProvider';
 
 const YEAR = new Date().getUTCFullYear();
 
 export default function DashboardFooter() {
+  const brand = useBrandDisplay();
   return (
-    <footer className="w-full mt-8 border-t border-border-primary bg-bg-secondary/50">
+    <footer className="w-full mt-8 border-t border-border-glass bg-bg-secondary/50">
       <div className="w-full px-4 sm:px-6 md:px-8 py-5 space-y-3">
-        {/* Risk-warning band — warning-toned icon + concise copy.
+        {/* Risk-warning band — high-contrast amber dot + concise copy.
             Mandatory disclosure under most regulators for any leveraged
             CFD platform. Keep terse so it doesn't dominate the page. */}
-        <div className="flex items-start gap-2.5 text-xs leading-relaxed text-text-tertiary">
-          <AlertTriangle size={14} className="text-warning shrink-0 mt-0.5" aria-hidden />
+        <div className="flex items-start gap-2.5 text-[11px] leading-relaxed text-text-tertiary">
+          <AlertTriangle size={14} className="text-amber-400/90 shrink-0 mt-0.5" aria-hidden />
           <p>
             <span className="font-semibold text-text-secondary">Risk warning:</span>{' '}
             Trading forex, CFDs, and other leveraged products carries a high level of risk and may
@@ -41,26 +43,26 @@ export default function DashboardFooter() {
 
         {/* Legal + navigation links — single horizontal row on desktop,
             wraps on narrow viewports. */}
-        <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2 text-[11px]">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-text-tertiary">
-            <span>© {YEAR} PowerTradeFX. All rights reserved.</span>
-            <Link href="/terms" className="hover:text-accent transition-colors">
+            <span>© {YEAR} {brand.name}. All rights reserved.</span>
+            <Link href="/terms" className="hover:text-[#E94E1B] transition-colors">
               Terms &amp; Conditions
             </Link>
-            <Link href="/privacy" className="hover:text-accent transition-colors">
+            <Link href="/privacy" className="hover:text-[#E94E1B] transition-colors">
               Privacy Policy
             </Link>
-            <Link href="/risk" className="hover:text-accent transition-colors">
+            <Link href="/risk" className="hover:text-[#E94E1B] transition-colors">
               Risk Disclosure
             </Link>
-            <Link href="/terms" className="hover:text-accent transition-colors">
-              Terms
+            <Link href="/how-it-works" className="hover:text-[#E94E1B] transition-colors">
+              How It Works
             </Link>
-            <Link href="/support" className="hover:text-accent transition-colors">
+            <Link href="/support" className="hover:text-[#E94E1B] transition-colors">
               Support
             </Link>
           </div>
-          <span className="text-text-tertiary">
+          <span className="text-text-tertiary/80">
             By using this platform you accept the Terms and acknowledge the trading risks.
           </span>
         </div>

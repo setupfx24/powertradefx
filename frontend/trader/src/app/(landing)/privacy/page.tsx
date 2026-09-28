@@ -1,145 +1,264 @@
-export const metadata = { title: 'Privacy Policy — PowerTradeFX' }
+import Link from 'next/link';
+import { Section, PageHero, CtaBanner } from '@/marketing/components';
+import {
+  LegalDoc, LegalSection, LegalSubheading, LegalP, LegalList, LegalCallout, legalAnchor,
+} from '../_legal/LegalDoc';
+import { BRAND_NAME, BRAND_SUPPORT_EMAIL } from '@/lib/brand';
+
+/**
+ * Privacy Policy — public legal page.
+ *
+ * Section copy is preserved verbatim from the client-supplied PDF
+ * "privcy policy.pdf" (delivered 2026-06-09). The 15-section structure
+ * is preserved; only the visual chrome follows the shared marketing
+ * design system. Nothing has been reworded, reordered or dropped.
+ */
+
+/**
+ * Each section has a heading + body. `body` can mix prose paragraphs,
+ * sub-sections (sub-heading + bullets), and plain bullet lists. This
+ * is the minimum structure needed to reproduce the PDF wording 1:1.
+ */
+type Subsection = { title: string; lead?: string; bullets?: string[]; trailing?: string };
+type PolicySection = {
+  h: string;
+  lead?: string[];          // top-level prose paragraphs
+  bullets?: string[];        // top-level bullets
+  subs?: Subsection[];       // sub-sections like "Identity Information"
+  trailing?: string[];       // closing paragraphs after bullets / subs
+};
+
+const INTRO: PolicySection = {
+  h: `Privacy Policy of ${BRAND_NAME}`,
+  lead: [
+    `At ${BRAND_NAME} ("${BRAND_NAME}", "Company", "we", "our", or "us"), protecting your privacy and personal information is one of our highest priorities. ${BRAND_NAME} is a software development company that builds and licenses trading technology to licensed operators. We are committed to collecting, processing, storing, and protecting personal data responsibly and in accordance with applicable data protection laws and industry best practices.`,
+    `This Privacy Policy explains how we handle the personal information of visitors to our website, prospective clients, and people who contact us or request a demonstration. By accessing our website or engaging with ${BRAND_NAME}, you consent to the collection and processing of your personal information as described in this Privacy Policy.`,
+  ],
+};
+
+const SECTIONS: PolicySection[] = [
+  {
+    h: '1. Privacy Protection',
+    lead: [
+      `${BRAND_NAME} maintains appropriate administrative, technical, and organizational measures designed to protect personal information from unauthorized access, misuse, loss, alteration, or disclosure.`,
+      'Personal information is stored securely and accessed only by authorized personnel who require it for legitimate business, contractual, or support purposes.',
+      'While we implement reasonable security safeguards, no method of transmission over the internet or electronic storage system can be guaranteed to be completely secure.',
+      'You are responsible for maintaining the confidentiality of any account credentials, passwords, and authentication devices used to access our website or services.',
+    ],
+  },
+  {
+    h: '2. Personal Information We Collect',
+    lead: [`When you visit our website, request a demonstration, or engage ${BRAND_NAME} as a client, we may collect the following information:`],
+    subs: [
+      { title: 'Identity & Business Information', bullets: ['Full Name', 'Job Title or Role', 'Company or Organisation Name', 'Nationality or Country of Operation', 'Government or Company Registration Details (where required for a client engagement)', 'Identity Documents (where required to verify a client or its representatives)'] },
+      { title: 'Contact Information', bullets: ['Email Address', 'Telephone Number', 'Business or Mailing Address'] },
+      { title: 'Billing Information', bullets: ['Billing Contact Details', 'Company Billing Address', 'Invoice and Payment Records', 'Tax or VAT Registration Details'] },
+      { title: 'Technical Information', bullets: ['IP Address', 'Browser Information', 'Device Information', 'Operating System Information', 'Website Usage Data'] },
+      { title: 'Engagement Information', bullets: ['Products and Services You Enquire About', 'Demonstration and Meeting Records', 'Support and Correspondence History', 'Preferences You Share With Us'] },
+    ],
+  },
+  {
+    h: '3. How We Use Your Personal Information',
+    lead: [`${BRAND_NAME} may process your personal information for the following purposes:`],
+    subs: [
+      { title: 'Website Accounts and Enquiries', lead: 'To:', bullets: ['Create and manage website or demo accounts', 'Respond to enquiries and demo requests', 'Provide customer support', 'Manage account security'] },
+      { title: 'Compliance and Lawful Business', lead: 'To:', bullets: ['Verify the identity of clients and their representatives', 'Conduct sanctions and export-control screening', 'Prevent fraud and misuse of our services', 'Comply with legal obligations'] },
+      { title: 'Service Delivery', lead: 'To:', bullets: ['Deliver and configure licensed software', 'Provide integration and technical services', 'Administer client engagements', 'Provide and improve platform functionality'] },
+      { title: 'Security and Risk Management', lead: 'To:', bullets: ['Monitor for suspicious activity', 'Protect account and system security', 'Prevent abuse or misuse of our services', 'Detect unauthorized access'] },
+      { title: 'Communication', lead: 'To:', bullets: ['Respond to inquiries', 'Send service-related notifications', 'Deliver security alerts', 'Provide account updates'] },
+      { title: 'Marketing Communications', lead: `Subject to applicable laws and your preferences, ${BRAND_NAME} may send information regarding:`, bullets: ['New products and features', 'Platform updates', 'Company news', 'Educational content', 'Industry insights'], trailing: 'You may opt out of marketing communications at any time.' },
+    ],
+  },
+  {
+    h: '4. Legal Basis for Processing',
+    lead: ['We process personal information based on one or more of the following legal grounds:'],
+    subs: [
+      { title: 'Contract Performance', lead: 'Processing necessary to provide services requested by the client.' },
+      { title: 'Legal and Regulatory Obligations', lead: 'Processing required to comply with applicable laws, sanctions and export-control requirements, and other compliance obligations.' },
+      { title: 'Legitimate Business Interests', lead: 'Processing necessary for:', bullets: ['Risk management', 'Fraud prevention', 'Service improvement', 'Security monitoring', 'Internal administration'] },
+      { title: 'Client Consent', lead: 'Where required by law, processing may be based on the client\'s consent, which may be withdrawn at any time.' },
+    ],
+  },
+  {
+    h: '5. Client Verification and Compliance',
+    lead: [
+      `${BRAND_NAME} carries out reasonable checks to verify the clients and representatives it does business with, and to comply with applicable sanctions and export-control laws.`,
+      'As part of a client engagement, we may ask you to provide:',
+    ],
+    bullets: ['Government or company-issued identification', 'Proof of business address', 'Confirmation of authority to act for the client', 'Company ownership or registration details', 'Additional information needed for compliance checks'],
+    trailing: ['Failure to complete these checks may delay or prevent a client engagement.'],
+  },
+  {
+    h: '6. Disclosure of Personal Information',
+    lead: [
+      `${BRAND_NAME} does not sell personal information.`,
+      'Personal information may be shared only when necessary with:',
+    ],
+    subs: [
+      { title: 'Service Providers', lead: 'Including:', bullets: ['Technology providers', 'Hosting and infrastructure providers', 'Payment and billing providers', 'Security service providers'] },
+      { title: 'Compliance and Regulatory Authorities', lead: 'Where disclosure is required by law, regulation, court order, or government request.' },
+      { title: 'Professional Advisors', lead: 'Including:', bullets: ['Legal advisors', 'Auditors', 'Compliance consultants', 'Risk management providers'] },
+      { title: 'Business Partners', lead: 'Only where necessary for providing services or fulfilling contractual obligations.' },
+    ],
+    trailing: ['All third parties receiving personal information are expected to maintain appropriate confidentiality and security standards.'],
+  },
+  {
+    h: '7. Aggregated and De-identified Data',
+    lead: [`${BRAND_NAME} may create aggregated or de-identified data from the information it holds:`],
+    bullets: [
+      'Such data does not identify any individual.',
+      'It may be used to analyse and improve our products and services.',
+      'It may be shared with clients or partners in a form that does not identify individuals.',
+    ],
+    trailing: ['Where data is fully anonymised, it is no longer treated as personal information under this Policy.'],
+  },
+  {
+    h: '8. Cookies and Website Analytics',
+    lead: [`${BRAND_NAME} may use:`],
+    bullets: ['Cookies', 'Analytics tools', 'Pixel tags', 'Session tracking technologies'],
+    trailing: [
+      'These technologies help us:',
+      'Improve website performance · Enhance user experience · Analyze traffic patterns · Detect fraud and security risks',
+      'Clients may adjust browser settings to limit cookie usage, although some website functions may be affected.',
+    ],
+  },
+  {
+    h: '9. International Data Transfers',
+    lead: [
+      'Personal information may be processed or stored in countries other than your country of residence.',
+      `Where international transfers occur, ${BRAND_NAME} will take reasonable measures to ensure that personal information receives an appropriate level of protection consistent with applicable privacy requirements.`,
+    ],
+  },
+  {
+    h: '10. Data Retention',
+    lead: [`${BRAND_NAME} retains personal information only for as long as necessary to:`],
+    bullets: ['Provide our services', 'Comply with legal obligations', 'Resolve disputes', 'Prevent fraud', 'Meet record-keeping requirements'],
+    trailing: ['Business records, communications, and verification documents may be retained for the minimum period required by applicable law.'],
+  },
+  {
+    h: '11. Your Rights',
+    lead: ['Depending on applicable laws, clients may have the right to:'],
+    subs: [
+      { title: 'Access', lead: `Request a copy of personal information held by ${BRAND_NAME}.` },
+      { title: 'Correction', lead: 'Request correction of inaccurate or incomplete information.' },
+      { title: 'Deletion', lead: 'Request deletion of personal information where legally permitted.' },
+      { title: 'Restriction', lead: 'Request limitations on certain processing activities.' },
+      { title: 'Objection', lead: 'Object to specific processing activities.' },
+      { title: 'Data Portability', lead: 'Request transfer of personal information in a structured format where applicable.' },
+    ],
+    trailing: ['Requests may be submitted through our support team.'],
+  },
+  {
+    h: '12. Security Measures',
+    lead: [`${BRAND_NAME} implements security controls designed to protect personal information, including:`],
+    bullets: ['Secure data storage', 'Access control procedures', 'Encryption technologies where appropriate', 'Internal compliance monitoring', 'Security audits and reviews'],
+    trailing: ['Despite these measures, clients should understand that no electronic system is completely immune from security risks.'],
+  },
+  {
+    h: '13. Legal Disclosure',
+    lead: [`${BRAND_NAME} may disclose personal information when required to:`],
+    bullets: ['Comply with legal obligations', 'Respond to lawful requests', 'Protect company rights', 'Prevent fraud', 'Investigate suspicious activity', 'Enforce contractual agreements'],
+    trailing: ['Such disclosures will only occur when legally justified.'],
+  },
+  {
+    h: '14. Changes to This Privacy Policy',
+    lead: [
+      `${BRAND_NAME} reserves the right to modify this Privacy Policy at any time.`,
+      `Updated versions will become effective upon publication on the ${BRAND_NAME} website.`,
+      `Continued use of ${BRAND_NAME} services following any update constitutes acceptance of the revised Privacy Policy.`,
+    ],
+  },
+];
+
+const CONTACT_HEADING = '15. Contact Information';
+
+const TOC = [
+  { id: legalAnchor(INTRO.h), label: INTRO.h },
+  ...SECTIONS.map((s) => ({ id: legalAnchor(s.h), label: s.h })),
+  { id: legalAnchor(CONTACT_HEADING), label: CONTACT_HEADING },
+];
+
+/** Renders one policy section body — prose, bullets, sub-sections, trailing prose. */
+function SectionBody({ sec }: { sec: PolicySection }) {
+  return (
+    <>
+      {sec.lead?.map((p, i) => <LegalP key={`lead-${i}`}>{p}</LegalP>)}
+      {sec.bullets && <LegalList items={sec.bullets} />}
+      {sec.subs?.map((sub) => (
+        <div key={sub.title} className="flex flex-col gap-3">
+          <LegalSubheading>{sub.title}</LegalSubheading>
+          {sub.lead && <LegalP>{sub.lead}</LegalP>}
+          {sub.bullets && <LegalList items={sub.bullets} />}
+          {sub.trailing && <LegalP>{sub.trailing}</LegalP>}
+        </div>
+      ))}
+      {sec.trailing?.map((p, i) => <LegalP key={`tail-${i}`}>{p}</LegalP>)}
+    </>
+  );
+}
 
 export default function PrivacyPage() {
   return (
-    <div className="bg-white text-gray-900">
-      <section className="bg-white pt-16 pb-12">
-        <div className="w-full px-3 sm:px-6 lg:px-8">
-          <h1 className="text-4xl font-extrabold text-gray-900 mb-2">Privacy Policy</h1>
-          <p className="text-gray-500">Last updated: March 2026</p>
-        </div>
-      </section>
+    <main>
+      <PageHero
+        kicker="Legal"
+        title="Privacy Policy"
+        lead="What personal data we collect, why we collect it, and how we keep it safe."
+      />
 
-      <section className="py-12 bg-white">
-        <div className="w-full px-3 sm:px-6 lg:px-8 space-y-10">
+      <Section raised>
+        <LegalDoc toc={TOC} updated="June 2026">
+          <LegalSection id={legalAnchor(INTRO.h)} heading={INTRO.h}>
+            <SectionBody sec={INTRO} />
+          </LegalSection>
 
-          <Section title="1. Introduction">
-            PowerTradeFX ("we," "us," "our," or "Company") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you visit our website and use our trading platform.
-          </Section>
+          {SECTIONS.map((sec) => (
+            <LegalSection key={sec.h} id={legalAnchor(sec.h)} heading={sec.h}>
+              <SectionBody sec={sec} />
+            </LegalSection>
+          ))}
 
-          <Section title="2. Information We Collect">
-            <Sub title="Personal Information">
-              We collect information you provide directly, including:
-              <List items={[
-                'Full name, email address, and phone number',
-                'Date of birth and identification documents',
-                'Address and residency information',
-                'Banking and payment information',
-                'Trading preferences and account settings',
-              ]} />
-            </Sub>
-            <Sub title="Automatically Collected Information">
-              When you use our platform, we automatically collect:
-              <List items={[
-                'IP address and device information',
-                'Browser type and operating system',
-                'Pages visited and time spent on pages',
-                'Trading activity and transaction history',
-                'Cookies and similar tracking technologies',
-              ]} />
-            </Sub>
-          </Section>
+          {/* Section 15 — Contact (special handling) */}
+          <LegalSection id={legalAnchor(CONTACT_HEADING)} heading={CONTACT_HEADING}>
+            <LegalP>
+              For questions, concerns, requests, or complaints regarding this Privacy Policy, please contact:
+            </LegalP>
+            <LegalCallout>
+              <span style={{ color: 'var(--mk-text)', fontWeight: 700 }}>{BRAND_NAME} Support Team</span>
+              <br />
+              Email:{' '}
+              <a
+                href={`mailto:${BRAND_SUPPORT_EMAIL}`}
+                className="hover:underline"
+                style={{ color: 'var(--mk-accent)' }}
+              >
+                {BRAND_SUPPORT_EMAIL}
+              </a>
+            </LegalCallout>
+            <LegalP>
+              {BRAND_NAME} is committed to protecting client privacy and maintaining the highest standards of data security and confidentiality.
+            </LegalP>
+            <LegalP>
+              Read this alongside our{' '}
+              <Link href="/terms" className="hover:underline" style={{ color: 'var(--mk-accent)' }}>
+                Terms of Service
+              </Link>{' '}
+              and{' '}
+              <Link href="/risk" className="hover:underline" style={{ color: 'var(--mk-accent)' }}>
+                Risk Disclaimer
+              </Link>
+              .
+            </LegalP>
+          </LegalSection>
+        </LegalDoc>
+      </Section>
 
-          <Section title="3. How We Use Your Information">
-            We use the information we collect for the following purposes:
-            <List items={[
-              'To provide, maintain, and improve our trading platform',
-              'To process your deposits, withdrawals, and trades',
-              'To verify your identity and comply with KYC/AML regulations',
-              'To communicate with you about your account and services',
-              'To send promotional emails and marketing communications',
-              'To detect and prevent fraud and unauthorized access',
-              'To comply with legal obligations and regulatory requirements',
-              'To analyze platform usage and improve user experience',
-            ]} />
-          </Section>
-
-          <Section title="4. Data Security">
-            We implement industry-standard security measures to protect your personal information, including:
-            <List items={[
-              'SSL/TLS encryption for all data in transit',
-              'AES-256 encryption for sensitive data at rest',
-              'Regular security audits and penetration testing',
-              'Segregated client funds in separate bank accounts',
-              'Multi-factor authentication for account access',
-              'Restricted access to personal information by authorized personnel only',
-            ]} />
-            <p className="mt-4 text-gray-500">However, no method of transmission over the Internet is 100% secure. While we strive to protect your information, we cannot guarantee absolute security.</p>
-          </Section>
-
-          <Section title="5. Information Sharing">
-            We may share your information with:
-            <List items={[
-              'Payment processors and financial institutions',
-              'Regulatory authorities and government agencies',
-              'Third-party service providers (hosting, analytics, customer support)',
-              'Legal advisors and compliance consultants',
-              'Fraud prevention and identity verification services',
-            ]} />
-            <p className="mt-4 text-gray-500">We do not sell your personal information to third parties for marketing purposes.</p>
-          </Section>
-
-          <Section title="6. Your Rights">
-            You have the right to:
-            <List items={[
-              'Access your personal information',
-              'Correct inaccurate or incomplete information',
-              'Request deletion of your information (subject to legal requirements)',
-              'Opt-out of marketing communications',
-              'Request a copy of your data in a portable format',
-              'Lodge a complaint with regulatory authorities',
-            ]} />
-          </Section>
-
-          <Section title="7. Cookies and Tracking">
-            We use cookies and similar technologies to enhance your experience. You can control cookie settings through your browser preferences. Disabling cookies may affect platform functionality.
-          </Section>
-
-          <Section title="8. Data Retention">
-            We retain your personal information for as long as necessary to provide our services and comply with legal obligations. Trading records are retained for a minimum of 7 years as required by financial regulations.
-          </Section>
-
-          <Section title="9. Contact Us">
-            If you have questions about this Privacy Policy or our privacy practices, please contact us:
-            <ContactBox team="Privacy Team" email="privacy@powertradefx.com" />
-          </Section>
-        </div>
-      </section>
-    </div>
-  )
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <h2 className="text-2xl font-bold text-gray-900 mb-4">{title}</h2>
-      <div className="text-gray-500 leading-relaxed space-y-3">{children}</div>
-    </div>
-  )
-}
-
-function Sub({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="mt-4">
-      <h3 className="font-semibold text-gray-800 mb-2">{title}</h3>
-      {children}
-    </div>
-  )
-}
-
-function List({ items }: { items: string[] }) {
-  return (
-    <ul className="list-disc list-inside space-y-1.5 mt-2 text-gray-500">
-      {items.map((item) => <li key={item}>{item}</li>)}
-    </ul>
-  )
-}
-
-function ContactBox({ team, email }: { team: string; email: string }) {
-  return (
-    <div className="bg-gray-50 border border-gray-200 rounded-xl p-6 mt-4 text-sm space-y-1">
-      <p className="font-semibold text-gray-900">PowerTradeFX {team}</p>
-      <p className="text-gray-500">Email: {email}</p>
-    </div>
-  )
+      <CtaBanner
+        title="Your Data, Your Control"
+        lead={`Get in touch with ${BRAND_NAME} confident that we treat your personal data with care.`}
+        primary={{ label: 'Book a demo', href: '/company/contact' }}
+        secondary={{ label: 'Delete My Account', href: '/delete-account' }}
+      />
+    </main>
+  );
 }

@@ -2,11 +2,11 @@
 pragma solidity 0.8.24;
 
 import {Script, console2} from "forge-std/Script.sol";
-import {PowerTradeFXVaultV1} from "../src/PowerTradeFXVaultV1.sol";
+import {SwissCrestaVaultV1} from "../src/SwissCrestaVaultV1.sol";
 
 /**
  * @title Deploy
- * @notice Deploys PowerTradeFXVaultV1 to the configured network.
+ * @notice Deploys SwissCrestaVaultV1 to the configured network.
  *
  * Usage:
  *   forge script script/Deploy.s.sol:Deploy \
@@ -35,16 +35,16 @@ import {PowerTradeFXVaultV1} from "../src/PowerTradeFXVaultV1.sol";
  *   `contract_address`.
  */
 contract Deploy is Script {
-    function run() external returns (PowerTradeFXVaultV1 vault) {
+    function run() external returns (SwissCrestaVaultV1 vault) {
         address usdt  = vm.envAddress("USDT_ADDRESS");
         address admin = vm.envAddress("ADMIN_ADDRESS");
 
-        console2.log("=== PowerTradeFXVaultV1 deploy ===");
+        console2.log("=== SwissCrestaVaultV1 deploy ===");
         console2.log("USDT address: %s", usdt);
         console2.log("Admin (multi-sig): %s", admin);
 
         vm.startBroadcast();
-        vault = new PowerTradeFXVaultV1(usdt, admin);
+        vault = new SwissCrestaVaultV1(usdt, admin);
 
         // Optional second pauser (on-call ops EOA) so a fast pause
         // doesn't require collecting multi-sig signatures.
@@ -66,12 +66,12 @@ contract Deploy is Script {
         vm.stopBroadcast();
 
         console2.log("=== DEPLOYED ===");
-        console2.log("PowerTradeFXVaultV1: %s", address(vault));
+        console2.log("SwissCrestaVaultV1: %s", address(vault));
         console2.log("");
         console2.log("Next steps:");
         console2.log("1. Verify on BscScan:");
         console2.log(
-            "   forge verify-contract <address> src/PowerTradeFXVaultV1.sol:PowerTradeFXVaultV1 \\"
+            "   forge verify-contract <address> src/SwissCrestaVaultV1.sol:SwissCrestaVaultV1 \\"
         );
         console2.log("     --chain-id 97 --watch \\");
         console2.log("     --constructor-args $(cast abi-encode 'constructor(address,address)' %s %s)", usdt, admin);

@@ -2,12 +2,10 @@
 
 import { useState } from 'react';
 import { useTradingStore } from '@/stores/tradingStore';
-import { useUIStore } from '@/stores/uiStore';
 import { clsx } from 'clsx';
 import toast from 'react-hot-toast';
-import { ChevronDown, LineChart, Minus, Plus, X } from 'lucide-react';
 import { sounds, unlockAudio } from '@/lib/sounds';
-import { Button, Input, Segmented } from '@/components/ui';
+import AnimatedPrice from '@/components/ui/AnimatedPrice';
 
 interface MobileOrderSheetProps {
   symbol: string;
@@ -16,13 +14,6 @@ interface MobileOrderSheetProps {
 }
 
 type PendingSubtype = 'buy_limit' | 'sell_limit' | 'buy_stop' | 'sell_stop';
-
-const PENDING_SUBTYPES: { id: PendingSubtype; label: string }[] = [
-  { id: 'buy_limit', label: 'Buy Limit' },
-  { id: 'sell_limit', label: 'Sell Limit' },
-  { id: 'buy_stop', label: 'Buy Stop' },
-  { id: 'sell_stop', label: 'Sell Stop' },
-];
 
 function pendingSubtypeToApi(sub: PendingSubtype): { order_type: 'limit' | 'stop'; side: 'buy' | 'sell' } {
   switch (sub) {
@@ -37,11 +28,6 @@ function pendingSubtypeToApi(sub: PendingSubtype): { order_type: 'limit' | 'stop
   }
 }
 
-/** Sheet field caption — the terminal's eyebrow scale. */
-function Caption({ children }: { children: React.ReactNode }) {
-  return <span className="text-xxs font-bold text-text-tertiary uppercase tracking-[0.12em] block ml-1">{children}</span>;
-}
-
 export default function MobileOrderSheet({ symbol, onClose, onGoToChart }: MobileOrderSheetProps) {
   // Narrow selectors: needs live `prices` but no longer re-renders on
   // positions/accounts/etc. Action references are stable in zustand.
@@ -49,7 +35,6 @@ export default function MobileOrderSheet({ symbol, onClose, onGoToChart }: Mobil
   const instruments = useTradingStore((s) => s.instruments);
   const activeAccount = useTradingStore((s) => s.activeAccount);
   const placeOrder = useTradingStore((s) => s.placeOrder);
-  const setActiveBottomTab = useUIStore((s) => s.setActiveBottomTab);
   const [orderType, setOrderType] = useState<'market' | 'pending'>('market');
   const [pendingSubtype, setPendingSubtype] = useState<PendingSubtype>('buy_limit');
   const [submitting, setSubmitting] = useState(false);
@@ -59,7 +44,7 @@ export default function MobileOrderSheet({ symbol, onClose, onGoToChart }: Mobil
   const [sl, setSl] = useState('');
   const [tp, setTp] = useState('');
   const [entryPrice, setEntryPrice] = useState('');
-
+  
   const instrument = instruments.find(i => i.symbol === symbol);
   const price = prices[symbol];
   const digits = instrument?.digits ?? 5;
@@ -75,29 +60,6 @@ export default function MobileOrderSheet({ symbol, onClose, onGoToChart }: Mobil
     : 0;
   const freeMargin = activeAccount?.free_margin || 0;
   const hasEnoughMargin = freeMargin >= marginRequired;
-
-  // Entry-price helper (parity with the desktop OrderPanel): the rule the
-  // server enforces for the chosen order type plus an explicit "Use <price>"
-  // suggestion, so the field is never mistaken for pre-filled. 0 = no quote.
-  const pendingLabel = PENDING_SUBTYPES.find((t) => t.id === pendingSubtype)?.label ?? pendingSubtype;
-  const suggestedEntry = !price
-    ? 0
-    : pendingSubtype === 'buy_limit'
-      ? price.ask * 0.999
-      : pendingSubtype === 'sell_limit'
-        ? price.bid * 1.001
-        : pendingSubtype === 'buy_stop'
-          ? price.ask * 1.001
-          : price.bid * 0.999;
-  const entryRule = !price
-    ? 'Waiting for a quote'
-    : pendingSubtype === 'buy_limit'
-      ? `must be below ${price.ask.toFixed(digits)}`
-      : pendingSubtype === 'sell_limit'
-        ? `must be above ${price.bid.toFixed(digits)}`
-        : pendingSubtype === 'buy_stop'
-          ? `must be above ${price.ask.toFixed(digits)}`
-          : `must be below ${price.bid.toFixed(digits)}`;
 
   const handleAdjustLots = (delta: number) => {
     setLots(prev => {
@@ -146,13 +108,13 @@ export default function MobileOrderSheet({ symbol, onClose, onGoToChart }: Mobil
     const slNum = sl.trim() ? parseFloat(sl) : NaN;
     const tpNum = tp.trim() ? parseFloat(tp) : NaN;
 
-    // Optimistic: instant feedback, API fires in background. Market orders
-    // toast immediately (the store injects the optimistic position row);
-    // a pending order toasts only once the server accepts it, because a
-    // resting order is NOT a fill and the message must not race a 400.
+    // Optimistic: instant feedback, API fires in background
     sounds.orderPlaced();
-    const isPending = orderType !== 'market';
-    if (!isPending) toast.success(`${side.toUpperCase()} ${lots} ${symbol}`);
+    const label =
+      orderType === 'market'
+        ? `${side.toUpperCase()} ${lots} ${symbol}`
+        : `${apiOrderType} ${side} ${lots} ${symbol}`;
+    toast.success(label);
     onClose();
     placeOrder({
       account_id: activeAccount.id,
@@ -163,182 +125,157 @@ export default function MobileOrderSheet({ symbol, onClose, onGoToChart }: Mobil
       price: priceVal,
       stop_loss: Number.isFinite(slNum) ? slNum : undefined,
       take_profit: Number.isFinite(tpNum) ? tpNum : undefined,
-    }).then(() => {
-      if (!isPending || priceVal == null) return;
-      // placeOrder already re-fetched pending orders for a limit/stop, so
-      // the Pending tab is current — bring it into view.
-      toast.success(
-        `${pendingLabel} ${lots} ${symbol} @ ${priceVal.toFixed(digits)} placed — waiting for price`,
-        { duration: 5000 },
-      );
-      setActiveBottomTab('pending');
     }).catch((err: unknown) => {
-      // api/client.ts throws Error(detail) for 4xx — surface the server's
-      // exact reason (e.g. "Buy limit must be below the current ask (...)").
-      const msg = err instanceof Error && err.message ? err.message : 'Failed to place order';
-      toast.error(msg, { duration: 6000 });
+      toast.error(err instanceof Error ? err.message : 'Failed to place order');
     });
   };
-
-  const canPlacePending = Boolean(entryPrice.trim()) && !submitting;
 
   return (
     <div className="fixed inset-0 z-[80] md:hidden">
       {/* Backdrop — dimmed app background so it reads correctly in light mode too. */}
-      <div className="absolute inset-0 bg-bg-overlay animate-fade-in" onClick={onClose} aria-hidden />
-
-      {/* Sheet */}
       <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Order ticket ${symbol}`}
-        className="absolute bottom-0 left-0 right-0 bg-card rounded-t-sheet border-t border-border-primary shadow-lg animate-slide-up flex flex-col max-h-[92vh] select-none"
-      >
+        className="absolute inset-0 bg-bg-base/70 backdrop-blur-sm animate-in fade-in duration-150"
+        onClick={onClose}
+      />
+      
+      {/* Sheet */}
+      <div className="absolute bottom-0 left-0 right-0 bg-bg-primary rounded-t-[32px] border-t border-border-glass shadow-2xl animate-in slide-in-from-bottom duration-150 flex flex-col max-h-[92vh] select-none">
         {/* Handle */}
         <div className="flex justify-center pt-3 pb-1">
-          <div className="w-10 h-1 bg-border-strong rounded-full" />
+          <div className="w-10 h-1 bg-text-tertiary/30 rounded-full" />
         </div>
 
         {/* Header */}
         <div className="px-6 py-3 flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-bold text-text-primary tracking-tight font-mono">{symbol}</h2>
-            <p className="text-xxs text-text-tertiary font-bold uppercase tracking-[0.12em] mt-0.5">
+            <h2 className="text-lg font-black text-text-primary tracking-tight">{symbol}</h2>
+            <p className="text-[10px] text-text-tertiary font-bold uppercase tracking-widest mt-0.5">
               {instrument?.display_name || symbol}
             </p>
           </div>
           <div className="flex items-center gap-2">
             {onGoToChart && (
-              <Button
-                variant="outline"
-                size="md"
-                iconOnly
+              <button
                 onClick={() => { onClose(); onGoToChart(); }}
+                className="w-9 h-9 flex items-center justify-center bg-bg-secondary rounded-full text-text-tertiary hover:text-buy transition-colors border border-border-glass"
                 title="Open chart"
-                aria-label="Open chart"
               >
-                <LineChart size={18} aria-hidden />
-              </Button>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 4 5-5"/></svg>
+              </button>
             )}
-            <Button variant="outline" size="md" iconOnly onClick={onClose} aria-label="Close">
-              <X size={20} aria-hidden />
-            </Button>
+            <button 
+              onClick={onClose}
+              className="w-9 h-9 flex items-center justify-center bg-bg-secondary rounded-full text-text-tertiary hover:text-text-primary transition-colors border border-border-glass"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
           </div>
         </div>
 
         <div className="px-6 pb-10 flex-1 overflow-y-auto space-y-5 scrollbar-none">
           {/* Leverage Selector */}
-          <div className="flex items-center justify-between p-3.5 bg-bg-tertiary rounded-lg border border-border-primary">
+          <div className="flex items-center justify-between p-3.5 bg-bg-secondary rounded-xl border border-border-glass">
             <span className="text-xs font-bold text-text-tertiary">Leverage</span>
-            <div className="flex items-center gap-1.5 text-warning font-bold text-xs font-mono">
+            <div className="flex items-center gap-1.5 text-warning font-black text-xs">
               {leverage}
-              <ChevronDown size={12} strokeWidth={3} aria-hidden />
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m6 9 6 6 6-6"/></svg>
             </div>
           </div>
 
           {/* Quick Bid/Ask Boxes */}
           <div className="grid grid-cols-2 gap-3">
-            <div className="bg-sell text-text-on-accent rounded-lg p-3 flex flex-col items-center justify-center shadow-sm">
-              <span className="text-xxs font-bold uppercase tracking-[0.12em] opacity-70 mb-0.5">Sell Price</span>
-              <span className="text-xl font-bold font-mono tabular-nums tracking-tighter">
-                {price?.bid.toFixed(digits) || '--'}
-              </span>
+            <div className="bg-sell rounded-xl p-3 flex flex-col items-center justify-center shadow-lg shadow-sell/20">
+              <span className="text-[9px] font-black text-white/60 uppercase tracking-widest mb-0.5">Sell Price</span>
+              <AnimatedPrice value={price?.bid} digits={digits} flash={false} lockWidth placeholder="--" className="text-xl font-black text-white font-mono tabular-nums tracking-tighter" />
             </div>
-            <div className="bg-buy text-text-inverse rounded-lg p-3 flex flex-col items-center justify-center shadow-sm">
-              <span className="text-xxs font-bold uppercase tracking-[0.12em] opacity-70 mb-0.5">Buy Price</span>
-              <span className="text-xl font-bold font-mono tabular-nums tracking-tighter">
-                {price?.ask.toFixed(digits) || '--'}
-              </span>
+            <div className="bg-buy rounded-xl p-3 flex flex-col items-center justify-center shadow-lg shadow-buy/20">
+              <span className="text-[9px] font-black text-white/60 uppercase tracking-widest mb-0.5">Buy Price</span>
+              <AnimatedPrice value={price?.ask} digits={digits} flash={false} lockWidth placeholder="--" className="text-xl font-black text-white font-mono tabular-nums tracking-tighter" />
             </div>
           </div>
 
           <div className="text-center">
-            <span className="text-xxs font-bold text-text-tertiary uppercase tracking-[0.2em] -mt-2 block">Spread: {spread.toFixed(1)} pips</span>
+            <span className="text-[9px] font-bold text-text-tertiary/40 uppercase tracking-[0.2em] -mt-2 block">Spread: {spread.toFixed(1)} pips</span>
           </div>
 
           {/* Market/Pending Switch */}
-          <Segmented
-            fullWidth
-            size="md"
-            aria-label="Order type"
-            value={orderType}
-            onChange={setOrderType}
-            options={[
-              { value: 'market', label: 'Market' },
-              { value: 'pending', label: 'Pending' },
-            ]}
-          />
+          <div className="grid grid-cols-2 bg-bg-secondary p-1 rounded-xl border border-border-glass">
+            <button 
+              onClick={() => setOrderType('market')}
+              className={clsx(
+                "py-2.5 rounded-lg text-[11px] font-black transition-all uppercase tracking-widest",
+                orderType === 'market' ? "bg-bg-hover text-text-primary shadow-xl" : "text-text-tertiary hover:text-text-primary"
+              )}
+            >
+              Market
+            </button>
+            <button 
+              onClick={() => setOrderType('pending')}
+              className={clsx(
+                "py-2.5 rounded-lg text-[11px] font-black transition-all uppercase tracking-widest",
+                orderType === 'pending' ? "bg-buy text-white shadow-lg shadow-buy/20" : "text-text-tertiary hover:text-text-primary"
+              )}
+            >
+              Pending
+            </button>
+          </div>
 
           {/* Pending Specific Section */}
           {orderType === 'pending' && (
-            <div className="space-y-4 animate-slide-down">
+            <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
               <div className="space-y-2">
-                <Caption>Order Type</Caption>
+                <label className="text-[9px] font-black text-text-tertiary uppercase tracking-widest block ml-1">Order Type</label>
                 <div className="grid grid-cols-2 gap-2">
-                  {PENDING_SUBTYPES.map((t) => {
-                    const active = pendingSubtype === t.id;
-                    return (
-                      <Button
-                        key={t.id}
-                        size="md"
-                        variant={active ? (t.id.includes('buy') ? 'buy' : 'sell') : 'outline'}
-                        aria-pressed={active}
-                        onClick={() => setPendingSubtype(t.id)}
-                        className="uppercase tracking-wide"
-                      >
-                        {t.label}
-                      </Button>
-                    );
-                  })}
+                  {[
+                    { id: 'buy_limit', label: 'Buy Limit' },
+                    { id: 'sell_limit', label: 'Sell Limit' },
+                    { id: 'buy_stop', label: 'Buy Stop' },
+                    { id: 'sell_stop', label: 'Sell Stop' }
+                  ].map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => setPendingSubtype(t.id as PendingSubtype)}
+                      className={clsx(
+                        "py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all",
+                        pendingSubtype === t.id 
+                          ? (t.id.includes('buy') ? "bg-buy border-buy text-white" : "bg-sell border-sell text-white")
+                          : "bg-bg-secondary border-border-glass text-text-tertiary"
+                      )}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
               <div className="space-y-2">
-                <Caption>Entry Price</Caption>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  size="lg"
-                  numeric
-                  placeholder="Enter price"
-                  value={entryPrice}
-                  onChange={(e) => setEntryPrice(e.target.value)}
-                  className="font-bold"
-                  aria-label="Entry price"
-                  hint={
-                    <span className="flex items-center justify-between gap-2 min-h-7">
-                      <span className="font-mono tabular-nums truncate">{entryRule}</span>
-                      {suggestedEntry > 0 && (
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          onClick={() => setEntryPrice(suggestedEntry.toFixed(digits))}
-                          className="shrink-0 font-mono tabular-nums !text-xs"
-                          aria-label={`Use ${suggestedEntry.toFixed(digits)} as the entry price`}
-                        >
-                          Use {suggestedEntry.toFixed(digits)}
-                        </Button>
-                      )}
-                    </span>
-                  }
-                />
+                <label className="text-[9px] font-black text-text-tertiary uppercase tracking-widest block ml-1">Entry Price</label>
+                <div className="relative">
+                  <input 
+                    type="number" 
+                    placeholder="Enter price"
+                    value={entryPrice}
+                    onChange={(e) => setEntryPrice(e.target.value)}
+                    className="w-full h-11 bg-bg-secondary rounded-xl border border-border-glass pl-4 pr-4 text-text-primary text-base font-bold placeholder:text-text-tertiary/30 focus:outline-none focus:border-buy/50 transition-all font-mono"
+                  />
+                </div>
               </div>
             </div>
           )}
 
           {/* Volume Control */}
           <div className="space-y-2">
-            <Caption>Volume (Lots)</Caption>
-            <div className="flex items-center gap-3">
-              <Button variant="secondary" size="lg" iconOnly onClick={() => handleAdjustLots(-0.01)} aria-label="Decrease volume">
-                <Minus size={18} strokeWidth={3} aria-hidden />
-              </Button>
-              <div className="flex-1 min-w-0">
-                <Input
+             <label className="text-[9px] font-black text-text-tertiary uppercase tracking-widest block ml-1">Volume (Lots)</label>
+             <div className="flex items-center gap-3">
+                <button 
+                  onClick={() => handleAdjustLots(-0.01)}
+                  className="w-11 h-11 flex items-center justify-center rounded-xl bg-bg-secondary border border-border-glass text-text-primary active:scale-90 transition-transform shadow-sm"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12h14"/></svg>
+                </button>
+                <input
                   type="text"
                   inputMode="decimal"
-                  size="lg"
-                  numeric
                   value={lotsInput}
                   onChange={(e) => {
                     const raw = e.target.value;
@@ -354,92 +291,86 @@ export default function MobileOrderSheet({ symbol, onClose, onGoToChart }: Mobil
                     setLots(safe);
                     setLotsInput(safe.toString());
                   }}
-                  className="text-center text-lg font-bold"
-                  aria-label="Volume in lots"
+                  className="flex-1 h-11 bg-bg-secondary rounded-xl border border-border-glass text-center text-lg font-black text-text-primary font-mono tabular-nums outline-none focus:border-accent"
                 />
-              </div>
-              <Button variant="secondary" size="lg" iconOnly onClick={() => handleAdjustLots(0.01)} aria-label="Increase volume">
-                <Plus size={18} strokeWidth={3} aria-hidden />
-              </Button>
-            </div>
-            {/* Cost of the selected volume — parity with the desktop panel
-                and the mobile app; red when free margin can't cover it. */}
-            <div className="flex items-center justify-between mt-2 px-1">
-              <span className="text-xxs font-bold text-text-tertiary uppercase tracking-[0.12em]">Margin Required</span>
-              <span className={clsx('text-xs font-mono font-bold tabular-nums', hasEnoughMargin ? 'text-text-secondary' : 'text-danger')}>
-                ≈ ${marginRequired.toFixed(2)}
-                <span className="font-normal text-text-tertiary"> · Free ${freeMargin.toFixed(2)}</span>
-              </span>
-            </div>
+                <button
+                  onClick={() => handleAdjustLots(0.01)}
+                  className="w-11 h-11 flex items-center justify-center rounded-xl bg-bg-secondary border border-border-glass text-text-primary active:scale-90 transition-transform shadow-sm"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 5v14M5 12h14"/></svg>
+                </button>
+             </div>
+             {/* Cost of the selected volume — parity with the desktop panel
+                 and the mobile app; red when free margin can't cover it. */}
+             <div className="flex items-center justify-between mt-2 px-1">
+               <span className="text-[9px] font-black text-text-tertiary uppercase tracking-widest">Margin Required</span>
+               <span className={clsx('text-xs font-mono font-bold', hasEnoughMargin ? 'text-text-secondary' : 'text-[#ef5350]')}>
+                 ≈ ${marginRequired.toFixed(2)}
+                 <span className="font-normal text-text-tertiary"> · Free ${freeMargin.toFixed(2)}</span>
+               </span>
+             </div>
           </div>
 
           {/* SL/TP Controls */}
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Caption>Stop Loss</Caption>
-              <Input
-                type="number"
-                size="lg"
-                numeric
-                placeholder="Optional"
-                value={sl}
-                onChange={(e) => setSl(e.target.value)}
-                className="text-center font-bold"
-                aria-label="Stop loss"
-              />
-            </div>
-            <div className="space-y-2">
-              <Caption>Take Profit</Caption>
-              <Input
-                type="number"
-                size="lg"
-                numeric
-                placeholder="Optional"
-                value={tp}
-                onChange={(e) => setTp(e.target.value)}
-                className="text-center font-bold"
-                aria-label="Take profit"
-              />
-            </div>
+             <div className="space-y-2">
+               <label className="text-[9px] font-black text-text-tertiary uppercase tracking-widest block ml-1">Stop Loss</label>
+               <input 
+                 type="number" 
+                 placeholder="Optional"
+                 value={sl}
+                 onChange={(e) => setSl(e.target.value)}
+                 className="w-full h-11 bg-bg-secondary rounded-xl border border-border-glass text-center text-sm text-text-primary font-mono tabular-nums placeholder:text-text-tertiary/30 focus:outline-none focus:border-sell/40 font-bold"
+               />
+             </div>
+             <div className="space-y-2">
+               <label className="text-[9px] font-black text-text-tertiary uppercase tracking-widest block ml-1">Take Profit</label>
+               <input 
+                 type="number" 
+                 placeholder="Optional"
+                 value={tp}
+                 onChange={(e) => setTp(e.target.value)}
+                 className="w-full h-11 bg-bg-secondary rounded-xl border border-border-glass text-center text-sm text-text-primary font-mono tabular-nums placeholder:text-text-tertiary/30 focus:outline-none focus:border-success/40 font-bold"
+               />
+             </div>
           </div>
 
           {/* Action Buttons */}
           <div className="pt-3">
-            {orderType === 'market' ? (
-              <div className="grid grid-cols-2 gap-4">
-                <Button
-                  variant="sell"
-                  size="lg"
-                  fullWidth
-                  disabled={submitting}
-                  onClick={() => handlePlaceOrder('sell')}
-                  className="!h-14 text-lg uppercase tracking-widest"
+             {orderType === 'market' ? (
+                <div className="grid grid-cols-2 gap-4">
+                  <button 
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => handlePlaceOrder('sell')}
+                    className="h-14 bg-sell rounded-xl flex items-center justify-center text-lg font-black text-white uppercase tracking-widest shadow-xl shadow-sell/20 active:scale-[0.98] transition-all disabled:opacity-50 disabled:pointer-events-none"
+                  >
+                    Sell
+                  </button>
+                  <button 
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => handlePlaceOrder('buy')}
+                    className="h-14 bg-buy rounded-xl flex items-center justify-center text-lg font-black text-white uppercase tracking-widest shadow-xl shadow-buy/20 active:scale-[0.98] transition-all disabled:opacity-50 disabled:pointer-events-none"
+                  >
+                    Buy
+                  </button>
+                </div>
+             ) : (
+                <button 
+                  type="button"
+                  onClick={() => handlePlaceOrder()}
+                  disabled={!entryPrice.trim() || submitting}
+                  className={clsx(
+                    "w-full h-14 rounded-xl flex items-center justify-center text-lg font-black uppercase tracking-widest shadow-xl transition-all active:scale-[0.98]",
+                    entryPrice.trim() && !submitting
+                      ? "bg-buy text-white shadow-buy/20" 
+                      : "bg-bg-secondary text-text-tertiary border border-border-glass cursor-not-allowed"
+                  )}
                 >
-                  Sell
-                </Button>
-                <Button
-                  variant="buy"
-                  size="lg"
-                  fullWidth
-                  disabled={submitting}
-                  onClick={() => handlePlaceOrder('buy')}
-                  className="!h-14 text-lg uppercase tracking-widest"
-                >
-                  Buy
-                </Button>
-              </div>
-            ) : (
-              <Button
-                variant={canPlacePending ? 'primary' : 'secondary'}
-                size="lg"
-                fullWidth
-                onClick={() => handlePlaceOrder()}
-                disabled={!canPlacePending}
-                className="!h-14 text-lg uppercase tracking-widest"
-              >
-                {submitting ? 'Placing…' : `Place ${pendingSubtype.replace('_', ' ')}`}
-              </Button>
-            )}
+                  {submitting ? 'Placing…' : `Place ${pendingSubtype.replace('_', ' ')}`}
+                </button>
+             )}
           </div>
         </div>
       </div>

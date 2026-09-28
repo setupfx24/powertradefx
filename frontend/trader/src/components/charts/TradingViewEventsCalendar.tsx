@@ -1,9 +1,7 @@
 'use client';
 
 import { useMemo, memo } from 'react';
-import { usePathname } from 'next/navigation';
 import { clsx } from 'clsx';
-import { useUIStore } from '@/stores/uiStore';
 
 const EVENTS_EMBED_ORIGIN = 'https://www.tradingview-widget.com/embed-widget/events/';
 
@@ -56,11 +54,8 @@ function TradingViewEventsCalendarInner({
   importanceFilter = '-1,0,1',
   countryFilter = ALL_COUNTRY_FILTER,
 }: TradingViewEventsCalendarProps) {
-  // Follow the app theme toggle; the terminal is always the dark desk.
-  const appTheme = useUIStore((s) => s.theme);
-  const pathname = usePathname();
-  const inTerminal = pathname?.startsWith('/trading/terminal');
-  const colorTheme: 'dark' | 'light' = themeOverride ?? (inTerminal ? 'dark' : appTheme);
+  // App is light-only.
+  const colorTheme: 'dark' | 'light' = themeOverride ?? 'light';
   const isTransparent = false;
 
   const iframeSrc = useMemo(

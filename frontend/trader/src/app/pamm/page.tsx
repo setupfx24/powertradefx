@@ -1,24 +1,20 @@
 'use client';
 
-import { useState, useEffect, useCallback, type ReactNode } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { clsx } from 'clsx';
 import toast from 'react-hot-toast';
 import DashboardShell from '@/components/layout/DashboardShell';
 import DemoLockGate from '@/components/demo/DemoLockGate';
+import Modal from '@/components/ui/Modal';
 import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api/client';
-import { cn } from '@/lib/utils';
 import { formatNumber as fmt } from '@/lib/formatters';
-import {
-  Badge, Button, Card, CardHeader, EmptyState, Input, Modal, PageHeader, SideBadge,
-  Skeleton, StatCard, Table, THead, TBody, TR, TH, TD, Tabs, Textarea,
-} from '@/components/ui';
 import {
   TrendingUp, Users, DollarSign, AlertCircle, BarChart2,
   Wallet, Clock, CheckCircle, Info,
 } from 'lucide-react';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
-
 
 interface MammPammAccount {
   id: string;
@@ -121,80 +117,56 @@ type Tab = 'browse' | 'investments' | 'apply' | 'dashboard';
 // `fmt` re-exported from the shared formatter module so PAMM stays
 // consistent with the rest of the trader app.
 
-/** P/L colour by sign: green up, red down. */
-const pnlClass = (n: number) => (n >= 0 ? 'text-success' : 'text-danger');
-
-/** "$1,234.56" with the browser locale (matches the previous summary cards). */
-const usd = (n: number, dp = 2) =>
-  `$${n.toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp })}`;
-
 function TypeBadge({ type }: { type: string }) {
-  return <Badge variant="accent" size="sm">{type}</Badge>;
-}
-
-function PnlText({ value, suffix = '', currency, className }: { value: number; suffix?: string; currency?: boolean; className?: string }) {
   return (
-    <span className={cn('font-mono tabular-nums', pnlClass(value), className)}>
-      {value >= 0 ? '+' : ''}{currency ? '$' : ''}{fmt(value)}{suffix}
+    <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-[#E94E1B]/10 border border-[#E94E1B]/20 text-[#E94E1B] text-[10px] font-bold uppercase tracking-wide">
+      {type}
     </span>
   );
 }
 
-/** Label / value line inside a card. */
-function KV({ label, children, className }: { label: ReactNode; children: ReactNode; className?: string }) {
+function PnlText({ value, suffix = '' }: { value: number; suffix?: string }) {
   return (
-    <div className={cn('flex items-center justify-between gap-2 text-xs', className)}>
-      <span className="text-text-tertiary">{label}</span>
-      <span className="font-mono tabular-nums text-text-primary">{children}</span>
-    </div>
+    <span className={value >= 0 ? 'text-[#E94E1B]' : 'text-red-400'}>
+      {value >= 0 ? '+' : ''}{fmt(value)}{suffix}
+    </span>
   );
 }
 
-function LoadingGrid({ cards = 3, className }: { cards?: number; className?: string }) {
-  return (
-    <div className={cn('grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4', className)} aria-busy>
-      {Array.from({ length: cards }).map((_, i) => (
-        <Skeleton key={i} className="h-48 w-full rounded-lg" />
-      ))}
-    </div>
-  );
-}
-
-/** Wallet balance strip used by the invest / refill modals. */
-function WalletStrip({ label, balance, onMax }: { label: string; balance: number; onMax: () => void }) {
-  return (
-    <Card nested padding="sm" className="flex items-center justify-between gap-3">
-      <div>
-        <p className="text-xxs font-bold uppercase tracking-[0.12em] text-text-tertiary">{label}</p>
-        <p className="text-lg font-semibold text-accent font-mono tabular-nums">{usd(balance)}</p>
-      </div>
-      <Button type="button" variant="link" size="xs" onClick={onMax}>Max</Button>
-    </Card>
-  );
+function Spinner() {
+  return <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#E94E1B] border-t-transparent" />;
 }
 
 function TradeRow({ t }: { t: { symbol: string; side: string; lots: number; open_price: number; close_price?: number; master_pnl: number; your_share: number; status: string; opened_at?: string; closed_at?: string } }) {
+  const isBuy = t.side?.toLowerCase() === 'buy';
+  const pnlColor = t.master_pnl >= 0 ? 'text-[#E94E1B]' : 'text-red-400';
   return (
-    <Card nested padding="sm">
+    <div className="rounded-lg bg-bg-secondary border border-border-primary px-3 py-2">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <SideBadge side={t.side} />
+          <span className={clsx('text-[9px] font-bold uppercase px-1.5 py-0.5 rounded', isBuy ? 'bg-buy/15 text-buy' : 'bg-sell/15 text-sell')}>
+            {t.side}
+          </span>
           <span className="text-xs font-semibold text-text-primary">{t.symbol}</span>
-          <span className="text-xxs text-text-tertiary">{t.lots} lots</span>
-          {t.status === 'open' && <Badge variant="warning" size="sm">Live</Badge>}
+          <span className="text-[10px] text-text-tertiary">{t.lots} lots</span>
+          {t.status === 'open' && <span className="text-[9px] font-bold uppercase px-1 py-0.5 rounded bg-warning/15 text-warning">Live</span>}
         </div>
-        <PnlText value={t.master_pnl} currency className="text-xs font-bold" />
+        <span className={clsx('text-xs font-bold tabular-nums', pnlColor)}>
+          {t.master_pnl >= 0 ? '+' : ''}${fmt(t.master_pnl)}
+        </span>
       </div>
-      <div className="flex items-center justify-between mt-1.5 text-xxs text-text-tertiary">
-        <span className="font-mono tabular-nums">
+      <div className="flex items-center justify-between mt-1.5 text-[10px] text-text-tertiary">
+        <span className="font-mono">
           {t.open_price.toFixed(5)}
           {t.close_price != null && ` → ${t.close_price.toFixed(5)}`}
         </span>
         <span>
-          Your share: <PnlText value={t.your_share} currency className="font-semibold" />
+          Your share: <span className={clsx('font-mono font-semibold', t.your_share >= 0 ? 'text-[#E94E1B]' : 'text-red-400')}>
+            {t.your_share >= 0 ? '+' : ''}${fmt(t.your_share)}
+          </span>
         </span>
       </div>
-    </Card>
+    </div>
   );
 }
 
@@ -448,6 +420,18 @@ export default function PammPage() {
   };
 
   const submitApply = async () => {
+    // Client-side validation mirroring the API limits — a friendly message
+    // instead of the server's raw "Input should be less than or equal to 10".
+    const perf = parseFloat(applyFee);
+    const mgmt = parseFloat(applyMgmtFee);
+    if (!Number.isFinite(perf) || perf < 0 || perf > 50) {
+      toast.error('Performance fee must be between 0 and 50%');
+      return;
+    }
+    if (!Number.isFinite(mgmt) || mgmt < 0 || mgmt > 10) {
+      toast.error('Management fee must be between 0 and 10% (charged yearly on invested capital)');
+      return;
+    }
     setApplying(true);
     try {
       // Server auto-creates a dedicated master trading account (PM/MM prefix)
@@ -484,7 +468,6 @@ export default function PammPage() {
     { id: 'dashboard', label: 'My Dashboard' },
   ];
 
-
   // ─── Render ─────────────────────────────────────────────────────────────────
 
   if (isDemo) {
@@ -500,198 +483,277 @@ export default function PammPage() {
     );
   }
 
-  const featured = [...accounts].sort((a, b) => b.total_return_pct - a.total_return_pct).slice(0, 4);
-  const overallRoi = summary?.overall_pnl_pct ?? 0;
-
   return (
     <DashboardShell>
-      <div className="space-y-4 md:space-y-5">
+      <div className="space-y-6">
 
-        <PageHeader
-          eyebrow="Managed accounts"
-          title="PAMM Accounts"
-          description="Choose a PAMM account to copy trade and grow your profits."
-          actions={
-            <Button type="button" variant="secondary" leftIcon={<Wallet size={14} />} onClick={() => { setActiveTab('browse'); }}>
-              Invest Now
-            </Button>
-          }
-        />
-
-        {/* ── Top KPIs ── */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard
-            label="My PAMM Investments"
-            value={usd(summary?.total_invested ?? 0)}
-            hint={`In ${allocations.length} ${allocations.length === 1 ? 'Account' : 'Accounts'}`}
-            icon={<Users />}
-          />
-          <StatCard
-            label="Total Profit (All PAMM)"
-            value={usd(summary?.total_pnl ?? 0)}
-            delta={
-              <span className={cn('font-mono tabular-nums text-xs font-semibold', pnlClass(overallRoi))}>
-                {overallRoi >= 0 ? '+' : ''}{overallRoi.toFixed(2)}% Overall ROI
-              </span>
-            }
-            icon={<TrendingUp />}
-          />
-          <StatCard
-            label="Available Balance"
-            value={usd(walletBalance)}
-            hint="Main wallet"
-            icon={<Wallet />}
-          />
-          <StatCard
-            label="Total PAMM Accounts"
-            value={accounts.length}
-            hint="Active PAMM Accounts"
-            icon={<BarChart2 />}
-          />
+        {/* Header */}
+        <div>
+          <h1 className="text-2xl font-bold text-text-primary">PAMM Accounts</h1>
+          <p className="text-sm text-text-secondary mt-0.5">Choose a PAMM account to copy trade and grow your profits.</p>
         </div>
 
-        {/* ── Top 4 featured accounts (sorted by ROI desc) ── */}
-        {featured.length > 0 && (
-          <section>
+        {/* ── Top stat cards — clean Vantage style ── */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* My PAMM Investments */}
+          <div className="rounded-2xl p-5 bg-bg-card border border-border-primary">
+            <div className="flex items-start gap-3">
+              <div className="w-11 h-11 rounded-xl bg-[#FCE6DD] flex items-center justify-center shrink-0">
+                <Users size={20} className="text-[#E94E1B]" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] uppercase tracking-wide font-semibold text-text-tertiary">My PAMM Investments</p>
+                <p className="text-xl font-bold mt-1 font-mono tabular-nums text-text-primary">
+                  ${(summary?.total_invested ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+                <p className="text-[11px] mt-1 text-text-secondary">In {allocations.length} {allocations.length === 1 ? 'Account' : 'Accounts'}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Total Profit — value/ROI stays green/red */}
+          <div className="rounded-2xl p-5 bg-bg-card border border-border-primary">
+            <div className="flex items-start gap-3">
+              <div className="w-11 h-11 rounded-xl bg-[#FCE6DD] flex items-center justify-center shrink-0">
+                <TrendingUp size={20} className="text-[#E94E1B]" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] uppercase tracking-wide font-semibold text-text-tertiary">Total Profit (All PAMM)</p>
+                <p className="text-xl font-bold mt-1 font-mono tabular-nums text-text-primary">
+                  ${(summary?.total_pnl ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+                <p className={clsx('text-[11px] mt-1 font-semibold', (summary?.overall_pnl_pct ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-600')}>
+                  {(summary?.overall_pnl_pct ?? 0) >= 0 ? '+' : ''}{(summary?.overall_pnl_pct ?? 0).toFixed(2)}% Overall ROI
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Available Balance */}
+          <div className="rounded-2xl p-5 bg-bg-card border border-border-primary">
+            <div className="flex items-start gap-3 mb-3">
+              <div className="w-11 h-11 rounded-xl bg-[#FCE6DD] flex items-center justify-center shrink-0">
+                <Wallet size={20} className="text-[#E94E1B]" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] uppercase tracking-wide font-semibold text-text-tertiary">Available Balance</p>
+                <p className="text-xl font-bold mt-1 font-mono tabular-nums text-text-primary">
+                  ${walletBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setActiveTab('browse'); }}
+              className="w-full py-2 rounded-lg bg-[#E94E1B] hover:bg-[#C73E11] text-white text-xs font-bold transition-colors"
+            >
+              Invest Now
+            </button>
+          </div>
+
+          {/* Total PAMM Accounts */}
+          <div className="rounded-2xl p-5 bg-bg-card border border-border-primary">
+            <div className="flex items-start gap-3">
+              <div className="w-11 h-11 rounded-xl bg-[#FCE6DD] flex items-center justify-center shrink-0">
+                <BarChart2 size={20} className="text-[#E94E1B]" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] uppercase tracking-wide font-semibold text-text-tertiary">Total PAMM Accounts</p>
+                <p className="text-2xl font-bold mt-1 font-mono tabular-nums text-text-primary">{accounts.length}</p>
+                <p className="text-[11px] mt-1 text-text-secondary">Active PAMM Accounts</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Top 4 Featured PAM Accounts (sorted by ROI desc) ── */}
+        {accounts.length > 0 && (
+          <div>
             <div className="flex items-baseline justify-between gap-2 mb-3">
-              <h2 className="text-md font-semibold text-text-primary">Top PAMM Accounts</h2>
-              <p className="text-xs text-text-tertiary">Sorted by ROI (High to Low)</p>
+              <h2 className="text-lg font-bold text-text-primary">Top PAMM Accounts</h2>
+              <p className="text-[11px] text-text-tertiary">Sorted by ROI (High to Low)</p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {featured.map((a, idx) => {
-                const rank = idx + 1;
-                // Style label derived from master_type.
-                const styleLabel =
-                  a.master_type === 'pamm' ? 'PAMM Manager'
-                  : a.master_type === 'mam' ? 'Trade Master'
-                  : 'Copy Trading Master';
-                const aum = a.aum || 0;
-                // Total Return = AUM × ROI%
-                const totalReturnUsd = aum * (a.total_return_pct / 100);
-                return (
-                  <Card key={a.id} interactive className="relative flex flex-col" onClick={() => openInvest(a)}>
-                    <div className="flex items-center justify-between">
-                      <Badge tone="solid" variant={rank === 1 ? 'accent' : 'neutral'} aria-label={`Rank ${rank}`}>{rank}</Badge>
-                      <Badge variant="success" size="sm" dot>Active</Badge>
-                    </div>
-
-                    {/* Name + style — avatar skipped per client direction */}
-                    <div className="mt-4 text-center">
-                      <p className="text-md font-semibold text-text-primary truncate">{a.manager_name}</p>
-                      <p className="text-xs text-text-secondary mt-0.5">{styleLabel}</p>
-                    </div>
-
-                    <div className="mt-4 grid grid-cols-2 gap-2 text-center">
-                      <div>
-                        <p className="text-xxs uppercase tracking-[0.12em] text-text-tertiary">ROI (All Time)</p>
-                        <p className={cn('text-sm font-bold font-mono tabular-nums mt-0.5', pnlClass(a.total_return_pct))}>
-                          {a.total_return_pct >= 0 ? '+' : ''}{a.total_return_pct.toFixed(2)}%
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xxs uppercase tracking-[0.12em] text-text-tertiary">Total Return</p>
-                        <p className="text-sm font-bold text-text-primary font-mono tabular-nums mt-0.5">
-                          ${totalReturnUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 space-y-1.5">
-                      <KV label="Max Drawdown">{a.max_drawdown_pct.toFixed(2)}%</KV>
-                      <KV label="Win Rate">{a.total_trades > 0 ? `${a.win_rate.toFixed(0)}%` : 'No trades yet'}</KV>
-                      <KV label="AUM">${aum.toLocaleString(undefined, { maximumFractionDigits: 0 })}</KV>
-                      <KV label="Investors">{a.active_investors}</KV>
-                    </div>
-
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      fullWidth
-                      className="mt-4"
-                      onClick={(e) => { e.stopPropagation(); openInvest(a); }}
+              {[...accounts]
+                .sort((a, b) => b.total_return_pct - a.total_return_pct)
+                .slice(0, 4)
+                .map((a, idx) => {
+                  const rank = idx + 1;
+                  const rankColors: Record<number, string> = {
+                    1: 'bg-amber-400 text-amber-950',
+                    2: 'bg-slate-300 text-slate-900',
+                    3: 'bg-orange-400 text-orange-950',
+                    4: 'bg-purple-400 text-purple-950',
+                  };
+                  // Style label derived from master_type.
+                  const styleLabel =
+                    a.master_type === 'pamm' ? 'PAMM Manager'
+                    : a.master_type === 'mam' ? 'Trade Master'
+                    : 'Signal Provider';
+                  const aum = a.aum || 0;
+                  const totalReturnUsd = aum * (a.total_return_pct / 100);
+                  return (
+                    <div
+                      key={a.id}
+                      className="relative rounded-2xl p-5 bg-bg-card border border-border-primary flex flex-col"
                     >
-                      View Details &amp; Invest
-                    </Button>
-                  </Card>
-                );
-              })}
+                      {/* Rank badge */}
+                      <div className={clsx('absolute top-3 left-3 w-7 h-7 rounded-md flex items-center justify-center text-xs font-bold', rankColors[rank])}>
+                        {rank}
+                      </div>
+                      {/* Active status pill (top right) */}
+                      <div className="absolute top-3 right-3 inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                        Active
+                      </div>
+
+                      {/* Name + style — avatar skipped per client direction */}
+                      <div className="mt-8 text-center">
+                        <p className="text-base font-bold text-text-primary truncate">{a.manager_name}</p>
+                        <p className="text-[11px] text-text-secondary mt-0.5">{styleLabel}</p>
+                      </div>
+
+                      {/* ROI + Total Return (Total Return = AUM × ROI%) */}
+                      <div className="mt-4 grid grid-cols-2 gap-2 text-center">
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wide text-text-tertiary">ROI (All Time)</p>
+                          <p className={clsx(
+                            'text-sm font-bold font-mono tabular-nums mt-0.5',
+                            a.total_return_pct >= 0 ? 'text-emerald-600' : 'text-red-600',
+                          )}>
+                            {a.total_return_pct >= 0 ? '+' : ''}{a.total_return_pct.toFixed(2)}%
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Total Return</p>
+                          <p className="text-sm font-bold text-text-primary font-mono tabular-nums mt-0.5">
+                            ${totalReturnUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Stats grid — real numbers from backend */}
+                      <div className="mt-4 space-y-1.5 text-[11px]">
+                        <div className="flex items-center justify-between">
+                          <span className="text-text-tertiary">Max Drawdown</span>
+                          <span className="text-text-primary font-mono tabular-nums">{a.max_drawdown_pct.toFixed(2)}%</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-text-tertiary">Win Rate</span>
+                          <span className="text-text-primary font-mono tabular-nums">
+                            {a.total_trades > 0 ? `${a.win_rate.toFixed(0)}%` : 'No trades yet'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-text-tertiary">AUM</span>
+                          <span className="text-text-primary font-mono tabular-nums">
+                            ${aum.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-text-tertiary">Investors</span>
+                          <span className="text-text-primary font-mono tabular-nums">{a.active_investors}</span>
+                        </div>
+                      </div>
+
+                      {/* CTA */}
+                      <button
+                        type="button"
+                        onClick={() => openInvest(a)}
+                        className="mt-4 w-full py-2.5 rounded-lg bg-[#E94E1B] hover:bg-[#C73E11] text-white text-xs font-bold transition-colors"
+                      >
+                        View Details &amp; Invest
+                      </button>
+                    </div>
+                  );
+                })}
             </div>
-          </section>
+          </div>
         )}
 
-        {/* Section tabs */}
-        <Tabs
-          variant="underline"
-          aria-label="PAMM sections"
-          tabs={TABS}
-          active={activeTab}
-          onChange={(id) => setActiveTab(id as Tab)}
-          className="overflow-x-auto"
-        />
+        {/* Tab bar */}
+        <div className="flex gap-1 p-1 rounded-xl bg-bg-secondary border border-border-primary">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setActiveTab(t.id)}
+              className={clsx(
+                'flex-1 py-2 text-xs font-semibold rounded-lg transition-colors',
+                activeTab === t.id
+                  ? 'bg-accent text-white'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover',
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
 
         {/* ── Browse ── */}
         {activeTab === 'browse' && (
           <>
-            {browseLoading && <LoadingGrid />}
+            {browseLoading && (
+              <div className="flex items-center justify-center py-20"><Spinner /></div>
+            )}
             {!browseLoading && browseError && (
-              <div role="alert" className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg border border-danger/25 bg-danger/10 text-danger text-sm">
+              <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
                 <div className="flex items-center gap-2"><AlertCircle size={14} /> {browseError}</div>
-                <Button type="button" variant="danger" size="xs" onClick={fetchBrowse}>Retry</Button>
+                <button type="button" onClick={fetchBrowse} className="text-xs px-3 py-1 rounded-lg border border-red-500/30 hover:bg-red-500/10 transition-colors">Retry</button>
               </div>
             )}
             {!browseLoading && !browseError && accounts.length === 0 && (
-              <EmptyState
-                icon={<TrendingUp />}
-                title="No managed accounts available"
-                description="PAMM managers will appear here once approved"
-              />
+              <div className="flex flex-col items-center justify-center py-24 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-bg-secondary border border-border-primary flex items-center justify-center mb-4">
+                  <TrendingUp size={24} className="text-text-tertiary" />
+                </div>
+                <p className="text-text-primary font-medium">No managed accounts available</p>
+                <p className="text-sm text-text-tertiary mt-1">PAMM managers will appear here once approved</p>
+              </div>
             )}
             {!browseLoading && !browseError && accounts.length > 0 && (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {accounts.map((a) => (
-                  <Card key={a.id} interactive className="flex flex-col" onClick={() => openInvest(a)}>
+                  <div key={a.id} className="bg-card border border-border-primary rounded-xl p-5 flex flex-col hover:border-accent/30 shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-colors">
                     <div className="flex items-start justify-between gap-2 mb-4">
                       <div className="min-w-0">
-                        <p className="text-md font-semibold text-text-primary truncate">{a.manager_name}</p>
+                        <p className="text-sm font-semibold text-text-primary truncate">{a.manager_name}</p>
                         <div className="mt-1"><TypeBadge type={a.master_type} /></div>
                       </div>
-                      <Button
+                      <button
                         type="button"
-                        variant="secondary"
-                        size="sm"
-                        className="shrink-0"
-                        onClick={(e) => { e.stopPropagation(); openInvest(a); }}
+                        onClick={() => openInvest(a)}
+                        className="shrink-0 px-3 py-1.5 text-xs font-bold rounded-lg bg-[#E94E1B] hover:bg-[#C73E11] text-white transition-colors"
                       >
                         Invest
-                      </Button>
+                      </button>
                     </div>
                     <div className="mb-4">
-                      <p className="text-xxs uppercase tracking-[0.12em] text-text-tertiary mb-0.5">Total ROI</p>
-                      <p className={cn('text-2xl font-semibold font-mono tabular-nums', pnlClass(a.total_return_pct))}>
+                      <p className="text-[10px] text-text-tertiary uppercase tracking-wide mb-0.5">Total ROI</p>
+                      <p className={clsx('text-2xl font-bold font-mono tabular-nums', a.total_return_pct >= 0 ? 'text-[#E94E1B]' : 'text-red-400')}>
                         {a.total_return_pct >= 0 ? '+' : ''}{a.total_return_pct.toFixed(2)}%
                       </p>
                     </div>
-                    {a.description && <p className="text-xs text-text-tertiary mb-4 line-clamp-2">{a.description}</p>}
-                    <div className="grid grid-cols-3 gap-2 pt-3 border-t border-border-secondary mt-auto">
+                    {a.description && <p className="text-[11px] text-text-tertiary mb-4 line-clamp-2">{a.description}</p>}
+                    <div className="grid grid-cols-3 gap-2 pt-3 border-t border-border-primary mt-auto">
                       <div>
-                        <p className="text-xxs text-text-tertiary">Drawdown</p>
-                        <p className="text-xs font-semibold font-mono tabular-nums text-danger">{a.max_drawdown_pct.toFixed(2)}%</p>
+                        <p className="text-[10px] text-text-tertiary">Drawdown</p>
+                        <p className="text-xs font-semibold tabular-nums text-red-400">{a.max_drawdown_pct.toFixed(2)}%</p>
                       </div>
                       <div>
-                        <p className="text-xxs text-text-tertiary">Investors</p>
-                        <p className="text-xs font-semibold font-mono tabular-nums text-text-primary">{a.active_investors}</p>
+                        <p className="text-[10px] text-text-tertiary">Investors</p>
+                        <p className="text-xs font-semibold tabular-nums text-text-primary">{a.active_investors}</p>
                       </div>
                       <div>
-                        <p className="text-xxs text-text-tertiary">Slots</p>
-                        <p className="text-xs font-semibold font-mono tabular-nums text-text-primary">{a.slots_available}</p>
+                        <p className="text-[10px] text-text-tertiary">Slots</p>
+                        <p className="text-xs font-semibold tabular-nums text-text-primary">{a.slots_available}</p>
                       </div>
                     </div>
-                    <div className="flex items-center justify-between mt-3 text-xxs text-text-tertiary">
+                    <div className="flex items-center justify-between mt-3 text-[10px] text-text-tertiary">
                       <span className="flex items-center gap-1"><TrendingUp size={10} /> Fee: {a.performance_fee_pct}%</span>
                       <span className="flex items-center gap-1"><DollarSign size={10} /> Min: ${a.min_investment.toLocaleString()}</span>
                     </div>
-                  </Card>
+                  </div>
                 ))}
               </div>
             )}
@@ -701,110 +763,125 @@ export default function PammPage() {
         {/* ── My Investments ── */}
         {activeTab === 'investments' && (
           <>
-            {allocLoading && <LoadingGrid />}
+            {allocLoading && <div className="flex items-center justify-center py-20"><Spinner /></div>}
             {!allocLoading && (
               <>
                 {summary && allocations.length > 0 && (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    <StatCard label="Total Invested" value={`$${fmt(summary.total_invested)}`} />
-                    <StatCard label="Current Value" value={`$${fmt(summary.total_current_value)}`} />
-                    <StatCard
-                      label="Total P&L"
-                      value={<span className={pnlClass(summary.total_pnl)}>{summary.total_pnl >= 0 ? '+' : ''}${fmt(summary.total_pnl)}</span>}
-                    />
-                    <StatCard
-                      label="P&L %"
-                      value={<span className={pnlClass(summary.overall_pnl_pct)}>{summary.overall_pnl_pct >= 0 ? '+' : ''}{summary.overall_pnl_pct.toFixed(2)}%</span>}
-                    />
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {[
+                      { label: 'Total Invested', value: `$${fmt(summary.total_invested)}`, color: undefined },
+                      { label: 'Current Value', value: `$${fmt(summary.total_current_value)}`, color: undefined },
+                      { label: 'Total P&L', value: `${summary.total_pnl >= 0 ? '+' : ''}$${fmt(summary.total_pnl)}`, color: summary.total_pnl >= 0 ? 'text-[#E94E1B]' : 'text-red-400' },
+                      { label: 'P&L %', value: `${summary.overall_pnl_pct >= 0 ? '+' : ''}${summary.overall_pnl_pct.toFixed(2)}%`, color: summary.overall_pnl_pct >= 0 ? 'text-[#E94E1B]' : 'text-red-400' },
+                    ].map((s) => (
+                      <div key={s.label} className="bg-card border border-border-primary rounded-xl px-4 py-3 shadow-[0_2px_12px_rgba(0,0,0,0.06)]">
+                        <p className="text-[10px] text-text-tertiary mb-1">{s.label}</p>
+                        <p className={clsx('text-sm font-bold tabular-nums', s.color ?? 'text-text-primary')}>{s.value}</p>
+                      </div>
+                    ))}
                   </div>
                 )}
 
                 {allocations.length === 0 ? (
-                  <EmptyState
-                    icon={<Wallet />}
-                    title="No active investments"
-                    description="Browse managers and invest to get started"
-                    action={
-                      <Button type="button" variant="primary" onClick={() => setActiveTab('browse')}>
-                        Browse Managers
-                      </Button>
-                    }
-                  />
+                  <div className="flex flex-col items-center justify-center py-24 text-center">
+                    <div className="w-16 h-16 rounded-2xl bg-bg-secondary border border-border-primary flex items-center justify-center mb-4">
+                      <Wallet size={24} className="text-text-tertiary" />
+                    </div>
+                    <p className="text-text-primary font-medium">No active investments</p>
+                    <p className="text-sm text-text-tertiary mt-1">Browse managers and invest to get started</p>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('browse')}
+                      className="mt-4 px-4 py-2 rounded-lg bg-[#E94E1B] text-white text-xs font-bold hover:bg-[#C73E11] transition-colors"
+                    >
+                      Browse Managers
+                    </button>
+                  </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {allocations.map((a) => (
-                      <Card key={a.id} className="flex flex-col">
+                      <div key={a.id} className="bg-card border border-border-primary rounded-xl p-5 flex flex-col hover:border-accent/20 shadow-[0_2px_12px_rgba(0,0,0,0.06)] transition-colors">
                         <div className="flex items-start justify-between gap-2 mb-3">
                           <div className="min-w-0">
-                            <p className="text-md font-semibold text-text-primary truncate">{a.manager_name}</p>
+                            <p className="text-sm font-semibold text-text-primary truncate">{a.manager_name}</p>
                             <div className="mt-1"><TypeBadge type={a.master_type} /></div>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
                             {a.status === 'active' && (
-                              <Button type="button" variant="outline" size="xs" onClick={() => openRefill(a)}>
+                              <button
+                                type="button"
+                                onClick={() => openRefill(a)}
+                                className="px-2.5 py-1 text-xs font-medium rounded-lg border border-[#E94E1B]/40 text-[#E94E1B] hover:bg-[#E94E1B]/10 transition-colors"
+                              >
                                 + Refill
-                              </Button>
+                              </button>
                             )}
-                            <Button type="button" variant="danger" size="xs" onClick={() => setWithdrawTarget(a)}>
+                            <button
+                              type="button"
+                              onClick={() => setWithdrawTarget(a)}
+                              className="px-2.5 py-1 text-xs font-medium rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
+                            >
                               Withdraw
-                            </Button>
+                            </button>
                           </div>
                         </div>
 
-                        <div className="space-y-2">
-                          <KV label="Invested"><span className="font-semibold">${fmt(a.allocation_amount)}</span></KV>
-                          <KV label="Current Value"><span className="font-semibold">${fmt(a.current_value)}</span></KV>
-                          <div className="flex items-center justify-between gap-2 text-xs pt-2 border-t border-border-secondary">
+                        <div className="space-y-2 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="text-text-tertiary">Invested</span>
+                            <span className="text-text-primary font-semibold tabular-nums">${fmt(a.allocation_amount)}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-text-tertiary">Current Value</span>
+                            <span className="text-text-primary font-semibold tabular-nums">${fmt(a.current_value)}</span>
+                          </div>
+                          <div className="flex items-center justify-between pt-2 border-t border-border-primary">
                             <span className="text-text-tertiary">Total P&L</span>
                             <div className="text-right">
-                              <p className="font-bold"><PnlText value={a.total_pnl} /></p>
-                              <p className="text-xxs"><PnlText value={a.pnl_pct} suffix="%" /></p>
+                              <p className="font-bold tabular-nums"><PnlText value={a.total_pnl} /></p>
+                              <p className="text-[10px] tabular-nums"><PnlText value={a.pnl_pct} suffix="%" /></p>
                             </div>
                           </div>
-                          <KV label="Realized">
-                            <span className={cn('opacity-70', pnlClass(a.realized_pnl))}>${fmt(Math.abs(a.realized_pnl))}</span>
-                          </KV>
-                          <KV label="Unrealized">
-                            <span className={cn('opacity-70', pnlClass(a.unrealized_pnl))}>${fmt(Math.abs(a.unrealized_pnl))}</span>
-                          </KV>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-text-tertiary">Realized</span>
+                            <span className={a.realized_pnl >= 0 ? 'text-[#E94E1B]/70' : 'text-red-400/70'}>${fmt(Math.abs(a.realized_pnl))}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-text-tertiary">Unrealized</span>
+                            <span className={a.unrealized_pnl >= 0 ? 'text-[#E94E1B]/70' : 'text-red-400/70'}>${fmt(Math.abs(a.unrealized_pnl))}</span>
+                          </div>
                         </div>
 
-                        <div className="flex items-center justify-between mt-3 pt-3 border-t border-border-secondary text-xxs text-text-tertiary">
+                        <div className="flex items-center justify-between mt-3 pt-3 border-t border-border-primary text-[10px] text-text-tertiary">
                           <span>Fee: {a.performance_fee_pct}%</span>
                           <span>Joined {new Date(a.joined_at).toLocaleDateString()}</span>
                         </div>
 
                         {a.master_type === 'pamm' && (
-                          <Button
+                          <button
                             type="button"
-                            variant="ghost"
-                            size="sm"
-                            fullWidth
-                            className="mt-3 text-accent hover:text-accent"
                             onClick={() => void toggleAllocTrades(a)}
+                            className="mt-3 w-full text-center text-xs font-semibold text-[#E94E1B] hover:bg-[#E94E1B]/10 rounded-lg py-2 transition-colors"
                           >
                             {expandedAlloc === a.id ? 'Hide Master Trades' : 'View Master Trades'}
-                          </Button>
+                          </button>
                         )}
 
                         {expandedAlloc === a.id && a.master_type === 'pamm' && (
-                          <div className="mt-3 pt-3 border-t border-border-secondary max-h-64 overflow-y-auto">
+                          <div className="mt-3 pt-3 border-t border-border-primary max-h-64 overflow-y-auto">
                             {tradesLoading === a.id ? (
-                              <div className="space-y-2" aria-busy>
-                                <Skeleton className="h-12 w-full" />
-                                <Skeleton className="h-12 w-full" />
-                              </div>
+                              <div className="flex justify-center py-4"><Spinner /></div>
                             ) : allocTrades[a.id] ? (
                               (() => {
                                 /* Extract once so TS narrows the Record access. */
                                 const alloc = allocTrades[a.id]!;
                                 return (
                                   <div className="space-y-2">
-                                    <p className="text-xxs text-text-tertiary mb-1">
-                                      Your pool share: <span className="font-mono tabular-nums text-text-primary">{alloc.your_ratio_pct.toFixed(2)}%</span>
+                                    <p className="text-[10px] text-text-tertiary mb-1">
+                                      Your pool share: <span className="font-mono text-text-primary">{alloc.your_ratio_pct.toFixed(2)}%</span>
                                     </p>
                                     {[...alloc.open_trades, ...alloc.closed_trades].length === 0 ? (
-                                      <p className="text-xs text-text-tertiary text-center py-3">Master has no trades yet</p>
+                                      <p className="text-[11px] text-text-tertiary text-center py-3">Master has no trades yet</p>
                                     ) : (
                                       <>
                                         {alloc.open_trades.map((t: any) => (
@@ -819,11 +896,11 @@ export default function PammPage() {
                                 );
                               })()
                             ) : (
-                              <p className="text-xs text-text-tertiary text-center py-3">No data</p>
+                              <p className="text-[11px] text-text-tertiary text-center py-3">No data</p>
                             )}
                           </div>
                         )}
-                      </Card>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -836,107 +913,127 @@ export default function PammPage() {
         {activeTab === 'apply' && (
           <>
             {!providerChecked ? (
-              <div className="max-w-lg mx-auto" aria-busy><Skeleton className="h-96 w-full rounded-lg" /></div>
+              <div className="flex items-center justify-center py-20"><Spinner /></div>
             ) : myProvider ? (
               myProvider.status === 'pending' ? (
-                <EmptyState
-                  icon={<Clock />}
-                  title="Application Under Review"
-                  description="Your PAMM manager application has been submitted. Our team will review it shortly."
-                />
+                <div className="flex flex-col items-center justify-center py-24 text-center">
+                  <div className="w-16 h-16 rounded-2xl bg-[#E94E1B]/10 border border-[#E94E1B]/20 flex items-center justify-center mb-4">
+                    <Clock size={24} className="text-[#E94E1B]" />
+                  </div>
+                  <p className="text-text-primary font-semibold text-lg">Application Under Review</p>
+                  <p className="text-sm text-text-tertiary mt-2 max-w-sm">Your PAMM manager application has been submitted. Our team will review it shortly.</p>
+                </div>
               ) : myProvider.status === 'approved' && ['pamm', 'mamm'].includes(myProvider.master_type) ? (
-                <EmptyState
-                  icon={<CheckCircle />}
-                  title="You're an Approved Manager"
-                  description="View your investor stats and performance data"
-                  action={
-                    <Button type="button" variant="primary" onClick={() => setActiveTab('dashboard')}>
-                      View Dashboard
-                    </Button>
-                  }
-                />
+                <div className="flex flex-col items-center justify-center py-24 text-center">
+                  <div className="w-16 h-16 rounded-2xl bg-[#E94E1B]/10 border border-[#E94E1B]/20 flex items-center justify-center mb-4">
+                    <CheckCircle size={24} className="text-[#E94E1B]" />
+                  </div>
+                  <p className="text-text-primary font-semibold text-lg">You&apos;re an Approved Manager</p>
+                  <p className="text-sm text-text-tertiary mt-2">View your investor stats and performance data</p>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('dashboard')}
+                    className="mt-4 px-4 py-2 rounded-lg bg-[#E94E1B] text-white text-xs font-bold hover:bg-[#C73E11] transition-colors"
+                  >
+                    View Dashboard
+                  </button>
+                </div>
               ) : (
-                <EmptyState
-                  icon={<Info />}
-                  title={`Application ${myProvider.status}`}
-                  description="Contact support if you have questions"
-                />
+                <div className="flex flex-col items-center justify-center py-24 text-center">
+                  <div className="w-16 h-16 rounded-2xl bg-bg-secondary border border-border-primary flex items-center justify-center mb-4">
+                    <Info size={24} className="text-text-tertiary" />
+                  </div>
+                  <p className="text-text-primary font-medium">Application {myProvider.status}</p>
+                  <p className="text-sm text-text-tertiary mt-1">Contact support if you have questions</p>
+                </div>
               )
             ) : (
-              <Card className="max-w-lg mx-auto">
-                <CardHeader title="Apply as PAMM Manager" description="Submit your application for admin review" />
+              <div className="max-w-lg mx-auto bg-card border border-border-primary rounded-xl p-6 space-y-5 shadow-[0_2px_12px_rgba(0,0,0,0.06)]">
+                <div>
+                  <h2 className="text-base font-bold text-text-primary">Apply as PAMM Manager</h2>
+                  <p className="text-xs text-text-tertiary mt-1">Submit your application for admin review</p>
+                </div>
 
                 <div className="space-y-4">
-                  <Card nested padding="sm" className="text-xs text-text-secondary">
+                  <div className="rounded-lg border border-border-primary bg-bg-secondary/50 px-3 py-2.5 text-xs text-text-secondary">
                     A new dedicated <span className="font-semibold text-text-primary">{applyType.toUpperCase()}</span> trading account will be created automatically with $0 balance when you submit.
-                  </Card>
+                  </div>
 
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Manager Type</span>
-                    <div className="h-9 flex items-center justify-center rounded-md border border-accent/40 bg-accent/10 text-accent text-sm font-semibold">
+                  <div>
+                    <label className="block text-xs text-text-secondary mb-1.5">Manager Type</label>
+                    <div className="py-2.5 rounded-lg border border-[#E94E1B]/40 bg-[#E94E1B]/10 text-[#E94E1B] text-sm font-semibold text-center">
                       PAMM
                     </div>
-                    <span className="text-xs text-text-tertiary">Pooled fund — proportional profit distribution per cycle</span>
+                    <p className="text-[10px] text-text-tertiary mt-1.5">
+                      Pooled fund — proportional profit distribution per cycle
+                    </p>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <Input
-                      label="Performance Fee"
-                      type="number" min="0" max="50" step="0.5"
-                      numeric
-                      suffix="%"
-                      value={applyFee}
-                      onChange={(e) => setApplyFee(e.target.value)}
-                    />
-                    <Input
-                      label="Management Fee"
-                      type="number" min="0" max="10" step="0.1"
-                      numeric
-                      suffix="%"
-                      value={applyMgmtFee}
-                      onChange={(e) => setApplyMgmtFee(e.target.value)}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-text-secondary mb-1.5">Performance Fee %</label>
+                      <input
+                        type="number" min="0" max="50" step="0.5"
+                        value={applyFee}
+                        onChange={(e) => setApplyFee(e.target.value)}
+                        className="w-full bg-bg-secondary border border-border-primary rounded-lg px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/50"
+                      />
+                      <p className="text-[10px] text-text-tertiary mt-1">0–50% of investor profit</p>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-text-secondary mb-1.5">Management Fee %</label>
+                      <input
+                        type="number" min="0" max="10" step="0.1"
+                        value={applyMgmtFee}
+                        onChange={(e) => setApplyMgmtFee(e.target.value)}
+                        className="w-full bg-bg-secondary border border-border-primary rounded-lg px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/50"
+                      />
+                      <p className="text-[10px] text-text-tertiary mt-1">0–10% per year, on invested capital</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-text-secondary mb-1.5">Min Investment ($)</label>
+                      <input
+                        type="number" min="1"
+                        value={applyMinInv}
+                        onChange={(e) => setApplyMinInv(e.target.value)}
+                        className="w-full bg-bg-secondary border border-border-primary rounded-lg px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-text-secondary mb-1.5">Max Investors</label>
+                      <input
+                        type="number" min="1" max="1000"
+                        value={applyMaxInv}
+                        onChange={(e) => setApplyMaxInv(e.target.value)}
+                        className="w-full bg-bg-secondary border border-border-primary rounded-lg px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/50"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-text-secondary mb-1.5">Description (optional)</label>
+                    <textarea
+                      rows={3}
+                      value={applyDesc}
+                      onChange={(e) => setApplyDesc(e.target.value)}
+                      placeholder="Describe your trading strategy..."
+                      className="w-full bg-bg-secondary border border-border-primary rounded-lg px-3 py-2.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent/50 resize-none"
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <Input
-                      label="Min Investment"
-                      type="number" min="1"
-                      numeric
-                      suffix="$"
-                      value={applyMinInv}
-                      onChange={(e) => setApplyMinInv(e.target.value)}
-                    />
-                    <Input
-                      label="Max Investors"
-                      type="number" min="1" max="1000"
-                      numeric
-                      value={applyMaxInv}
-                      onChange={(e) => setApplyMaxInv(e.target.value)}
-                    />
-                  </div>
-
-                  <Textarea
-                    label="Description (optional)"
-                    rows={3}
-                    value={applyDesc}
-                    onChange={(e) => setApplyDesc(e.target.value)}
-                    placeholder="Describe your trading strategy..."
-                    className="resize-none"
-                  />
-
-                  <Button
+                  <button
                     type="button"
-                    variant="primary"
-                    fullWidth
-                    loading={applying}
-                    disabled={liveAccounts.length === 0}
+                    disabled={applying || liveAccounts.length === 0}
                     onClick={submitApply}
+                    className="w-full py-3 rounded-lg bg-[#E94E1B] text-white font-bold text-sm hover:bg-[#C73E11] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     {applying ? 'Submitting…' : 'Submit Application'}
-                  </Button>
+                  </button>
                 </div>
-              </Card>
+              </div>
             )}
           </>
         )}
@@ -944,118 +1041,131 @@ export default function PammPage() {
         {/* ── My Dashboard ── */}
         {activeTab === 'dashboard' && (
           <>
-            {dashLoading && <LoadingGrid cards={4} className="lg:grid-cols-4 [&>div]:h-24" />}
+            {dashLoading && <div className="flex items-center justify-center py-20"><Spinner /></div>}
             {!dashLoading && !performance && (
-              <EmptyState
-                icon={<BarChart2 />}
-                title="No manager dashboard available"
-                description="Apply as a PAMM manager to access this tab"
-                action={
-                  <Button type="button" variant="primary" onClick={() => setActiveTab('apply')}>
-                    Apply Now
-                  </Button>
-                }
-              />
+              <div className="flex flex-col items-center justify-center py-24 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-bg-secondary border border-border-primary flex items-center justify-center mb-4">
+                  <BarChart2 size={24} className="text-text-tertiary" />
+                </div>
+                <p className="text-text-primary font-medium">No manager dashboard available</p>
+                <p className="text-sm text-text-tertiary mt-1">Apply as a PAMM manager to access this tab</p>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('apply')}
+                  className="mt-4 px-4 py-2 rounded-lg bg-[#E94E1B] text-white text-xs font-bold hover:bg-[#C73E11] transition-colors"
+                >
+                  Apply Now
+                </button>
+              </div>
             )}
             {!dashLoading && performance && (
-              <div className="space-y-4 md:space-y-5">
+              <div className="space-y-6">
                 {/* Stats */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  <StatCard label="Total AUM" value={`$${fmt(performance.total_aum)}`} />
-                  <StatCard label="Investors" value={`${performance.total_investors} / ${performance.max_investors}`} />
-                  <StatCard label="Fee Earnings" value={<span className="text-accent">${fmt(performance.fee_earnings)}</span>} />
-                  <StatCard
-                    label="Total ROI"
-                    value={
-                      <span className={pnlClass(performance.total_return_pct)}>
-                        {performance.total_return_pct >= 0 ? '+' : ''}{performance.total_return_pct.toFixed(2)}%
-                      </span>
-                    }
-                  />
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {[
+                    { label: 'Total AUM', value: `$${fmt(performance.total_aum)}`, color: undefined },
+                    { label: 'Investors', value: `${performance.total_investors} / ${performance.max_investors}`, color: undefined },
+                    { label: 'Fee Earnings', value: `$${fmt(performance.fee_earnings)}`, color: 'text-[#E94E1B]' },
+                    { label: 'Total ROI', value: `${performance.total_return_pct >= 0 ? '+' : ''}${performance.total_return_pct.toFixed(2)}%`, color: performance.total_return_pct >= 0 ? 'text-[#E94E1B]' : 'text-red-400' },
+                  ].map((s) => (
+                    <div key={s.label} className="bg-card border border-border-primary rounded-xl px-4 py-4 shadow-[0_2px_12px_rgba(0,0,0,0.06)]">
+                      <p className="text-[10px] text-text-tertiary mb-1">{s.label}</p>
+                      <p className={clsx('text-base font-bold tabular-nums', s.color ?? 'text-text-primary')}>{s.value}</p>
+                    </div>
+                  ))}
                 </div>
 
                 {/* Investor list */}
-                <Card padding="none">
-                  <CardHeader title={`Investors (${investors.length})`} className="px-4 pt-4 md:px-5 md:pt-5 mb-3" />
+                <div className="bg-card border border-border-primary rounded-xl overflow-hidden shadow-[0_2px_12px_rgba(0,0,0,0.06)]">
+                  <div className="px-4 py-3 border-b border-border-primary">
+                    <p className="text-sm font-semibold text-text-primary">Investors ({investors.length})</p>
+                  </div>
                   {investors.length === 0 ? (
-                    <EmptyState compact icon={<Users />} title="No investors yet" />
+                    <div className="flex flex-col items-center justify-center py-12">
+                      <Users size={20} className="text-text-tertiary mb-2" />
+                      <p className="text-sm text-text-tertiary">No investors yet</p>
+                    </div>
                   ) : (
                     <>
                       {/* Desktop table */}
-                      <div className="hidden sm:block">
-                        <Table dense>
-                          <THead>
-                            <TR>
-                              <TH>Investor</TH>
-                              <TH align="right">Invested</TH>
-                              <TH align="right">P&L</TH>
-                              <TH align="right">Share %</TH>
-                              <TH>Type</TH>
-                              <TH>Joined</TH>
-                            </TR>
-                          </THead>
-                          <TBody>
+                      <div className="hidden sm:block overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-border-primary text-text-tertiary text-left">
+                              <th className="px-4 py-2.5 font-medium">Investor</th>
+                              <th className="px-4 py-2.5 font-medium text-right">Invested</th>
+                              <th className="px-4 py-2.5 font-medium text-right">P&L</th>
+                              <th className="px-4 py-2.5 font-medium text-right">Share %</th>
+                              <th className="px-4 py-2.5 font-medium">Type</th>
+                              <th className="px-4 py-2.5 font-medium">Joined</th>
+                            </tr>
+                          </thead>
+                          <tbody>
                             {investors.map((inv) => (
-                              <TR key={inv.id} interactive>
-                                <TD>
-                                  <p className="font-medium">{inv.user_name}</p>
-                                  <p className="text-text-tertiary text-xxs">{inv.account_number}</p>
-                                </TD>
-                                <TD numeric>${fmt(inv.allocated)}</TD>
-                                <TD numeric>
+                              <tr key={inv.id} className="border-b border-border-primary last:border-0 hover:bg-bg-hover">
+                                <td className="px-4 py-3">
+                                  <p className="text-text-primary font-medium">{inv.user_name}</p>
+                                  <p className="text-text-tertiary text-[10px]">{inv.account_number}</p>
+                                </td>
+                                <td className="px-4 py-3 text-right text-text-primary tabular-nums">${fmt(inv.allocated)}</td>
+                                <td className="px-4 py-3 text-right tabular-nums">
                                   <PnlText value={inv.pnl} />
-                                  <p className="text-xxs"><PnlText value={inv.pnl_pct} suffix="%" /></p>
-                                </TD>
-                                <TD numeric>{inv.share_pct.toFixed(1)}%</TD>
-                                <TD><TypeBadge type={inv.copy_type} /></TD>
-                                <TD muted>{new Date(inv.joined_at).toLocaleDateString()}</TD>
-                              </TR>
+                                  <p className="text-[10px]"><PnlText value={inv.pnl_pct} suffix="%" /></p>
+                                </td>
+                                <td className="px-4 py-3 text-right text-text-primary tabular-nums">{inv.share_pct.toFixed(1)}%</td>
+                                <td className="px-4 py-3"><TypeBadge type={inv.copy_type} /></td>
+                                <td className="px-4 py-3 text-text-tertiary">{new Date(inv.joined_at).toLocaleDateString()}</td>
+                              </tr>
                             ))}
-                          </TBody>
-                        </Table>
+                          </tbody>
+                        </table>
                       </div>
                       {/* Mobile cards */}
-                      <div className="sm:hidden divide-y divide-border-secondary">
+                      <div className="sm:hidden divide-y divide-border-primary">
                         {investors.map((inv) => (
                           <div key={inv.id} className="px-4 py-3 flex items-center justify-between gap-3">
                             <div className="min-w-0">
                               <p className="text-sm text-text-primary font-medium truncate">{inv.user_name}</p>
-                              <p className="text-xxs text-text-tertiary">{inv.account_number} · {new Date(inv.joined_at).toLocaleDateString()}</p>
+                              <p className="text-[10px] text-text-tertiary">{inv.account_number} · {new Date(inv.joined_at).toLocaleDateString()}</p>
                             </div>
                             <div className="text-right shrink-0">
-                              <p className="text-xs font-semibold font-mono tabular-nums text-text-primary">${fmt(inv.allocated)}</p>
-                              <p className="text-xs"><PnlText value={inv.pnl} /></p>
+                              <p className="text-xs font-semibold text-text-primary">${fmt(inv.allocated)}</p>
+                              <p className="text-[11px]"><PnlText value={inv.pnl} /></p>
                             </div>
                           </div>
                         ))}
                       </div>
                     </>
                   )}
-                </Card>
+                </div>
 
                 {/* Monthly breakdown */}
                 {performance.monthly_breakdown.length > 0 && (
-                  <Card padding="none">
-                    <CardHeader title="Monthly Performance" className="px-4 pt-4 md:px-5 md:pt-5 mb-3" />
-                    <Table dense>
-                      <THead>
-                        <TR>
-                          <TH>Month</TH>
-                          <TH align="right">Profit</TH>
-                          <TH align="right">Cumulative</TH>
-                        </TR>
-                      </THead>
-                      <TBody>
-                        {performance.monthly_breakdown.map((row) => (
-                          <TR key={row.month} interactive>
-                            <TD>{row.month}</TD>
-                            <TD numeric><PnlText value={row.profit} /></TD>
-                            <TD numeric muted>${fmt(row.cumulative)}</TD>
-                          </TR>
-                        ))}
-                      </TBody>
-                    </Table>
-                  </Card>
+                  <div className="bg-card border border-border-primary rounded-xl overflow-hidden shadow-[0_2px_12px_rgba(0,0,0,0.06)]">
+                    <div className="px-4 py-3 border-b border-border-primary">
+                      <p className="text-sm font-semibold text-text-primary">Monthly Performance</p>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-border-primary text-text-tertiary text-left">
+                            <th className="px-4 py-2.5 font-medium">Month</th>
+                            <th className="px-4 py-2.5 font-medium text-right">Profit</th>
+                            <th className="px-4 py-2.5 font-medium text-right">Cumulative</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {performance.monthly_breakdown.map((row) => (
+                            <tr key={row.month} className="border-b border-border-primary last:border-0 hover:bg-bg-hover">
+                              <td className="px-4 py-3 text-text-primary">{row.month}</td>
+                              <td className="px-4 py-3 text-right tabular-nums"><PnlText value={row.profit} /></td>
+                              <td className="px-4 py-3 text-right tabular-nums text-text-secondary">${fmt(row.cumulative)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 )}
               </div>
             )}
@@ -1078,47 +1188,66 @@ export default function PammPage() {
               <span className="text-xs text-text-tertiary">Min: ${investTarget.min_investment.toLocaleString()}</span>
             </div>
 
-            <WalletStrip label="From Main Wallet" balance={walletBalance} onMax={() => setInvestAmount(String(Math.max(0, walletBalance)))} />
+            {/* Wallet balance card */}
+            <div className="rounded-lg border border-accent/30 bg-bg-secondary p-3 flex items-center justify-between">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">From Main Wallet</div>
+                <div className="text-lg font-bold text-[#E94E1B] font-mono tabular-nums">${walletBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+              </div>
+              <button type="button" onClick={() => setInvestAmount(String(Math.max(0, walletBalance)))} className="text-xs font-bold text-[#E94E1B] hover:underline">Max</button>
+            </div>
 
-            <Card nested padding="sm" className="text-xs text-text-tertiary">
+            <div className="rounded-lg border border-border-primary bg-bg-secondary p-3 text-[11px] text-text-tertiary">
               A dedicated investment account will be auto-created for you. Your copied trades will appear there.
-            </Card>
+            </div>
 
-            <Input
-              label="Investment Amount"
-              type="number"
-              numeric
-              suffix="$"
-              min={investTarget.min_investment}
-              max={walletBalance}
-              step="0.01"
-              value={investAmount}
-              onChange={(e) => setInvestAmount(e.target.value)}
-            />
+            <div>
+              <label className="block text-xs text-text-secondary mb-1.5">Investment Amount ($)</label>
+              <input
+                type="number"
+                min={investTarget.min_investment}
+                max={walletBalance}
+                step="0.01"
+                value={investAmount}
+                onChange={(e) => setInvestAmount(e.target.value)}
+                className="w-full bg-bg-secondary border border-border-primary rounded-lg px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/50"
+              />
+            </div>
 
             {investTarget.master_type === 'mamm' && (
-              <Input
-                label="Volume Scaling"
-                type="number" min="1" max="500" step="1"
-                numeric
-                suffix="%"
-                value={investScaling}
-                onChange={(e) => setInvestScaling(e.target.value)}
-                hint="100 = proportional share · 200 = 2× leverage"
-              />
+              <div>
+                <label className="block text-xs text-text-secondary mb-1.5">Volume Scaling %</label>
+                <input
+                  type="number" min="1" max="500" step="1"
+                  value={investScaling}
+                  onChange={(e) => setInvestScaling(e.target.value)}
+                  className="w-full bg-bg-secondary border border-border-primary rounded-lg px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/50"
+                />
+                <p className="text-[10px] text-text-tertiary mt-1">100 = proportional share · 200 = 2× leverage</p>
+              </div>
             )}
 
-            <Card nested padding="sm" className="text-xs text-text-tertiary">
+            <div className="rounded-lg bg-bg-secondary border border-border-primary p-3 text-[11px] text-text-tertiary">
               Performance fee: <span className="text-text-primary">{investTarget.performance_fee_pct}%</span> · Slots left: <span className="text-text-primary">{investTarget.slots_available}</span>
-            </Card>
+            </div>
 
             <div className="flex gap-2 pt-1">
-              <Button type="button" variant="secondary" className="flex-1" onClick={() => setInvestTarget(null)} disabled={investing}>
+              <button
+                type="button"
+                onClick={() => setInvestTarget(null)}
+                disabled={investing}
+                className="flex-1 py-2.5 rounded-lg border border-border-primary text-xs text-text-secondary hover:text-text-primary hover:border-border-secondary transition-colors disabled:opacity-50"
+              >
                 Cancel
-              </Button>
-              <Button type="button" variant="primary" className="flex-1" onClick={submitInvest} loading={investing}>
+              </button>
+              <button
+                type="button"
+                onClick={submitInvest}
+                disabled={investing}
+                className="flex-1 py-2.5 rounded-lg bg-[#E94E1B] text-white text-xs font-bold hover:bg-[#C73E11] disabled:opacity-50 transition-colors"
+              >
                 {investing ? 'Investing…' : 'Confirm Invest'}
-              </Button>
+              </button>
             </div>
           </div>
         )}
@@ -1133,24 +1262,43 @@ export default function PammPage() {
       >
         {withdrawTarget && (
           <div className="space-y-4">
-            <Card nested padding="sm" className="space-y-2">
-              <KV label="Manager"><span className="font-sans font-medium">{withdrawTarget.manager_name}</span></KV>
-              <KV label="Invested">${fmt(withdrawTarget.allocation_amount)}</KV>
-              <KV label="Total P&L"><PnlText value={withdrawTarget.total_pnl} /></KV>
-            </Card>
+            <div className="rounded-lg bg-bg-secondary border border-border-primary p-4 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-text-tertiary">Manager</span>
+                <span className="text-text-primary font-medium">{withdrawTarget.manager_name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-tertiary">Invested</span>
+                <span className="text-text-primary">${fmt(withdrawTarget.allocation_amount)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-tertiary">Total P&L</span>
+                <span><PnlText value={withdrawTarget.total_pnl} /></span>
+              </div>
+            </div>
 
-            <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg border border-warning/25 bg-warning/10 text-xs text-warning">
+            <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-yellow-500/[0.08] border border-yellow-500/20 text-[11px] text-yellow-400">
               <AlertCircle size={13} className="shrink-0 mt-0.5" />
               <span>All open positions tied to this investment will be closed automatically.</span>
             </div>
 
             <div className="flex gap-2 pt-1">
-              <Button type="button" variant="secondary" className="flex-1" onClick={() => setWithdrawTarget(null)} disabled={withdrawing}>
+              <button
+                type="button"
+                onClick={() => setWithdrawTarget(null)}
+                disabled={withdrawing}
+                className="flex-1 py-2.5 rounded-lg border border-border-primary text-xs text-text-secondary hover:text-text-primary hover:border-border-secondary transition-colors disabled:opacity-50"
+              >
                 Cancel
-              </Button>
-              <Button type="button" variant="danger" className="flex-1" onClick={submitWithdraw} loading={withdrawing}>
+              </button>
+              <button
+                type="button"
+                onClick={submitWithdraw}
+                disabled={withdrawing}
+                className="flex-1 py-2.5 rounded-lg border border-red-500/40 text-red-400 text-xs font-bold hover:bg-red-500/10 disabled:opacity-50 transition-colors"
+              >
                 {withdrawing ? 'Withdrawing…' : 'Confirm Withdraw'}
-              </Button>
+              </button>
             </div>
           </div>
         )}
@@ -1165,30 +1313,46 @@ export default function PammPage() {
       >
         {refillTarget && (
           <div className="space-y-4">
-            <Card nested padding="sm" className="space-y-2">
-              <KV label="Manager"><span className="font-sans font-medium">{refillTarget.manager_name}</span></KV>
-              <KV label="Current Investment"><span className="font-semibold">${fmt(refillTarget.allocation_amount)}</span></KV>
-            </Card>
+            <div className="rounded-lg bg-bg-secondary border border-border-primary p-4 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-text-tertiary">Manager</span>
+                <span className="text-text-primary font-medium">{refillTarget.manager_name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-tertiary">Current Investment</span>
+                <span className="text-text-primary font-semibold">${fmt(refillTarget.allocation_amount)}</span>
+              </div>
+            </div>
 
-            <WalletStrip label="Wallet Balance" balance={walletBalance} onMax={() => setRefillAmount(String(walletBalance))} />
+            <div className="rounded-lg border border-accent/30 bg-bg-secondary p-3 flex items-center justify-between">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-text-tertiary">Wallet Balance</div>
+                <div className="text-lg font-bold text-[#E94E1B] font-mono tabular-nums">
+                  ${walletBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+              </div>
+              <button type="button" onClick={() => setRefillAmount(String(walletBalance))} className="text-xs font-bold text-[#E94E1B] hover:underline">Max</button>
+            </div>
 
-            <Input
-              label="Add Amount"
-              type="number" min="1" step="0.01"
-              numeric
-              suffix="$"
-              value={refillAmount}
-              onChange={(e) => setRefillAmount(e.target.value)}
-              placeholder="Enter amount"
-            />
+            <div>
+              <label className="block text-xs text-text-secondary mb-1.5">Add Amount ($)</label>
+              <input
+                type="number" min="1" step="0.01" value={refillAmount}
+                onChange={(e) => setRefillAmount(e.target.value)}
+                placeholder="Enter amount"
+                className="w-full bg-bg-secondary border border-border-primary rounded-lg px-3 py-2.5 text-sm text-text-primary focus:outline-none focus:border-accent/50"
+              />
+            </div>
 
             <div className="flex gap-2 pt-1">
-              <Button type="button" variant="secondary" className="flex-1" onClick={() => setRefillTarget(null)} disabled={refilling}>
+              <button type="button" onClick={() => setRefillTarget(null)} disabled={refilling}
+                className="flex-1 py-2.5 rounded-lg border border-border-primary text-xs text-text-secondary hover:text-text-primary hover:border-border-secondary transition-colors disabled:opacity-50">
                 Cancel
-              </Button>
-              <Button type="button" variant="primary" className="flex-1" onClick={submitRefill} loading={refilling} disabled={!refillAmount}>
+              </button>
+              <button type="button" onClick={submitRefill} disabled={refilling || !refillAmount}
+                className="flex-1 py-2.5 rounded-lg bg-[#E94E1B] text-white text-xs font-bold hover:bg-[#C73E11] disabled:opacity-50 transition-colors">
                 {refilling ? 'Adding…' : 'Add Funds'}
-              </Button>
+              </button>
             </div>
           </div>
         )}

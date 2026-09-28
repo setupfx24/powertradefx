@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { adminApi } from '@/lib/api';
+import { closeReasonInfo, CLOSE_REASON_CLASS, CLOSE_REASON_CLASS_BORDERED } from '@/lib/closeReason';
+import { utcIsoToLocalInput, localInputToUtcIso } from '@/lib/formatters';
 import toast from 'react-hot-toast';
 import Link from 'next/link';
 import {
@@ -35,10 +37,18 @@ interface Position {
    *  the per-symbol hardcoded fallbacks below are only used when this
    *  field is missing (legacy data / API rollback). */
   contract_size?: number;
+  /** Instrument pip_size + digits from DB — used to show the spread in points
+   *  and the price at the right precision, matching the trader terminal. */
+  pip_size?: number;
+  digits?: number;
+  /** Temporary per-trade spread override (points). Null = none (config spread). */
+  spread_override?: number | null;
+  spread_override_type?: string | null;
   comment?: string;
   is_admin_modified: boolean;
   created_at: string;
   user_email?: string;
+  user_id?: string;
   account_number?: string;
   book_type?: string;
   is_demo?: boolean;
@@ -89,6 +99,7 @@ interface ClosedTrade {
   swap?: number;
   profit: number;
   close_reason: string;
+  is_ai?: boolean;
   opened_at?: string | null;
   closed_at: string;
 }
@@ -154,6 +165,9 @@ export default function TradesPage() {
   const [activeTab, setActiveTab] = useState<TabId>('open');
   const [searchFilter, setSearchFilter] = useState('');
   const [symbolFilter, setSymbolFilter] = useState('');
+  // Centered book filter above the open-positions table: show all, only
+  // A-book, or only B-book trades. Clicking the active one clears it.
+  const [bookFilter, setBookFilter] = useState<'all' | 'A' | 'B'>('all');
 
   const [positions, setPositions] = useState<Position[]>([]);
   const [posPage, setPosPage] = useState(1);
@@ -178,10 +192,10 @@ export default function TradesPage() {
 
   useEffect(() => {
     // Resolve the prices WebSocket URL. Order:
-    //  1. NEXT_PUBLIC_WS_URL — explicit override, e.g. wss://api.powertradefx.com
+    //  1. NEXT_PUBLIC_WS_URL — explicit override, e.g. wss://api.swisscresta.com
     //  2. NEXT_PUBLIC_GATEWAY_URL — http(s) → ws(s) shim for legacy configs
     //  3. Derive from current origin: replace `admin.` with `api.` so the
-    //     admin app loaded from admin.powertradefx.com talks to api.powertradefx.com.
+    //     admin app loaded from admin.swisscresta.com talks to api.swisscresta.com.
     //     Local dev (localhost:30xx) falls through to step 4.
     //  4. Last-resort dev fallback: ws://localhost:8000
     function resolveWsBase(): string {
@@ -235,17 +249,40 @@ export default function TradesPage() {
   // modify/create/close modal flows above can't accidentally trample
   // the history detail (and vice versa).
   const [selectedTrade, setSelectedTrade] = useState<ClosedTrade | null>(null);
+  // Edit-closed-trade modal. A closed trade's P&L is already in the balance,
+  // so saving reconciles the balance by the delta on the backend.
+  const [editHist, setEditHist] = useState<ClosedTrade | null>(null);
+  const [ehOpen, setEhOpen] = useState('');
+  const [ehClose, setEhClose] = useState('');
+  const [ehLots, setEhLots] = useState('');
+  const [ehCommission, setEhCommission] = useState('');
+  const [ehSwap, setEhSwap] = useState('');
+  const [ehSide, setEhSide] = useState<'buy' | 'sell'>('buy');
+  const [ehOpenedAt, setEhOpenedAt] = useState('');
+  const [ehClosedAt, setEhClosedAt] = useState('');
+  const [ehReason, setEhReason] = useState('');
+  const [ehSaving, setEhSaving] = useState(false);
   const [modifySl, setModifySl] = useState('');
   const [modifyTp, setModifyTp] = useState('');
   const [modifyOpenPrice, setModifyOpenPrice] = useState('');
   const [modifyLots, setModifyLots] = useState('');
   const [modifyCommission, setModifyCommission] = useState('');
   const [modifySwap, setModifySwap] = useState('');
+  // Temporary per-trade spread override (in points). Empty = no override
+  // (fall back to config spread). Applies live while this trade is open.
+  const [modifySpread, setModifySpread] = useState('');
   const [modifyOpenTime, setModifyOpenTime] = useState('');
   // Admin can flip Buy ↔ Sell on an open position as a correction.
   // Initialized from the position's current side; only sent in the
   // PUT body when it actually differs from the original.
   const [modifySide, setModifySide] = useState<'buy' | 'sell'>('buy');
+  // Close modal: admin can book a custom close price. The backend
+  // (ClosePositionRequest.close_price) has always honoured this; the modal
+  // just never exposed it and closed at live market. Spread is an optional
+  // points adjustment that shifts the close against the user; the modal shows
+  // the resulting effective price so whatever gets booked is never a surprise.
+  const [closePriceInput, setClosePriceInput] = useState('');
+  const [closeSpread, setCloseSpread] = useState('');
   const [actionReason, setActionReason] = useState('');
   const [modalSubmitting, setModalSubmitting] = useState(false);
 
@@ -258,7 +295,7 @@ export default function TradesPage() {
   const [createSymbol, setCreateSymbol] = useState('');
   const [createInstrumentId, setCreateInstrumentId] = useState('');
   const [instrumentSearch, setInstrumentSearch] = useState('');
-  const [instruments, setInstruments] = useState<{ id: string; symbol: string; display_name: string; segment: string }[]>([]);
+  const [instruments, setInstruments] = useState<{ id: string; symbol: string; display_name: string; segment: string; pip_size?: number; digits?: number }[]>([]);
   const [showInstrumentDropdown, setShowInstrumentDropdown] = useState(false);
   const [createSide, setCreateSide] = useState<'buy' | 'sell'>('buy');
   const [createType, setCreateType] = useState('market');
@@ -377,8 +414,19 @@ export default function TradesPage() {
     setModifyLots(pos.lots ? String(pos.lots) : '');
     setModifyCommission(pos.commission ? String(pos.commission) : '');
     setModifySwap(pos.swap ? String(pos.swap) : '');
-    setModifyOpenTime(pos.created_at ? new Date(pos.created_at).toISOString().slice(0, 16) : '');
+    setModifySpread(pos.spread_override != null ? String(pos.spread_override) : '');
+    setModifyOpenTime(utcIsoToLocalInput(pos.created_at));
     setModifySide((pos.side?.toLowerCase() === 'sell' ? 'sell' : 'buy'));
+    // Seed the close-at-price controls too — the Edit modal carries a
+    // separate "Close at price" section so admin can set close price / spread
+    // in the same place, without those touching the Save Changes (modify) flow.
+    {
+      const tick = pos.instrument_symbol ? pricesRef.current[pos.instrument_symbol] : null;
+      const isBuy = (pos.side || '').toLowerCase() === 'buy';
+      const mkt = tick ? (isBuy ? tick.bid : tick.ask) : null;
+      setClosePriceInput(mkt != null ? String(mkt) : '');
+      setCloseSpread('');
+    }
     setActionReason('');
     setModalType('modify');
     setOpenActionsId(null);
@@ -387,6 +435,14 @@ export default function TradesPage() {
   const openCloseModal = (pos: Position) => {
     setSelectedPosition(pos);
     setActionReason('');
+    // Seed the close-price field with the live market for this side (bid for a
+    // buy, ask for a sell) so the default matches a plain market close; admin
+    // edits from there. Spread starts empty (no adjustment).
+    const tick = pos.instrument_symbol ? pricesRef.current[pos.instrument_symbol] : null;
+    const isBuy = (pos.side || '').toLowerCase() === 'buy';
+    const mkt = tick ? (isBuy ? tick.bid : tick.ask) : null;
+    setClosePriceInput(mkt != null ? String(mkt) : '');
+    setCloseSpread('');
     setModalType('close');
     setOpenActionsId(null);
   };
@@ -445,7 +501,12 @@ export default function TradesPage() {
       if (modifyLots) body.lots = parseFloat(modifyLots);
       if (modifyCommission) body.commission = parseFloat(modifyCommission);
       if (modifySwap) body.swap = parseFloat(modifySwap);
-      if (modifyOpenTime) body.open_time = new Date(modifyOpenTime).toISOString();
+      // Per-trade spread override: always send so clearing the input (empty)
+      // removes the override; a value sets it in points (pips convention).
+      const spTrim = modifySpread.trim();
+      body.spread_override = spTrim === '' ? null : parseFloat(spTrim);
+      body.spread_override_type = 'pips';
+      if (modifyOpenTime) body.open_time = localInputToUtcIso(modifyOpenTime);
       // Only send side if admin actually flipped it — saves a write
       // on every save where the toggle wasn't touched and keeps the
       // audit log clean.
@@ -462,11 +523,129 @@ export default function TradesPage() {
     }
   };
 
+  // Effective close price the Close modal will book. Base is the admin's
+  // typed price, or live market for the side when the field is empty; an
+  // optional spread (in POINTS — the instrument's pip_size, same convention as
+  // the Spread column) then shifts it AGAINST the user — a buy closes lower, a
+  // sell higher. Returns null when there is nothing usable to close at.
+  const effectiveClosePrice = (
+    pos: Position, priceStr: string, spreadStr: string,
+  ): number | null => {
+    const isBuy = (pos.side || '').toLowerCase() === 'buy';
+    let base = parseFloat(priceStr);
+    if (!Number.isFinite(base)) {
+      const tick = pos.instrument_symbol ? pricesRef.current[pos.instrument_symbol] : null;
+      base = tick ? (isBuy ? tick.bid : tick.ask) : NaN;
+    }
+    if (!Number.isFinite(base)) return null;
+    const sp = parseFloat(spreadStr);
+    if (Number.isFinite(sp) && sp !== 0) {
+      const pipSize = pos.pip_size ?? ((pos.digits ?? 5) >= 4 ? 0.0001 : 0.01);
+      const shift = Math.abs(sp) * pipSize;
+      base = isBuy ? base - shift : base + shift;
+    }
+    return base;
+  };
+
+  // Flip the owner's book between A and B, straight from the trades view.
+  // Routing is per-user (there is no per-position book type), so this moves
+  // ALL of that user's trades — the confirm says so plainly. Reuses the same
+  // endpoint the Book-management screen uses.
+  const [bookFlipping, setBookFlipping] = useState<string | null>(null);
+  // Explicitly route this user to A-Book or B-Book straight from the trade
+  // row. Routing is per-user, so it moves ALL of their trades — the confirm
+  // spells that out. No-op if they're already on the target book.
+  const setBook = async (p: Position, target: 'A' | 'B') => {
+    if (!p.user_id) { toast.error('Cannot switch book — user id missing'); return; }
+    const current = (p.book_type || 'B').toUpperCase();
+    if (current === target) return; // already on this book
+    const ok = window.confirm(
+      `Move ${p.user_email || 'this user'} to ${target}-Book?\n\n`
+      + `Book routing is per user, so this moves ALL of their trades to ${target}-Book, not just this one.`,
+    );
+    if (!ok) return;
+    setBookFlipping(p.id);
+    try {
+      await adminApi.put(`/book/users/${p.user_id}/book-type`, { book_type: target });
+      toast.success(`${p.user_email || 'User'} → ${target}-Book`);
+      fetchPositions();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Book switch failed');
+    } finally {
+      setBookFlipping(null);
+    }
+  };
+
+  // ── Edit closed trade ──────────────────────────────────────────────
+  const openEditHistory = (t: ClosedTrade) => {
+    setEditHist(t);
+    setEhOpen(t.open_price != null ? String(t.open_price) : '');
+    setEhClose(t.close_price != null ? String(t.close_price) : '');
+    setEhLots(t.lots != null ? String(t.lots) : '');
+    setEhCommission(t.commission != null ? String(t.commission) : '');
+    setEhSwap(t.swap != null ? String(t.swap) : '');
+    setEhSide((t.side || '').toLowerCase() === 'sell' ? 'sell' : 'buy');
+    setEhOpenedAt(utcIsoToLocalInput(t.opened_at));
+    setEhClosedAt(utcIsoToLocalInput(t.closed_at));
+    setEhReason('');
+  };
+
+  const histContractSize = (sym?: string, apiCs?: number) =>
+    apiCs ?? (sym?.match(/BTC|ETH/) ? 1
+      : sym?.match(/XAU/) ? 100
+      : sym?.match(/XAG/) ? 5000
+      : sym?.match(/OIL/) ? 1000
+      : sym?.match(/US30|US500|NAS/) ? 1
+      : 100000);
+
+  // Live recomputed P&L preview for the edit modal — matches the backend's
+  // (close-open)*lots*contract by side. Cross-rate isn't applied here, so it
+  // is a preview; the backend books the authoritative figure.
+  const ehPreviewPnl = (): number | null => {
+    if (!editHist) return null;
+    const op = parseFloat(ehOpen), cl = parseFloat(ehClose), lo = parseFloat(ehLots);
+    if (![op, cl, lo].every(Number.isFinite)) return null;
+    const cs = histContractSize(editHist.instrument_symbol);
+    return (ehSide === 'buy' ? (cl - op) : (op - cl)) * lo * cs;
+  };
+
+  const submitEditHistory = async () => {
+    if (!editHist) return;
+    setEhSaving(true);
+    try {
+      const body: Record<string, unknown> = { reason: ehReason };
+      if (ehOpen) body.open_price = parseFloat(ehOpen);
+      if (ehClose) body.close_price = parseFloat(ehClose);
+      if (ehLots) body.lots = parseFloat(ehLots);
+      if (ehCommission !== '') body.commission = parseFloat(ehCommission);
+      if (ehSwap !== '') body.swap = parseFloat(ehSwap);
+      if (ehSide !== (editHist.side || '').toLowerCase()) body.side = ehSide;
+      if (ehOpenedAt) body.opened_at = localInputToUtcIso(ehOpenedAt);
+      if (ehClosedAt) body.closed_at = localInputToUtcIso(ehClosedAt);
+      const r = await adminApi.put<{ profit: number; balance_delta: number }>(
+        `/trades/history/${editHist.id}/modify`, body);
+      toast.success(`Saved — P&L ${r.profit >= 0 ? '+' : ''}${formatMoney(r.profit)}, balance Δ ${r.balance_delta >= 0 ? '+' : ''}${formatMoney(r.balance_delta)}`);
+      setEditHist(null);
+      fetchHistory();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Edit failed');
+    } finally {
+      setEhSaving(false);
+    }
+  };
+
   const submitClose = async () => {
     if (!selectedPosition) return;
     setModalSubmitting(true);
     try {
-      await adminApi.post(`/trades/position/${selectedPosition.id}/close`, { reason: actionReason });
+      const body: Record<string, unknown> = { reason: actionReason };
+      // Send the effective close price the modal is showing. When the admin
+      // leaves the field on the live market and no spread, this equals a plain
+      // market close; the backend falls back to market only if close_price is
+      // omitted, so we send it explicitly whenever it is a valid number.
+      const eff = effectiveClosePrice(selectedPosition, closePriceInput, closeSpread);
+      if (eff != null && Number.isFinite(eff)) body.close_price = eff;
+      await adminApi.post(`/trades/position/${selectedPosition.id}/close`, body);
       toast.success('Position closed');
       closeModal();
       fetchPositions();
@@ -629,6 +808,44 @@ export default function TradesPage() {
           {/* Open Positions */}
           {activeTab === 'open' && (
             <div>
+              {/* Centered A-Book / B-Book view filter. Sits above the table
+                  in addition to the per-row A/B toggle. Filters the open
+                  positions to one book; clicking the active button clears it. */}
+              <div className="flex justify-center py-3 border-b border-border-primary">
+                <div className="inline-flex rounded-lg border border-border-primary overflow-hidden">
+                  <button
+                    onClick={() => setBookFilter('A')}
+                    className={cn(
+                      'px-4 py-1.5 text-xs font-bold uppercase tracking-wide transition-fast border-r border-border-primary',
+                      bookFilter === 'A'
+                        ? 'text-info bg-info/15'
+                        : 'text-text-secondary bg-bg-hover hover:text-text-primary hover:bg-bg-active',
+                    )}
+                  >
+                    A-Book Trades
+                  </button>
+                  <button
+                    onClick={() => setBookFilter('B')}
+                    className={cn(
+                      'px-4 py-1.5 text-xs font-bold uppercase tracking-wide transition-fast',
+                      bookFilter === 'B'
+                        ? 'text-warning bg-warning/15'
+                        : 'text-text-secondary bg-bg-hover hover:text-text-primary hover:bg-bg-active',
+                    )}
+                  >
+                    B-Book Trades
+                  </button>
+                </div>
+                {bookFilter !== 'all' && (
+                  <button
+                    onClick={() => setBookFilter('all')}
+                    className="ml-2 px-3 py-1.5 text-xs font-medium text-text-tertiary hover:text-text-primary transition-fast"
+                    title="Show all trades"
+                  >
+                    Show all
+                  </button>
+                )}
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
@@ -643,13 +860,21 @@ export default function TradesPage() {
                       .filter(p => {
                         if (searchFilter && !`${p.user_email || ''} ${p.account_number || ''}`.toLowerCase().includes(searchFilter.toLowerCase())) return false;
                         if (symbolFilter && !p.instrument_symbol?.toLowerCase().includes(symbolFilter.toLowerCase())) return false;
+                        if (bookFilter !== 'all' && (p.book_type || 'B').toUpperCase() !== bookFilter) return false;
                         return true;
                       })
                       .map(p => {
                       const tick = p.instrument_symbol ? pricesRef.current[p.instrument_symbol] : null;
                       const isBuy = p.side?.toLowerCase() === 'buy';
                       const currentPrice = tick ? (isBuy ? tick.bid : tick.ask) : null;
-                      const spread = tick ? ((tick.ask - tick.bid) * 100000).toFixed(1) : '—';
+                      // Spread in POINTS + price precision from the instrument's
+                      // own pip_size/digits (surfaced by the API), matching the
+                      // trader terminal. The old ×100000 / toFixed(5) assumed a
+                      // 5-digit FX pair, so it inflated gold's spread 1000×
+                      // (XAUUSD 150 pts shown as 150000) and over-padded price.
+                      const digits = p.digits ?? 5;
+                      const pipSize = p.pip_size ?? (digits >= 4 ? 0.0001 : 0.01);
+                      const spread = tick ? Math.round((tick.ask - tick.bid) / pipSize).toString() : '—';
                       // Authoritative value from the API (admin's
                       // trade_service.list_positions surfaces the DB
                       // contract_size). Fallback table is for legacy
@@ -673,7 +898,7 @@ export default function TradesPage() {
                         <td className="px-3 py-2"><span className={cn('text-xs font-bold', isBuy ? 'text-buy' : 'text-sell')}>{p.side?.toUpperCase()}</span></td>
                         <td className="px-3 py-2 text-xs text-text-primary font-mono tabular-nums">{p.lots}</td>
                         <td className="px-3 py-2 text-xs text-text-secondary font-mono tabular-nums">{p.open_price}</td>
-                        <td className="px-3 py-2 text-xs text-text-primary font-mono tabular-nums font-medium">{currentPrice?.toFixed(5) || '—'}</td>
+                        <td className="px-3 py-2 text-xs text-text-primary font-mono tabular-nums font-medium">{currentPrice != null ? currentPrice.toFixed(digits) : '—'}</td>
                         <td className="px-3 py-2 text-xxs text-text-tertiary font-mono tabular-nums">{spread}</td>
                         <td className={cn('px-3 py-2 text-xs font-mono tabular-nums font-bold', livePnl >= 0 ? 'text-success' : 'text-danger')}>
                           {livePnl >= 0 ? '+' : ''}{formatMoney(livePnl)}
@@ -683,13 +908,48 @@ export default function TradesPage() {
                         <td className="px-3 py-2 text-xs text-buy font-mono tabular-nums">{p.take_profit != null ? p.take_profit : '—'}</td>
                         <td className="px-3 py-2 text-xxs text-text-tertiary whitespace-nowrap">{formatDate(p.created_at)}</td>
                         <td className="px-3 py-2 whitespace-nowrap">
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center justify-center gap-1">
+                            {/* A / B book toggle straight from the trade row — two
+                                explicit buttons instead of one flip. The active book
+                                is highlighted; clicking the other routes the owner's
+                                whole book (per-user) after a confirm. */}
+                            {p.user_id && !p.is_demo && (
+                              <div
+                                className="inline-flex rounded border border-border-primary overflow-hidden shrink-0"
+                                title="Route this user's trades (per-user — moves ALL of their trades)"
+                              >
+                                {(['A', 'B'] as const).map((bk) => {
+                                  const active = (p.book_type || 'B').toUpperCase() === bk;
+                                  return (
+                                    <button
+                                      key={bk}
+                                      onClick={() => setBook(p, bk)}
+                                      disabled={bookFlipping === p.id}
+                                      title={active ? `Currently ${bk}-Book` : `Move this user to ${bk}-Book`}
+                                      className={cn(
+                                        'px-2.5 py-1 text-xxs font-bold uppercase tracking-wide transition-fast disabled:opacity-50',
+                                        bk === 'A' && 'border-r border-border-primary',
+                                        active
+                                          ? (bk === 'A'
+                                              ? 'text-info bg-info/15'
+                                              : 'text-warning bg-warning/15')
+                                          : 'text-text-tertiary bg-bg-hover hover:text-text-secondary hover:bg-bg-active',
+                                      )}
+                                    >
+                                      {bookFlipping === p.id && active
+                                        ? <Loader2 size={11} className="inline animate-spin" />
+                                        : `${bk} Book`}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
                             {p.is_lp_forwarded ? (
                               <span
                                 className="px-2 py-1 text-xxs font-bold uppercase tracking-wide text-info bg-info/10 border border-info/30 rounded"
                                 title="A-book trade — forwarded to LP, admin cannot edit"
                               >
-                                A-book · LP
+                                LP
                               </span>
                             ) : (
                               <button onClick={() => openModifyModal(p)} className="px-2 py-1 text-xxs font-medium text-text-secondary bg-bg-hover border border-border-primary rounded hover:text-buy hover:border-buy/30 transition-fast" title="Edit Trade">
@@ -765,8 +1025,8 @@ export default function TradesPage() {
                 <table className="w-full min-w-[1040px]">
                   <thead>
                     <tr className="border-b border-border-primary bg-bg-tertiary/40">
-                      {['Closed', 'User', 'Symbol', 'Side', 'Lots', 'Open', 'Close', 'SL', 'TP', 'P&L', 'Reason'].map(c => (
-                        <th key={c} className={cn('text-left px-4 py-2.5 text-xxs font-medium text-text-tertiary uppercase tracking-wide', ['Lots', 'Open', 'Close', 'SL', 'TP', 'P&L'].includes(c) && 'text-right')}>{c}</th>
+                      {['Closed', 'User', 'Symbol', 'Side', 'Lots', 'Open', 'Close', 'SL', 'TP', 'P&L', 'Reason', ''].map((c, ci) => (
+                        <th key={c || `act${ci}`} className={cn('text-left px-4 py-2.5 text-xxs font-medium text-text-tertiary uppercase tracking-wide', ['Lots', 'Open', 'Close', 'SL', 'TP', 'P&L'].includes(c) && 'text-right')}>{c}</th>
                       ))}
                     </tr>
                   </thead>
@@ -778,9 +1038,11 @@ export default function TradesPage() {
                         return true;
                       })
                       .map(t => {
-                      const reason = t.close_reason || 'manual';
-                      const reasonLabel = reason === 'sl' ? 'SL' : reason === 'tp' ? 'TP' : reason === 'admin' ? 'Admin' : 'Manual';
-                      const reasonColor = reason === 'sl' ? 'bg-danger/15 text-danger' : reason === 'tp' ? 'bg-success/15 text-success' : reason === 'admin' ? 'bg-warning/15 text-warning' : 'bg-text-tertiary/15 text-text-tertiary';
+                      // Shared mapping — the old ternary here reported
+                      // ai_strategy / algo_close / stop_out as "Manual".
+                      const reasonInfo = closeReasonInfo(t.close_reason);
+                      const reasonLabel = reasonInfo.short;
+                      const reasonColor = CLOSE_REASON_CLASS[reasonInfo.tone];
                       // SL/TP cells: dim em-dash when not set, sell color
                       // for SL, buy color for TP — visually mirrors the
                       // Open Positions tab so admins read both views the
@@ -796,7 +1058,17 @@ export default function TradesPage() {
                       >
                         <td className="px-4 py-2.5 text-xxs text-text-tertiary font-mono tabular-nums">{formatDate(t.closed_at)}</td>
                         <td className="px-4 py-2.5 text-xs text-text-primary">{t.user_email || t.account_number || '—'}</td>
-                        <td className="px-4 py-2.5 text-xs text-text-primary font-medium">{t.instrument_symbol}</td>
+                        <td className="px-4 py-2.5 text-xs text-text-primary font-medium">
+                          <span className="inline-flex items-center gap-1.5">
+                            {t.instrument_symbol}
+                            {/* Origin tag: without it a strategy's trade was
+                                indistinguishable from a hand-placed one once
+                                closed. Backed by the ai_strategy_trades join. */}
+                            {t.is_ai && (
+                              <span className="rounded px-1 text-xxs font-semibold bg-violet-500/15 text-violet-500 leading-4">AI</span>
+                            )}
+                          </span>
+                        </td>
                         <td className="px-4 py-2.5"><span className={cn('text-xs font-medium', t.side?.toLowerCase() === 'buy' ? 'text-buy' : 'text-sell')}>{t.side?.toUpperCase()}</span></td>
                         <td className="px-4 py-2.5 text-xs text-text-primary text-right font-mono tabular-nums">{t.lots}</td>
                         <td className="px-4 py-2.5 text-xs text-text-secondary text-right font-mono tabular-nums">{t.open_price}</td>
@@ -809,13 +1081,22 @@ export default function TradesPage() {
                         <td className="px-4 py-2.5">
                           <span className={cn('inline-flex px-2 py-0.5 rounded text-xxs font-semibold', reasonColor)}>{reasonLabel}</span>
                         </td>
+                        <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openEditHistory(t); }}
+                            className="px-2 py-1 text-xxs font-medium text-text-secondary bg-bg-hover border border-border-primary rounded hover:text-buy hover:border-buy/30 transition-fast"
+                            title="Edit closed trade"
+                          >
+                            <Edit3 size={11} className="inline mr-0.5" />Edit
+                          </button>
+                        </td>
                       </tr>
                       );
                     })}
                   </tbody>
                 </table>
               </div>
-              {histLoading && <TableSkeleton cols={11} />}
+              {histLoading && <TableSkeleton cols={12} />}
               {!histLoading && history.length === 0 && (
                 <div className="px-4 py-12 text-center text-xs text-text-tertiary">No closed trades</div>
               )}
@@ -832,11 +1113,18 @@ export default function TradesPage() {
             const tick = selectedPosition.instrument_symbol ? pricesRef.current[selectedPosition.instrument_symbol] : null;
             const isBuy = selectedPosition.side?.toLowerCase() === 'buy';
             const cp = tick ? (isBuy ? tick.bid : tick.ask) : null;
+            // Live spread in POINTS (instrument pip_size, same convention as the
+            // trades table and the trader terminal). Shown here because the edit
+            // modal never surfaced it, even though the table and create modal do.
+            const digits = selectedPosition.digits ?? 5;
+            const pipSize = selectedPosition.pip_size ?? (digits >= 4 ? 0.0001 : 0.01);
+            const spread = tick ? Math.round((tick.ask - tick.bid) / pipSize).toString() : '—';
             return (
-              <div className="grid grid-cols-3 gap-2 p-3 bg-bg-tertiary/50 border border-border-primary rounded-md text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 bg-bg-tertiary/50 border border-border-primary rounded-md text-xs">
                 <div><p className="text-xxs text-text-tertiary">User</p><p className="text-text-primary truncate">{selectedPosition.user_email}</p></div>
                 <div><p className="text-xxs text-text-tertiary">Side</p><p className={cn('font-bold', isBuy ? 'text-buy' : 'text-sell')}>{selectedPosition.side?.toUpperCase()}</p></div>
-                <div><p className="text-xxs text-text-tertiary">Current Price</p><p className="text-text-primary font-mono">{cp?.toFixed(5) || '—'}</p></div>
+                <div><p className="text-xxs text-text-tertiary">Current Price</p><p className="text-text-primary font-mono">{cp != null ? cp.toFixed(digits) : '—'}</p></div>
+                <div><p className="text-xxs text-text-tertiary">Spread</p><p className="text-text-primary font-mono">{spread}</p></div>
               </div>
             );
           })()}
@@ -912,6 +1200,11 @@ export default function TradesPage() {
             </div>
           </div>
           <div>
+            <label className="block text-xxs text-text-tertiary mb-1">Spread override (points)</label>
+            <input type="number" step="any" min="0" value={modifySpread} onChange={e => setModifySpread(e.target.value)} placeholder="None — uses config spread" className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md font-mono tabular-nums placeholder:text-text-tertiary focus:border-buy transition-fast" />
+            <p className="text-[10px] text-text-tertiary mt-1">Applies only while this trade is open (price + chart + P&amp;L). Clear to revert to the account/instrument/user config spread. Leave empty for no override.</p>
+          </div>
+          <div>
             <label className="block text-xxs text-text-tertiary mb-1">Open Time</label>
             <input type="datetime-local" value={modifyOpenTime} onChange={e => setModifyOpenTime(e.target.value)} className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md text-text-primary focus:border-buy transition-fast" />
           </div>
@@ -925,6 +1218,58 @@ export default function TradesPage() {
               {modalSubmitting ? <Loader2 size={14} className="animate-spin" /> : 'Save Changes'}
             </button>
           </div>
+
+          {/* Close-at-price — separate section with its OWN button, so it never
+              rides on Save Changes (which only modifies the open trade). A
+              position has no editable spread of its own, so spread here is a
+              points adjustment that worsens the close price against the user;
+              close price itself is backed by ClosePositionRequest.close_price.
+              The live readout shows exactly what will be booked. */}
+          {selectedPosition && !selectedPosition.is_lp_forwarded && (
+            <div className="mt-1 border-t border-border-primary pt-3 space-y-3">
+              <p className="text-xxs font-semibold uppercase tracking-wide text-text-tertiary">Close at a price</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xxs text-text-tertiary mb-1">Close Price</label>
+                  <input type="number" step="any" value={closePriceInput} onChange={e => setClosePriceInput(e.target.value)} placeholder="Market" className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md font-mono tabular-nums placeholder:text-text-tertiary focus:border-danger transition-fast" />
+                </div>
+                <div>
+                  <label className="block text-xxs text-text-tertiary mb-1">Spread (points)</label>
+                  <input type="number" step="any" value={closeSpread} onChange={e => setCloseSpread(e.target.value)} placeholder="0" className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md font-mono tabular-nums placeholder:text-text-tertiary focus:border-danger transition-fast" />
+                </div>
+              </div>
+              {(() => {
+                const eff = effectiveClosePrice(selectedPosition, closePriceInput, closeSpread);
+                if (eff == null) return null;
+                const isBuy = (selectedPosition.side || '').toLowerCase() === 'buy';
+                const effDigits = selectedPosition.digits ?? 5;
+                const contractSize = selectedPosition.contract_size
+                  ?? (selectedPosition.instrument_symbol?.match(/BTC|ETH/) ? 1
+                    : selectedPosition.instrument_symbol?.match(/XAU/) ? 100
+                    : selectedPosition.instrument_symbol?.match(/XAG/) ? 50
+                    : selectedPosition.instrument_symbol?.match(/OIL/) ? 1000
+                    : selectedPosition.instrument_symbol?.match(/US30|US500|NAS/) ? 1
+                    : 100000);
+                const pnl = (isBuy ? (eff - selectedPosition.open_price) : (selectedPosition.open_price - eff))
+                  * selectedPosition.lots * contractSize;
+                return (
+                  <div className="flex items-center justify-between px-3 py-2 rounded-md bg-bg-tertiary/50 border border-border-primary text-xs">
+                    <span className="text-text-tertiary">Effective close</span>
+                    <span className="font-mono tabular-nums text-text-primary">{eff.toFixed(effDigits)}</span>
+                    <span className="text-text-tertiary">Booked P&amp;L</span>
+                    <span className={cn('font-mono tabular-nums font-bold', pnl >= 0 ? 'text-success' : 'text-danger')}>
+                      {pnl >= 0 ? '+' : ''}{formatMoney(pnl)}
+                    </span>
+                  </div>
+                );
+              })()}
+              <div className="flex justify-end">
+                <button onClick={submitClose} disabled={modalSubmitting} className="px-4 py-1.5 rounded-md text-xs font-medium bg-danger text-white hover:opacity-90 disabled:opacity-50 transition-fast">
+                  {modalSubmitting ? <Loader2 size={14} className="animate-spin" /> : 'Close at Price'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </Modal>
 
@@ -935,6 +1280,7 @@ export default function TradesPage() {
             const tick = selectedPosition.instrument_symbol ? pricesRef.current[selectedPosition.instrument_symbol] : null;
             const isBuy = selectedPosition.side?.toLowerCase() === 'buy';
             const cp = tick ? (isBuy ? tick.bid : tick.ask) : null;
+            const digits = selectedPosition.digits ?? 5;
             const contractSize = selectedPosition.instrument_symbol?.match(/BTC|ETH/) ? 1
               : selectedPosition.instrument_symbol?.match(/XAU/) ? 100
               : selectedPosition.instrument_symbol?.match(/XAG/) ? 50
@@ -947,12 +1293,59 @@ export default function TradesPage() {
               <div><p className="text-xxs text-text-tertiary">Side</p><p className={cn('font-bold', isBuy ? 'text-buy' : 'text-sell')}>{selectedPosition.side?.toUpperCase()}</p></div>
               <div><p className="text-xxs text-text-tertiary">Lots</p><p className="text-text-primary font-mono">{selectedPosition.lots}</p></div>
               <div><p className="text-xxs text-text-tertiary">Open</p><p className="text-text-primary font-mono">{selectedPosition.open_price}</p></div>
-              <div><p className="text-xxs text-text-tertiary">Current</p><p className="text-text-primary font-mono">{cp?.toFixed(5) || '—'}</p></div>
+              <div><p className="text-xxs text-text-tertiary">Current</p><p className="text-text-primary font-mono">{cp != null ? cp.toFixed(digits) : '—'}</p></div>
               <div><p className="text-xxs text-text-tertiary">P&L</p><p className={cn('font-mono font-bold', livePnl >= 0 ? 'text-success' : 'text-danger')}>{livePnl >= 0 ? '+' : ''}{formatMoney(livePnl)}</p></div>
               <div><p className="text-xxs text-text-tertiary">User</p><p className="text-text-primary truncate">{selectedPosition.user_email}</p></div>
               <div><p className="text-xxs text-text-tertiary">SL</p><p className="text-sell font-mono">{selectedPosition.stop_loss != null ? selectedPosition.stop_loss : '—'}</p></div>
               <div><p className="text-xxs text-text-tertiary">TP</p><p className="text-buy font-mono">{selectedPosition.take_profit != null ? selectedPosition.take_profit : '—'}</p></div>
             </div>
+            );
+          })()}
+          {/* Close price + spread. Backend has always accepted a custom
+              close_price; the modal used to close silently at live market. */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xxs text-text-tertiary mb-1">Close Price</label>
+              <input
+                type="number" step="any" value={closePriceInput}
+                onChange={e => setClosePriceInput(e.target.value)}
+                placeholder="Market"
+                className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md font-mono tabular-nums placeholder:text-text-tertiary focus:border-danger transition-fast"
+              />
+            </div>
+            <div>
+              <label className="block text-xxs text-text-tertiary mb-1">Spread (points)</label>
+              <input
+                type="number" step="any" value={closeSpread}
+                onChange={e => setCloseSpread(e.target.value)}
+                placeholder="0"
+                className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md font-mono tabular-nums placeholder:text-text-tertiary focus:border-danger transition-fast"
+              />
+            </div>
+          </div>
+          {selectedPosition && (() => {
+            const eff = effectiveClosePrice(selectedPosition, closePriceInput, closeSpread);
+            if (eff == null) return null;
+            const isBuy = (selectedPosition.side || '').toLowerCase() === 'buy';
+            const effDigits = selectedPosition.digits ?? 5;
+            const contractSize = selectedPosition.contract_size
+              ?? (selectedPosition.instrument_symbol?.match(/BTC|ETH/) ? 1
+                : selectedPosition.instrument_symbol?.match(/XAU/) ? 100
+                : selectedPosition.instrument_symbol?.match(/XAG/) ? 50
+                : selectedPosition.instrument_symbol?.match(/OIL/) ? 1000
+                : selectedPosition.instrument_symbol?.match(/US30|US500|NAS/) ? 1
+                : 100000);
+            const pnl = (isBuy ? (eff - selectedPosition.open_price) : (selectedPosition.open_price - eff))
+              * selectedPosition.lots * contractSize;
+            return (
+              <div className="flex items-center justify-between px-3 py-2 rounded-md bg-bg-tertiary/50 border border-border-primary text-xs">
+                <span className="text-text-tertiary">Effective close</span>
+                <span className="font-mono tabular-nums text-text-primary">{eff.toFixed(effDigits)}</span>
+                <span className="text-text-tertiary">Booked P&amp;L</span>
+                <span className={cn('font-mono tabular-nums font-bold', pnl >= 0 ? 'text-success' : 'text-danger')}>
+                  {pnl >= 0 ? '+' : ''}{formatMoney(pnl)}
+                </span>
+              </div>
             );
           })()}
           <div>
@@ -1099,12 +1492,18 @@ export default function TradesPage() {
                 </div>
               );
             }
-            const spread = ((tick.ask - tick.bid) * 100000).toFixed(1);
+            // Spread in POINTS + price precision from the picked instrument's
+            // pip_size/digits, matching the trader terminal (not a ×100000 /
+            // toFixed(5) that would inflate gold and over-pad its price).
+            const cInst = instruments.find(i => i.symbol === createSymbol);
+            const cDigits = cInst?.digits ?? 5;
+            const cPip = cInst?.pip_size ?? (cDigits >= 4 ? 0.0001 : 0.01);
+            const spread = Math.round((tick.ask - tick.bid) / cPip).toString();
             return (
               <div className="grid grid-cols-3 gap-2 px-3 py-2 rounded-md border border-border-primary bg-bg-tertiary/40 text-center">
                 <div>
                   <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Bid</p>
-                  <p className="text-xs font-mono tabular-nums font-semibold text-sell">{tick.bid.toFixed(5)}</p>
+                  <p className="text-xs font-mono tabular-nums font-semibold text-sell">{tick.bid.toFixed(cDigits)}</p>
                 </div>
                 <div>
                   <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Spread</p>
@@ -1112,7 +1511,7 @@ export default function TradesPage() {
                 </div>
                 <div>
                   <p className="text-[10px] uppercase tracking-wide text-text-tertiary">Ask</p>
-                  <p className="text-xs font-mono tabular-nums font-semibold text-buy">{tick.ask.toFixed(5)}</p>
+                  <p className="text-xs font-mono tabular-nums font-semibold text-buy">{tick.ask.toFixed(cDigits)}</p>
                 </div>
               </div>
             );
@@ -1179,6 +1578,98 @@ export default function TradesPage() {
         </div>
       </Modal>
 
+      {/* Edit Closed Trade — changes P&L; backend reconciles the balance by
+          the delta with no wallet Transaction row, so it stays invisible to
+          the trader (same as a normal close). */}
+      <Modal
+        open={editHist != null}
+        onClose={() => setEditHist(null)}
+        title={editHist ? `Edit closed — ${editHist.instrument_symbol} ${editHist.side?.toUpperCase()} ${editHist.lots} lots` : 'Edit closed trade'}
+        wide
+      >
+        {editHist && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 bg-bg-tertiary/50 border border-border-primary rounded-md text-xs">
+              <div><p className="text-xxs text-text-tertiary">User</p><p className="text-text-primary truncate">{editHist.user_email}</p></div>
+              <div><p className="text-xxs text-text-tertiary">Symbol</p><p className="text-text-primary font-mono">{editHist.instrument_symbol}</p></div>
+              <div><p className="text-xxs text-text-tertiary">Current P&amp;L</p><p className={cn('font-mono font-bold', (editHist.profit || 0) >= 0 ? 'text-success' : 'text-danger')}>{(editHist.profit || 0) >= 0 ? '+' : ''}{formatMoney(editHist.profit)}</p></div>
+              <div><p className="text-xxs text-text-tertiary">Closed</p><p className="text-text-primary font-mono">{formatDate(editHist.closed_at)}</p></div>
+            </div>
+
+            <div>
+              <label className="block text-xxs text-text-tertiary mb-1">Side</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setEhSide('buy')} className={cn('px-3 py-2 text-xs font-bold rounded-md border transition-fast', ehSide === 'buy' ? 'bg-buy/20 border-buy text-buy' : 'bg-bg-input border-border-primary text-text-tertiary hover:bg-bg-hover')}>BUY</button>
+                <button type="button" onClick={() => setEhSide('sell')} className={cn('px-3 py-2 text-xs font-bold rounded-md border transition-fast', ehSide === 'sell' ? 'bg-sell/20 border-sell text-sell' : 'bg-bg-input border-border-primary text-text-tertiary hover:bg-bg-hover')}>SELL</button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xxs text-text-tertiary mb-1">Open Price</label>
+                <input type="number" step="any" value={ehOpen} onChange={e => setEhOpen(e.target.value)} className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md font-mono tabular-nums focus:border-buy transition-fast" />
+              </div>
+              <div>
+                <label className="block text-xxs text-text-tertiary mb-1">Close Price</label>
+                <input type="number" step="any" value={ehClose} onChange={e => setEhClose(e.target.value)} className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md font-mono tabular-nums focus:border-buy transition-fast" />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xxs text-text-tertiary mb-1">Lots</label>
+                <input type="number" step="0.01" min="0.01" value={ehLots} onChange={e => setEhLots(e.target.value)} className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md font-mono tabular-nums focus:border-buy transition-fast" />
+              </div>
+              <div>
+                <label className="block text-xxs text-text-tertiary mb-1">Commission</label>
+                <input type="number" step="any" value={ehCommission} onChange={e => setEhCommission(e.target.value)} className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md font-mono tabular-nums focus:border-buy transition-fast" />
+              </div>
+              <div>
+                <label className="block text-xxs text-text-tertiary mb-1">Swap</label>
+                <input type="number" step="any" value={ehSwap} onChange={e => setEhSwap(e.target.value)} className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md font-mono tabular-nums focus:border-buy transition-fast" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xxs text-text-tertiary mb-1">Opened At</label>
+                <input type="datetime-local" value={ehOpenedAt} onChange={e => setEhOpenedAt(e.target.value)} className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md text-text-primary focus:border-buy transition-fast" />
+              </div>
+              <div>
+                <label className="block text-xxs text-text-tertiary mb-1">Closed At</label>
+                <input type="datetime-local" value={ehClosedAt} onChange={e => setEhClosedAt(e.target.value)} className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md text-text-primary focus:border-buy transition-fast" />
+              </div>
+            </div>
+
+            {(() => {
+              const p = ehPreviewPnl();
+              if (p == null) return null;
+              const delta = p - (editHist.profit || 0);
+              return (
+                <div className="flex items-center justify-between px-3 py-2 rounded-md bg-bg-tertiary/50 border border-border-primary text-xs">
+                  <span className="text-text-tertiary">New P&amp;L</span>
+                  <span className={cn('font-mono tabular-nums font-bold', p >= 0 ? 'text-success' : 'text-danger')}>{p >= 0 ? '+' : ''}{formatMoney(p)}</span>
+                  <span className="text-text-tertiary">Balance Δ</span>
+                  <span className={cn('font-mono tabular-nums font-bold', delta >= 0 ? 'text-success' : 'text-danger')}>{delta >= 0 ? '+' : ''}{formatMoney(delta)}</span>
+                </div>
+              );
+            })()}
+            <p className="text-[10px] text-text-tertiary leading-snug">
+              Preview P&amp;L is price×lots×contract; the backend books the exact cross-rate figure and moves the balance by the delta. No wallet entry is created — the trader sees only the updated trade.
+            </p>
+
+            <div>
+              <label className="block text-xxs text-text-tertiary mb-1">Reason</label>
+              <textarea value={ehReason} onChange={e => setEhReason(e.target.value)} rows={2} placeholder="Reason for editing..." className="w-full px-3 py-2 text-xs bg-bg-input border border-border-primary rounded-md placeholder:text-text-tertiary focus:border-buy transition-fast resize-none" />
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setEditHist(null)} className="px-3 py-1.5 rounded-md text-xs font-medium text-text-secondary border border-border-primary hover:bg-bg-hover transition-fast">Cancel</button>
+              <button onClick={submitEditHistory} disabled={ehSaving} className="px-4 py-1.5 rounded-md text-xs font-medium bg-buy text-white hover:bg-buy-light disabled:opacity-50 transition-fast">
+                {ehSaving ? <Loader2 size={14} className="animate-spin" /> : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       {/* Trade Detail Modal — read-only, opens on row click in History. */}
       <Modal
         open={selectedTrade != null}
@@ -1193,9 +1684,9 @@ export default function TradesPage() {
         {selectedTrade && (() => {
           const t = selectedTrade;
           const isBuy = t.side?.toLowerCase() === 'buy';
-          const reason = t.close_reason || 'manual';
-          const reasonLabel = reason === 'sl' ? 'Stop Loss' : reason === 'tp' ? 'Take Profit' : reason === 'admin' ? 'Admin closed' : 'Manual close';
-          const reasonColor = reason === 'sl' ? 'bg-danger/15 text-danger border-danger/30' : reason === 'tp' ? 'bg-success/15 text-success border-success/30' : reason === 'admin' ? 'bg-warning/15 text-warning border-warning/30' : 'bg-text-tertiary/15 text-text-tertiary border-text-tertiary/30';
+          const reasonInfo = closeReasonInfo(t.close_reason);
+          const reasonLabel = reasonInfo.label;
+          const reasonColor = CLOSE_REASON_CLASS_BORDERED[reasonInfo.tone];
           const profitPositive = (t.profit || 0) >= 0;
           // Duration calc — when we have both timestamps, render a
           // friendly "5m 23s" style string. Falls back to em-dash.

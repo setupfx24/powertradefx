@@ -6,8 +6,12 @@
  * here). Same widget + on-chart SL/TP (draggable, confirm dialog) + Buy/Sell
  * quick-trade as the web terminal, via the shared TradingViewChart component.
  *
- * The WebView has no session cookie, so auth comes from query params:
- *   ?token=<jwt>     Bearer token (SecureStore) — used for API + WS
+ * The WebView has no session cookie, so auth comes from the URL. The bearer
+ * token is passed in the URL *hash* (never sent to the server / logs / Referer):
+ *   #token=<jwt>     Bearer token (SecureStore) — used for API + WS.
+ *                    A legacy ?token= query is still accepted; either way the
+ *                    token is stripped from the URL right after it's read.
+ * The remaining, non-sensitive params stay in the query string:
  *   ?account=<id>    active trading account (positions / orders)
  *   ?symbol=EURUSD   active symbol
  *   ?interval=60     TradingView resolution (1|5|15|30|60|240|1D)
@@ -21,7 +25,6 @@
 
 import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { clsx } from 'clsx';
 import { useTradingStore, type InstrumentInfo } from '@/stores/tradingStore';
 import { api } from '@/lib/api/client';
 import { wsManager } from '@/lib/ws/wsManager';
@@ -29,17 +32,15 @@ import { extractTicksFromPayload } from '@/lib/ws/normalizePricePayload';
 import { mapApiAccount } from '@/lib/mapApiAccount';
 import { ChartErrorBoundary } from '@/components/charts/ChartErrorBoundary';
 
-/** The requested theme is applied as a scope class (globals.css `.theme-*`)
- *  so every token below resolves for THIS page regardless of the app's
- *  persisted dashboard theme. */
-function themeScope(theme: 'light' | 'dark') {
-  return theme === 'dark' ? 'theme-dark' : 'theme-light';
-}
-
 function ChartSpinner({ dark }: { dark: boolean }) {
   return (
-    <div className={clsx('fixed inset-0 flex items-center justify-center bg-bg-base', themeScope(dark ? 'dark' : 'light'))}>
-      <div className="h-[34px] w-[34px] animate-spin rounded-full border-[3px] border-accent/25 border-t-accent" aria-hidden />
+    <div
+      style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: dark ? '#0b0e11' : '#ffffff' }}
+    >
+      <div
+        className="animate-spin"
+        style={{ width: 34, height: 34, borderRadius: '50%', border: '3px solid rgba(242,106,31,0.25)', borderTopColor: '#f26a1f' }}
+      />
     </div>
   );
 }
@@ -47,6 +48,29 @@ function ChartSpinner({ dark }: { dark: boolean }) {
 function param(name: string, fallback = ''): string {
   if (typeof window === 'undefined') return fallback;
   return new URLSearchParams(window.location.search).get(name) || fallback;
+}
+
+// H-FE-1: this page NEVER accepts an auth token from the URL (query or hash) —
+// a JWT in a URL leaks via logs / history / Referer and can be phished. Auth is
+// the HttpOnly session cookie. Any legacy ?token= / #token= from an old app
+// build is ignored and scrubbed from the address bar. See app-chart/page.tsx.
+function stripTokenFromUrl(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const search = new URLSearchParams(window.location.search);
+    const hadQueryToken = search.has('token');
+    search.delete('token');
+    const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
+    const hashParams = new URLSearchParams(hash);
+    const hadHashToken = hashParams.has('token');
+    hashParams.delete('token');
+    if (!hadQueryToken && !hadHashToken) return;
+    const qs = search.toString();
+    const hs = hashParams.toString();
+    window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : '') + (hs ? `#${hs}` : ''));
+  } catch {
+    /* history API unavailable */
+  }
 }
 
 const TradingViewChart = dynamic(() => import('@/components/charts/TradingViewChart'), {
@@ -64,12 +88,12 @@ export default function ChartPage() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const token = param('token');
     const symbol = (param('symbol', 'EURUSD')).toUpperCase();
     const accountId = param('account');
 
-    // Token auth for API (Bearer) — the WebView has no session cookie.
-    if (token) api.setToken(token);
+    // H-FE-1: never take auth from the URL (cookie session only); just scrub any
+    // legacy ?token= / #token= an old app build may have appended.
+    stripTokenFromUrl();
 
     const store = useTradingStore.getState();
     store.setSelectedSymbol(symbol);
@@ -160,7 +184,9 @@ export default function ChartPage() {
   }, []);
 
   return (
-    <div className={clsx('fixed inset-0 bg-bg-base', themeScope(theme))}>
+    <div
+      style={{ position: 'fixed', inset: 0, background: theme === 'dark' ? '#0b0e11' : '#ffffff' }}
+    >
       <ChartErrorBoundary>
         {/* Buy/Sell widget hidden here — the mobile app has its own native
             trade panel; the chart keeps SL/TP pill + draggable lines. */}

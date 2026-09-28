@@ -38,9 +38,13 @@ admin_logs.txt
 npm-debug.log*
 yarn-debug.log*
 
-# Upload storage (use object storage in production)
+# Upload storage (use object storage in production).
+# backend/uploads/ holds real KYC documents + deposit proofs — NEVER commit.
+# (Already covered by **/uploads/ below; listed explicitly for clarity.
+# backend/uploads/banners/.gitkeep stays tracked — it predates the ignore.)
 /uploads/
 **/uploads/
+backend/uploads/
 
 # Database backups
 /backups/
@@ -86,10 +90,10 @@ build/
 # Client reference mockups dropped at the repo root (kept locally only)
 /ChatGPT Image*.png
 /ChatGPT Image*.jpg
-powertradefx_web/
+swisscresta_web/
 
 # Source APK drop-zone — redundant with the served copy at
-# frontend/trader/public/downloads/powertradefx1.apk. Keep locally, don't track.
+# frontend/trader/public/downloads/swisscresta1.apk. Keep locally, don't track.
 # (Scoped to the root folder only so the served public/ APK stays tracked.)
 /apk/
 

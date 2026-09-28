@@ -4,9 +4,9 @@
  * Email card on the Profile → Security page.
  *
  * Three states:
- *   • placeholder (wallet-first signup): warning callout pushing the
+ *   • placeholder (wallet-first signup): big yellow callout pushing the
  *     user to add and verify a real address. Inline OTP form.
- *   • verified: shows the address + a success "Verified" badge + a
+ *   • verified: shows the address + a green "Verified" badge + a
  *     "Change email" button that expands the same OTP flow.
  *   • not verified (rare — covers email/password users who haven't
  *     done OTP yet): shows the address + a "Verify now" button that
@@ -15,7 +15,6 @@
 import { useState } from 'react';
 import { Mail, ShieldCheck, AlertTriangle, Pencil } from 'lucide-react';
 import EmailOtpStep from '@/components/auth/EmailOtpStep';
-import { Badge, Button, Card } from '@/components/ui';
 
 export default function EmailVerificationCard({
   email, isVerified, isPlaceholder, onChanged,
@@ -40,31 +39,35 @@ export default function EmailVerificationCard({
     ? "Verified emails receive every transactional notification we send."
     : 'Confirm you control this address before you can use deposits, withdrawals, and trading.';
 
-  const ok = isVerified && !isPlaceholder;
-
   return (
-    <Card>
+    <div className="bg-card-base border border-border-glass/30 rounded-xl p-4 md:p-5">
       <div className="flex items-start gap-3 mb-3">
-        <div
-          className={
-            'grid h-9 w-9 shrink-0 place-items-center rounded-lg ' +
-            (ok ? 'bg-success/10 text-success' : 'bg-warning/15 text-warning')
-          }
-        >
-          <Mail size={16} aria-hidden />
+        <div className={
+          'w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ' +
+          (isPlaceholder
+            ? 'bg-amber-500/15'
+            : isVerified
+            ? 'bg-emerald-500/15'
+            : 'bg-amber-500/15')
+        }>
+          <Mail size={16} className={
+            isPlaceholder ? 'text-amber-400'
+            : isVerified ? 'text-emerald-400'
+            : 'text-amber-400'
+          } />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-md font-semibold text-text-primary leading-tight">{headline}</h3>
-            {ok && (
-              <Badge variant="success" size="sm">
-                <ShieldCheck size={10} aria-hidden /> Verified
-              </Badge>
+            <h3 className="text-base font-semibold text-text-primary leading-tight">{headline}</h3>
+            {isVerified && !isPlaceholder && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-400">
+                <ShieldCheck size={10} /> Verified
+              </span>
             )}
-            {!ok && (
-              <Badge variant="warning" size="sm">
-                <AlertTriangle size={10} aria-hidden /> Needs verification
-              </Badge>
+            {(!isVerified || isPlaceholder) && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-400">
+                <AlertTriangle size={10} /> Needs verification
+              </span>
             )}
           </div>
           <p className="text-text-tertiary text-xs mt-0.5 leading-relaxed">{sub}</p>
@@ -74,18 +77,23 @@ export default function EmailVerificationCard({
       {!editing && (
         <div className="space-y-3">
           {!isPlaceholder && (
-            <div className="px-3 py-2.5 rounded-md bg-bg-input border border-border-primary text-sm text-text-primary truncate">
+            <div className="px-3 py-2.5 rounded-lg bg-bg-secondary border border-border-primary text-sm text-text-primary truncate">
               {email}
             </div>
           )}
-          <Button variant="outline" size="sm" onClick={() => setEditing(true)} leftIcon={<Pencil size={12} aria-hidden />}>
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="auth-btn auth-btn--outline inline-flex items-center gap-1.5"
+          >
+            <Pencil size={12} />
             {isPlaceholder ? 'Add email' : isVerified ? 'Change email' : 'Verify email'}
-          </Button>
+          </button>
         </div>
       )}
 
       {editing && (
-        <Card nested padding="sm" className="mt-3">
+        <div className="mt-3 rounded-lg border border-border-primary bg-bg-secondary/40 p-3">
           <EmailOtpStep
             currentEmail={email}
             isPlaceholder={isPlaceholder}
@@ -94,11 +102,15 @@ export default function EmailVerificationCard({
               onChanged();
             }}
           />
-          <Button variant="ghost" size="xs" onClick={() => setEditing(false)} className="mt-2 -ml-2.5">
+          <button
+            type="button"
+            onClick={() => setEditing(false)}
+            className="mt-2 text-[11px] text-text-tertiary hover:text-text-primary"
+          >
             Cancel
-          </Button>
-        </Card>
+          </button>
+        </div>
       )}
-    </Card>
+    </div>
   );
 }

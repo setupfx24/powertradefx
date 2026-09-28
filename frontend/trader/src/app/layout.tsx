@@ -5,8 +5,8 @@ import { Toaster } from 'react-hot-toast';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { AuthProvider } from '@/components/providers/AuthProvider';
 import GoogleAuthProvider from '@/components/providers/GoogleAuthProvider';
+import BrandingProvider from '@/components/providers/BrandingProvider';
 import NotificationListener from '@/components/NotificationListener';
-import ProfileCompleteGate from '@/components/profile/ProfileCompleteGate';
 import OnboardingGate from '@/components/auth/OnboardingGate';
 import TopLoader from '@/components/TopLoader';
 import { fontVariableClass } from '@/styles/fonts';
@@ -17,8 +17,8 @@ import { fontVariableClass } from '@/styles/fonts';
  * here would beat the file convention).
  */
 export const metadata: Metadata = {
-  title: 'PowerTradeFX',
-  description: 'PowerTradeFX — professional forex and CFD trading platform',
+  title: 'SwissCresta',
+  description: 'SwissCresta — a software development company building white-label trading platforms, back offices and risk engines for brokers and prop firms.',
 };
 
 export const viewport: Viewport = {
@@ -27,10 +27,7 @@ export const viewport: Viewport = {
   // Pinch-zoom intentionally allowed for WCAG 2.1.4 compliance.
   // Earlier `maximumScale: 1` + `userScalable: false` blocked
   // low-vision users — dropped per accessibility audit.
-  themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#F3F5F9' },
-    { media: '(prefers-color-scheme: dark)', color: '#0B0D10' },
-  ],
+  themeColor: '#ffffff',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -58,13 +55,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" translate="no" suppressHydrationWarning className={fontVariableClass}>
       <head>
         <meta name="google" content="notranslate" />
-        {/* Pre-hydration theme bootstrap: read the persisted preference so the
-            first paint already has the right tokens (no light→dark flash).
-            Dark is the default. The trading terminal is pinned dark by
-            ThemeProvider after hydration. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){var t='dark';try{var s=JSON.parse(localStorage.getItem('powertradefx-ui')||'{}');if(s&&s.state&&s.state.theme==='light'&&location.pathname.indexOf('/trading/terminal')!==0)t='light';}catch(e){}var d=document.documentElement;d.setAttribute('data-theme',t);d.classList.add('theme-'+t);d.style.colorScheme=t;})();`,
+            __html: `(function(){try{var d=document.documentElement;d.setAttribute('data-theme','light');d.classList.add('theme-light');d.style.backgroundColor='#ffffff';d.style.color='#0A0A0A';}catch(e){document.documentElement.setAttribute('data-theme','light');document.documentElement.style.backgroundColor='#ffffff';document.documentElement.style.color='#0A0A0A';}})();`,
           }}
         />
       </head>
@@ -75,22 +68,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider>
           <AuthProvider>
             <GoogleAuthProvider>
+            <BrandingProvider>
             <NotificationListener />
-            {/* Two-stage onboarding gate. ProfileCompleteGate enforces the
-                profile-fields step (always renders first if profile is
-                incomplete); OnboardingGate then enforces wallet + email
-                verification on top. Order matters: only one of them ever
-                shows at a time, and they chain — finish the profile, then
-                the wallet/email gate kicks in. Both are non-dismissible. */}
-            <ProfileCompleteGate />
+            {/* OnboardingGate enforces email verification after signup.
+                The profile-details form (ProfileCompleteGate) is no longer
+                global — it mounts on the /kyc page only, so users are asked
+                for personal details when they apply for KYC, not right
+                after registration. */}
             <OnboardingGate />
             {children}
             <Toaster
               position="top-center"
-              containerClassName="powertradefx-toaster"
+              containerClassName="swisscresta-toaster"
               gutter={10}
               // Belt-and-suspenders cap on the lib's outer container.
-              // The CSS rule on .powertradefx-toaster also clamps this,
+              // The CSS rule on .swisscresta-toaster also clamps this,
               // but inline styles always win over a possibly-stale CSS
               // chunk, so this guarantees no toast overflows even if
               // the stylesheet hasn't loaded yet.
@@ -99,7 +91,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               }}
               toastOptions={{
                 duration: 2500,
-                className: 'powertradefx-hot-toast',
+                className: 'swisscresta-hot-toast',
                 // maxWidth caps the toast at a readable column so long
                 // backend error messages (e.g. balance-gate copy) wrap
                 // onto a second line instead of stretching across the
@@ -118,26 +110,26 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 },
                 success: {
                   duration: 2200,
-                  className: 'powertradefx-hot-toast',
-                  // White check on a green disc — universal "success" that
-                  // reads instantly on both the dark and light toast surfaces.
-                  // (The old amber disc was a leftover from the gold-brand era.)
-                  iconTheme: { primary: '#10B981', secondary: '#ffffff' },
+                  className: 'swisscresta-hot-toast',
+                  // White check on an amber disc reads as "good" instantly on
+                  // dark surface without losing the brand accent.
+                  iconTheme: { primary: '#F59E0B', secondary: '#1A140A' },
                 },
                 error: {
                   duration: 4000,
-                  className: 'powertradefx-hot-toast',
+                  className: 'swisscresta-hot-toast',
                   // White X on a saturated red disc — high contrast on the
                   // dark toast background, no fade-out into the BG colour.
                   iconTheme: { primary: '#EF4444', secondary: '#ffffff' },
                 },
                 loading: {
                   duration: Infinity,
-                  className: 'powertradefx-hot-toast',
-                  iconTheme: { primary: 'rgb(var(--accent-rgb))', secondary: 'var(--toast-bg)' },
+                  className: 'swisscresta-hot-toast',
+                  iconTheme: { primary: '#E94E1B', secondary: 'var(--toast-bg)' },
                 },
               }}
             />
+            </BrandingProvider>
             </GoogleAuthProvider>
           </AuthProvider>
         </ThemeProvider>

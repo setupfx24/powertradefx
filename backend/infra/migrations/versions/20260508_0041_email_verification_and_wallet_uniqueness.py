@@ -57,7 +57,7 @@ def upgrade() -> None:
                email_verified_at = NOW()
          WHERE google_id IS NOT NULL
            AND email IS NOT NULL
-           AND email NOT LIKE '%@wallet.powertradefx.local'
+           AND email NOT LIKE '%@wallet.swisscresta.local'
            AND email_verified = FALSE;
         """
     )

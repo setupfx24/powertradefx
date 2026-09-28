@@ -143,10 +143,7 @@ function formatDate(d: string) {
 }
 
 async function openAdminBinaryFile(path: string, token: string | null) {
-  // credentials: 'include' — auth is the HttpOnly fx_admin cookie; the Bearer
-  // header is a legacy fallback and getToken() is normally null.
   const res = await fetch(path, {
-    credentials: 'include',
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) throw new Error('Failed to load file');
@@ -166,7 +163,6 @@ function AuthImage({ src, token, alt, className }: { src: string; token: string 
     (async () => {
       try {
         const res = await fetch(src, {
-          credentials: 'include',
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (!res.ok || cancelled) return;
@@ -349,6 +345,7 @@ export default function DepositsPage() {
 
   const handleAction = async () => {
     if (!actionModal) return;
+    if (actionLoading) return;  // in-flight guard: never fire a money action twice
     if (actionModal.type === 'reject' && !actionReason.trim()) {
       toast.error('Reason is required for rejection');
       return;
@@ -442,7 +439,7 @@ export default function DepositsPage() {
           { header: 'Method' }, { header: 'Transaction ID', mono: true }, { header: 'Status' }, { header: 'Date', mono: true },
         ],
         rows: deposits.map((d) => [d.id, d.user_name || d.user_email || '—', fmtMoney(d.amount), d.method, d.transaction_id || '—', statusLabel(d.status), fmtWhen(d.created_at)]),
-        filename: `powertradefx-deposits-${stamp}.pdf`,
+        filename: `swisscresta-deposits-${stamp}.pdf`,
       });
     } else if (activeTab === 'withdrawals') {
       void downloadReportPdf({
@@ -453,7 +450,7 @@ export default function DepositsPage() {
           { header: 'Method' }, { header: 'Status' }, { header: 'Date', mono: true },
         ],
         rows: withdrawals.map((w) => [w.id, w.user_name || w.user_email || '—', fmtMoney(w.amount), w.method, statusLabel(w.status), fmtWhen(w.created_at)]),
-        filename: `powertradefx-withdrawals-${stamp}.pdf`,
+        filename: `swisscresta-withdrawals-${stamp}.pdf`,
       });
     } else {
       void downloadReportPdf({
@@ -463,7 +460,7 @@ export default function DepositsPage() {
           { header: 'Description' }, { header: 'Date', mono: true },
         ],
         rows: transactions.map((t) => [t.type, t.user_name || t.user_email || '—', fmtMoney(t.amount), t.description || '—', fmtWhen(t.created_at)]),
-        filename: `powertradefx-money-history-${stamp}.pdf`,
+        filename: `swisscresta-money-history-${stamp}.pdf`,
       });
     }
   };

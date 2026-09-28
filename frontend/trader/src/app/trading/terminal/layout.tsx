@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 export const metadata = {
-  title: 'Trading Terminal — PowerTradeFX',
+  title: 'Trading Terminal — SwissCresta',
   description: 'Professional trading terminal: charts, order panel, positions, and watchlists.',
 }
 

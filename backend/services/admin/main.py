@@ -19,7 +19,8 @@ from routes import (
     admin_audit_logs,
     deposit_wallets,
     notifications,
-    fund_approvals,
+    brokers,
+    branding_admin,
 )
 
 app_settings = get_settings()
@@ -81,6 +82,62 @@ async def _apply_startup_ddl():
             await conn.execute(text(
                 "ALTER TABLE algo_api_keys DROP COLUMN IF EXISTS api_secret"
             ))
+            # White-label brokers (alembic 0062) — tenancy columns + profile
+            # table so broker endpoints work even before alembic runs.
+            await conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS assigned_broker_id UUID "
+                "REFERENCES users(id) ON DELETE SET NULL"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS broker_ancestry UUID[] NOT NULL DEFAULT '{}'"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_origin VARCHAR(20)"
+            ))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_users_broker_ancestry ON users USING GIN (broker_ancestry)"
+            ))
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS broker_profiles (
+                    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                    partner_code VARCHAR(20) UNIQUE NOT NULL,
+                    permissions JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    brand_name VARCHAR(100),
+                    logo_url TEXT,
+                    support_email VARCHAR(255),
+                    support_whatsapp VARCHAR(32),
+                    custom_domain VARCHAR(255),
+                    app_subdomain VARCHAR(63),
+                    custom_domain_status VARCHAR(20),
+                    custom_domain_last_error TEXT,
+                    custom_domain_provisioned_at TIMESTAMPTZ,
+                    rental_plan VARCHAR(50),
+                    rental_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+                    rental_currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+                    rental_period VARCHAR(20) NOT NULL DEFAULT 'monthly',
+                    rental_next_due DATE,
+                    rental_notes TEXT,
+                    is_suspended BOOLEAN NOT NULL DEFAULT false,
+                    suspended_reason TEXT,
+                    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    updated_at TIMESTAMPTZ DEFAULT now()
+                )
+            """))
+            await conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_broker_profiles_custom_domain "
+                "ON broker_profiles (custom_domain) WHERE custom_domain IS NOT NULL"
+            ))
+            # The baseline schema whitelists role values; white-label
+            # tenants use role='broker' (alembic 0063). Recreate the CHECK
+            # with 'broker' included — idempotent (same definition each run).
+            await conn.execute(text(
+                "ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check"
+            ))
+            await conn.execute(text(
+                "ALTER TABLE users ADD CONSTRAINT users_role_check CHECK "
+                "(role IN ('user','admin','super_admin','ib','sub_broker','master_trader','broker'))"
+            ))
     except Exception as e:
         logger.warning("startup DDL skipped: %s", e)
 
@@ -98,7 +155,7 @@ async def lifespan(app: FastAPI):
 # explicitly dev/local.
 _EXPOSE_DOCS = app_settings.ENVIRONMENT in ("development", "local")
 app = FastAPI(
-    title="PowerTradeFX Admin API",
+    title="SwissCresta Admin API",
     version="1.0.0",
     lifespan=lifespan,
     docs_url="/docs" if _EXPOSE_DOCS else None,
@@ -115,32 +172,6 @@ app.add_middleware(
 )
 
 add_middleware_stack(app)
-
-_UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-
-
-@app.middleware("http")
-async def csrf_origin_guard(request: Request, call_next):
-    """CSRF defence for cookie-authenticated mutations.
-
-    SameSite=strict on fx_admin blocks cross-SITE requests, but not
-    cross-ORIGIN same-site ones — trade.powertradefx.com and the apex
-    share the registrable domain, so XSS there could form-POST here with
-    the cookie attached. Browsers send Origin on every POST, so a
-    present-but-unlisted Origin is rejected. Absent Origin is allowed:
-    that's the admin-frontend Next proxy (which strips Origin and does
-    its own same-origin check) or a non-browser client, where an ambient
-    cookie can't be riding a forged cross-site request. Bearer-only
-    requests are exempt — no ambient credential, no CSRF.
-    """
-    if request.method in _UNSAFE_METHODS and request.cookies.get("fx_admin"):
-        origin = request.headers.get("origin")
-        if origin and origin not in _cors_origins:
-            return JSONResponse(
-                status_code=403,
-                content={"detail": "Cross-origin request blocked"},
-            )
-    return await call_next(request)
 
 
 @app.exception_handler(Exception)
@@ -179,7 +210,8 @@ app.include_router(user_audit_logs.router, prefix=prefix)
 app.include_router(admin_audit_logs.router, prefix=prefix)
 app.include_router(deposit_wallets.router, prefix=prefix)
 app.include_router(notifications.router, prefix=prefix)
-app.include_router(fund_approvals.router, prefix=prefix)
+app.include_router(brokers.router, prefix=prefix)
+app.include_router(branding_admin.router, prefix=prefix)
 
 
 @app.get("/health")

@@ -2,13 +2,13 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { useUIStore } from '@/stores/uiStore';
 import { useTradingStore, type Position, type InstrumentInfo } from '@/stores/tradingStore';
 import { clsx } from 'clsx';
 import api from '@/lib/api/client';
 import toast from 'react-hot-toast';
 import { sounds, unlockAudio } from '@/lib/sounds';
-import { netPnl, sumNetPnl } from '@/lib/pnl';
+import { grossPnl } from '@/lib/pnl';
+import { closeReasonLabel, tradeTypeChip } from '@/lib/closeReason';
 import {
   RefreshCw,
   Download,
@@ -16,41 +16,23 @@ import {
   Check,
   X,
   Plus,
+  ChevronRight,
   TrendingUp,
   TrendingDown,
   Layers,
-  Info,
   LayoutGrid,
   LayoutList,
   ArrowRight,
   Share2,
 } from 'lucide-react';
-import {
-  Badge,
-  Button,
-  Card,
-  EmptyState,
-  Input,
-  Segmented,
-  SideBadge,
-  Skeleton,
-  Table,
-  TBody,
-  TD,
-  TH,
-  THead,
-  TR,
-  Tabs,
-} from '@/components/ui';
-import type { BadgeVariant } from '@/components/ui';
 import { ActiveAccountBadge } from '@/components/trading/ActiveAccountBadge';
 import dynamic from 'next/dynamic';
+import AnimatedPrice from '@/components/ui/AnimatedPrice';
 
 // Lazy: ShareTradeModal pulls in html-to-image (~50KB) which is only needed
 // when the user actually opens the share dialog — keep it out of the
 // terminal's initial bundle.
 const ShareTradeModal = dynamic(() => import('@/components/trading/ShareTradeModal'), { ssr: false });
-import MarginRing from '@/components/trading/MarginRing';
 
 interface ClosedTrade {
   id: string;
@@ -70,6 +52,8 @@ interface ClosedTrade {
   close_time: string;
   close_reason?: string;
   trade_type?: string;
+  /** Trade came from an AI strategy instance (link table join, server-side). */
+  is_ai?: boolean;
 }
 
 type CloseModal = { id: string; symbol: string; side: string; lots: number; closeLots: string; selectedPct: number | null } | null;
@@ -78,51 +62,19 @@ type BulkCloseType = 'all' | 'profit' | 'loss';
 
 type TabId = 'open' | 'pending' | 'history';
 
-/** Maps API close_reason (sl, tp, manual, …) to a short label + badge style for history.
- *  When a trigger price is available (SL/TP hits close at the level itself), the label
- *  includes "@ <price>" so the user sees exactly where it fired. */
-/** Maps API close_reason (sl, tp, manual, …) to a short label + Badge variant for history.
- *  When a trigger price is available (SL/TP hits close at the level itself), the label
- *  includes "@ <price>" so the user sees exactly where it fired. */
-function closeReasonBadge(
-  reason: string | null | undefined,
-  triggerPrice?: number,
-  digits: number = 5,
-): { label: string; variant: BadgeVariant } {
-  const r = (reason || 'manual').toLowerCase();
-  const priceStr = triggerPrice != null && Number.isFinite(triggerPrice)
-    ? ` @ ${Number(triggerPrice).toFixed(digits)}`
-    : '';
-  if (r === 'sl' || r === 'stop_loss')
-    return { label: `Stop loss${priceStr}`, variant: 'sell' };
-  if (r === 'tp' || r === 'take_profit')
-    return { label: `Take profit${priceStr}`, variant: 'buy' };
-  if (r === 'admin')
-    return { label: 'Admin', variant: 'warning' };
-  if (r === 'margin' || r === 'liquidation' || r === 'margin_call')
-    return { label: 'Margin', variant: 'danger' };
-  // Treat copy_close / copy / manual / anything else as manual close for clarity.
-  return { label: 'Manual close', variant: 'neutral' };
-}
-
-/** Signed P/L colour: positive = success, negative = danger. */
-function pnlTone(n: number): string {
-  return n >= 0 ? 'text-success' : 'text-danger';
-}
-
-/** "Copy" (copy-trade) vs "Real" position chip. */
-function TradeTypeBadge({ tradeType }: { tradeType?: string }) {
-  const copy = tradeType === 'copy_trade';
-  return (
-    <Badge variant={copy ? 'info' : 'success'} size="sm" className="normal-case tracking-normal">
-      {copy ? 'Copy' : 'Real'}
-    </Badge>
-  );
-}
+/** Maps API close_reason (sl, tp, ai_strategy, stop_out, …) to a label + badge
+ *  style for history. Shared with the portfolio page and the PDF statement so
+ *  a reason can't read one way here and another way there — see
+ *  lib/closeReason.ts for why the old local copy was wrong. */
+const closeReasonBadge = closeReasonLabel;
 
 function downloadCsv(filename: string, rows: (string | number)[][]) {
   const esc = (c: string | number) => {
-    const s = String(c);
+    let s = String(c);
+    // Formula-injection guard: text cells starting with = + - @ (or tab/CR) run
+    // as formulas in Excel/Sheets; prefix with ' so they stay inert. Numbers
+    // (incl. negative P&L) are left as numbers.
+    if (typeof c !== 'number' && /^[=+\-@\t\r]/.test(s) && !/^[-+]?\d+(\.\d+)?$/.test(s)) s = "'" + s;
     return `"${s.replace(/"/g, '""')}"`;
   };
   const body = rows.map((r) => r.map(esc).join(',')).join('\n');
@@ -139,6 +91,16 @@ type PositionsPanelProps = {
   /** Terminal: minimal borders / grid lines (clean table). */
   variant?: 'default' | 'terminal';
 };
+
+/** Tiny "AI" tag shown next to the symbol for positions opened by an AI
+ *  strategy instance (ids come from /ai-strategies/position-ids). */
+function AiBadge() {
+  return (
+    <span className="rounded px-1 text-[10px] font-semibold bg-violet-100 text-violet-700 leading-4 shrink-0">
+      AI
+    </span>
+  );
+}
 
 function estimatePositionMargin(
   pos: Position,
@@ -206,7 +168,6 @@ function formatLotsInput(n: number): string {
 }
 
 /** Terminal card view: compact; close / partial close open the same modal as table layout. */
-/** Terminal card view: compact; close / partial close open the same modal as table layout. */
 function TerminalPositionStaticCard({
   pos,
   digits,
@@ -214,6 +175,7 @@ function TerminalPositionStaticCard({
   swapsFeeLine,
   onCloseFull,
   onPartialClose,
+  isAi,
 }: {
   pos: Position;
   digits: number;
@@ -221,34 +183,50 @@ function TerminalPositionStaticCard({
   swapsFeeLine: string;
   onCloseFull: () => void;
   onPartialClose: () => void;
+  isAi?: boolean;
 }) {
-  // NET P&L (profit − commission + swap; swap stored negative) so the card
-  // matches the position rows and the mobile app.
-  const pnl = netPnl(pos);
+  // GROSS (price-only) P&L so the card matches the position rows; commission
+  // and swap are shown separately (Swaps / Fee line below), never folded in.
+  const pnl = grossPnl(pos);
   const cur = pos.current_price;
   const priceDown = cur != null && (pos.side === 'buy' ? cur < pos.open_price : cur > pos.open_price);
 
   return (
-    <Card padding="none" className="w-full max-w-[300px] overflow-hidden shadow-md">
+    <div className="w-full max-w-[300px] rounded-lg border border-border-primary bg-card overflow-hidden shadow-md">
       <div className="px-2.5 pt-2 pb-2 flex justify-between gap-2 border-b border-border-primary">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             <span className="text-xs font-bold text-text-primary font-mono tracking-tight">{pos.symbol}</span>
+            {isAi && <AiBadge />}
           </div>
           <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-            <SideBadge side={pos.side} />
-            <span className="text-xxs text-text-tertiary tabular-nums">{pos.lots} Lots</span>
+            <span
+              className={clsx(
+                'text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded',
+                pos.side === 'buy' ? 'bg-[#2962FF]/18 text-[#2962FF]' : 'bg-[#ff5252]/18 text-[#ff5252]',
+              )}
+            >
+              {pos.side}
+            </span>
+            <span className="text-[10px] text-text-tertiary tabular-nums">{pos.lots} Lots</span>
           </div>
         </div>
         <div className="text-right shrink-0">
-          <Badge variant={pnl >= 0 ? 'success' : 'danger'} tone="outline" size="sm" className="font-mono tabular-nums normal-case">
+          <div
+            className={clsx(
+              'inline-block px-2 py-0.5 rounded text-[10px] font-mono font-bold tabular-nums border',
+              pnl >= 0
+                ? 'bg-green-500/10 border-green-500/20 text-[#6366F1]'
+                : 'bg-red-500/10 border-red-500/20 text-[#ff5252]',
+            )}
+          >
             {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
-          </Badge>
+          </div>
           <div className="flex justify-end gap-0.5 mt-1">
-            <span className="text-xxs font-semibold uppercase px-1 py-0.5 rounded-sm bg-bg-secondary text-text-tertiary">
+            <span className="text-[8px] font-semibold uppercase px-1 py-0.5 rounded bg-bg-secondary text-text-tertiary">
               SL
             </span>
-            <span className="text-xxs font-semibold uppercase px-1 py-0.5 rounded-sm bg-bg-secondary text-text-tertiary">
+            <span className="text-[8px] font-semibold uppercase px-1 py-0.5 rounded bg-bg-secondary text-text-tertiary">
               TP
             </span>
           </div>
@@ -257,83 +235,79 @@ function TerminalPositionStaticCard({
 
       <div className="px-2.5 py-1.5 flex items-start justify-between gap-1.5">
         <div className="min-w-0 flex-1">
-          <div className="text-xxs font-bold uppercase tracking-wide text-text-tertiary">Entry price</div>
-          <div className="text-xs font-mono font-semibold text-text-primary tabular-nums leading-tight">
+          <div className="text-[8px] font-bold uppercase tracking-wide text-text-tertiary">Entry price</div>
+          <div className="text-[11px] font-mono font-semibold text-text-primary tabular-nums leading-tight">
             {pos.open_price.toFixed(digits)}
           </div>
-          <div className="text-xxs text-text-tertiary mt-0.5 leading-tight">{formatPositionOpenedAt(pos.created_at)}</div>
+          <div className="text-[8px] text-text-tertiary mt-0.5 leading-tight">{formatPositionOpenedAt(pos.created_at)}</div>
         </div>
         <ArrowRight className="w-3 h-3 text-text-tertiary shrink-0 mt-3" aria-hidden />
         <div className="min-w-0 flex-1 text-right">
-          <div className="text-xxs font-bold uppercase tracking-wide text-text-tertiary">Current price</div>
-          <div className="text-xs font-mono font-semibold tabular-nums inline-flex items-center justify-end gap-0.5 text-text-primary leading-tight">
-            {cur != null ? cur.toFixed(digits) : '—'}
+          <div className="text-[8px] font-bold uppercase tracking-wide text-text-tertiary">Current price</div>
+          <div className="text-[11px] font-mono font-semibold tabular-nums inline-flex items-center justify-end gap-0.5 text-text-primary leading-tight">
+            <AnimatedPrice value={cur} digits={digits} />
             {cur != null &&
               (priceDown ? (
-                <TrendingDown className="w-3 h-3 text-danger" aria-hidden />
+                <TrendingDown className="w-3 h-3 text-[#ff5252]" aria-hidden />
               ) : (
-                <TrendingUp className="w-3 h-3 text-success" aria-hidden />
+                <TrendingUp className="w-3 h-3 text-[#6366F1]" aria-hidden />
               ))}
           </div>
         </div>
       </div>
 
-      <div className="px-2.5 pb-1.5 grid grid-cols-2 gap-x-2 gap-y-1 text-xxs">
+      <div className="px-2.5 pb-1.5 grid grid-cols-2 gap-x-2 gap-y-1 text-[10px]">
         <div>
-          <div className="text-xxs font-semibold uppercase text-text-tertiary mb-px">Stop loss</div>
-          <div className="font-mono text-text-primary leading-tight tabular-nums">
+          <div className="text-[8px] font-semibold uppercase text-text-tertiary mb-px">Stop loss</div>
+          <div className="font-mono text-text-primary leading-tight">
             {pos.stop_loss != null ? pos.stop_loss.toFixed(digits) : '—'}
           </div>
         </div>
         <div>
-          <div className="text-xxs font-semibold uppercase text-text-tertiary mb-px">Take profit</div>
-          <div className="font-mono text-text-primary leading-tight tabular-nums">
+          <div className="text-[8px] font-semibold uppercase text-text-tertiary mb-px">Take profit</div>
+          <div className="font-mono text-text-primary leading-tight">
             {pos.take_profit != null ? pos.take_profit.toFixed(digits) : '—'}
           </div>
         </div>
         <div>
-          <div className="text-xxs font-semibold uppercase text-text-tertiary mb-px">Swaps / Fee</div>
-          <div className="font-mono text-text-secondary tabular-nums leading-tight">{swapsFeeLine}</div>
+          <div className="text-[8px] font-semibold uppercase text-text-tertiary mb-px">Swaps / Fee</div>
+          <div className="font-mono text-text-secondary tabular-nums text-[10px] leading-tight">{swapsFeeLine}</div>
         </div>
         <div>
-          <div className="text-xxs font-semibold uppercase text-text-tertiary mb-px">Margin / Exposure</div>
-          <div className="font-mono text-text-secondary tabular-nums leading-tight break-all">
+          <div className="text-[8px] font-semibold uppercase text-text-tertiary mb-px">Margin / Exposure</div>
+          <div className="font-mono text-text-secondary tabular-nums text-[10px] leading-tight break-all">
             {marginExposureLine}
           </div>
         </div>
       </div>
 
-      <p className="px-2.5 pb-1 text-xxs text-text-tertiary font-mono truncate" title={pos.id}>
+      <p className="px-2.5 pb-1 text-[8px] text-text-tertiary font-mono truncate" title={pos.id}>
         POSITION ID: {pos.id}
       </p>
 
-      <div className="px-2.5 pb-2 pt-1.5 flex flex-col gap-1.5 border-t border-border-primary">
-        <Button
-          variant="danger"
-          size="xs"
-          fullWidth
-          className="uppercase tracking-wide"
+      <div className="px-2.5 pb-2 pt-0.5 flex flex-col gap-1.5 border-t border-border-primary">
+        <button
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
             onCloseFull();
           }}
+          className="w-full py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wide bg-[#ff5252]/12 text-[#ff5252] border border-[#ff5252]/35 hover:bg-[#ff5252]/18 transition-colors"
         >
           Close
-        </Button>
-        <Button
-          variant="secondary"
-          size="xs"
-          fullWidth
-          className="uppercase tracking-wide"
+        </button>
+        <button
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
             onPartialClose();
           }}
+          className="w-full py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wide bg-bg-secondary text-text-primary border border-border-primary hover:bg-bg-hover transition-colors"
         >
           Partial close
-        </Button>
+        </button>
       </div>
-    </Card>
+    </div>
   );
 }
 
@@ -346,17 +320,12 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
   const activeAccount = useTradingStore((s) => s.activeAccount);
   const accounts = useTradingStore((s) => s.accounts);
   const removePosition = useTradingStore((s) => s.removePosition);
+  const updatePosition = useTradingStore((s) => s.updatePosition);
   const refreshPositions = useTradingStore((s) => s.refreshPositions);
   const refreshAccount = useTradingStore((s) => s.refreshAccount);
-  const refreshPendingOrders = useTradingStore((s) => s.refreshPendingOrders);
+  const resolvePositionId = useTradingStore((s) => s.resolvePositionId);
   const instruments = useTradingStore((s) => s.instruments);
-  // The active tab lives in the UI store so the order panel can jump here
-  // ("pending") right after a limit/stop order is placed. The persisted
-  // default is the legacy 'positions' value — anything unknown maps to 'open'.
-  const storeTab = useUIStore((s) => s.activeBottomTab);
-  const setActiveBottomTab = useUIStore((s) => s.setActiveBottomTab);
-  const activeTab: TabId = storeTab === 'pending' || storeTab === 'history' ? storeTab : 'open';
-  const setActiveTab = (t: TabId) => setActiveBottomTab(t);
+  const [activeTab, setActiveTab] = useState<TabId>('open');
   const [historyTrades, setHistoryTrades] = useState<ClosedTrade[]>([]);
   // Server-reported TOTAL closed trades — the list holds only the latest page
   // (200), so counts must come from here, not items.length.
@@ -372,15 +341,34 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
   /** Terminal open tab: static trade cards vs compact table. */
   const [terminalOpenCardView, setTerminalOpenCardView] = useState(false);
   const [sharePosition, setSharePosition] = useState<Position | null>(null);
+  // Portfolio-wide share opened from the toolbar — no single position is
+  // involved, so it is tracked separately from `sharePosition`.
+  const [shareScope, setShareScope] = useState<'open' | 'history' | null>(null);
 
-  // GROSS floating P&L — used for Equity / Free Margin only. Commission was
-  // already deducted from balance at open, and swap when charged, so equity
-  // MUST use gross (adding net here would double-count the fees).
+  // Position ids opened by AI strategy instances — used only to render the
+  // small "AI" badge next to the symbol. Fails silently (empty set) so a
+  // missing/erroring endpoint can never break the terminal.
+  const [aiPositionIds, setAiPositionIds] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await api.get<{ position_ids?: string[] }>('/ai-strategies/position-ids');
+        if (!cancelled) setAiPositionIds(new Set(res?.position_ids ?? []));
+      } catch {
+        /* cosmetic — keep last known set */
+      }
+    };
+    void load();
+    const t = setInterval(() => { void load(); }, 30_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+
+  // GROSS floating P&L — used for Equity / Free Margin AND shown as the
+  // account "Floating PL". Commission was already deducted from balance at
+  // open, and swap when charged, so everything uses gross; commission and swap
+  // are surfaced per-position as their own columns, never folded into P&L.
   const totalPnl = positions.reduce((s, p) => s + (p.profit || 0), 0);
-  // NET floating P&L (profit − commission + swap; swap is stored negative for
-  // charges) — this is the figure shown to the trader and kept in sync with
-  // the mobile app's per-position P&L.
-  const netTotalPnl = sumNetPnl(positions);
 
   const profitPositions = positions.filter((p) => (p.profit || 0) > 0);
   const lossPositions = positions.filter((p) => (p.profit || 0) < 0);
@@ -501,7 +489,13 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
     setCloseModal(null);
     setCloseSubmitting(false);
 
-    if (id.startsWith('optim-')) {
+    // The server usually confirms a fresh trade's real id within a poll tick
+    // or two of it opening (resolvePositionId), well before the store
+    // actually swaps this row's DISPLAYED id over (kept stable for ~5s to
+    // avoid a remount — see tradingStore.refreshPositions). Resolve first so
+    // Close doesn't sit blocked for the full 5s over a purely cosmetic delay.
+    const realId = resolvePositionId(id);
+    if (realId.startsWith('optim-')) {
       toast('Trade still settling — try again in a moment', { icon: '⏳' });
       refreshPositions().catch(() => {});
       return;
@@ -510,13 +504,14 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
     const body: Record<string, unknown> = {};
     if (lots) body.lots = lots;
 
-    // Optimistic: remove from UI immediately for full close
+    // Optimistic: remove from UI immediately for full close. `id` (the
+    // DISPLAYED id), not `realId` — that's the row's actual key in the store.
     if (!lots) removePosition(id);
 
     void (async () => {
       try {
         const res = await api.post<{ profit?: number; close_price?: number; remaining_lots?: number }>(
-          `/positions/${id}/close`,
+          `/positions/${realId}/close`,
           body,
           { timeoutMs: 8_000 },
         );
@@ -639,19 +634,35 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
 
   const saveSltpEdit = async () => {
     if (!sltpEdit) return;
+    const positionId = sltpEdit.positionId;
     setSltpSaving(true);
     try {
-      const body: Record<string, unknown> = {};
+      // An empty field means "remove this bracket" → send null so the backend
+      // clears it (and the chart line disappears). A filled field sets it.
       const slVal = sltpEdit.sl.trim();
       const tpVal = sltpEdit.tp.trim();
-      if (slVal !== '' && slVal !== '—') body.stop_loss = parseFloat(slVal);
-      if (tpVal !== '' && tpVal !== '—') body.take_profit = parseFloat(tpVal);
-      await api.put(`/positions/${sltpEdit.positionId}`, body);
+      const body: Record<string, unknown> = {
+        stop_loss: slVal === '' || slVal === '—' ? null : parseFloat(slVal),
+        take_profit: tpVal === '' || tpVal === '—' ? null : parseFloat(tpVal),
+      };
+      // Optimistically patch the store so the chart SL/TP line moves / appears
+      // / disappears the instant Save is pressed, before the PUT round-trips.
+      // The chart draws its lines from these same position fields.
+      // Store Position uses number|undefined; a removed bracket becomes
+      // undefined (the chart's `!= null` check hides the line either way).
+      updatePosition(positionId, {
+        stop_loss: body.stop_loss == null ? undefined : (body.stop_loss as number),
+        take_profit: body.take_profit == null ? undefined : (body.take_profit as number),
+      });
+      await api.put(`/positions/${positionId}`, body);
       toast.success('SL/TP updated');
       setSltpEdit(null);
-      refreshPositions();
+      await refreshPositions();
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Failed to update SL/TP');
+      // Rejected (e.g. level on wrong side) — reload so the optimistic line
+      // snaps back to the server's truth.
+      refreshPositions().catch(() => {});
     } finally {
       setSltpSaving(false);
     }
@@ -683,9 +694,10 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
         'Side',
         'Qty',
         'Open Price',
-        'Charges',
         'Current',
-        'P&L',
+        'P&L (gross)',
+        'Commission',
+        'Swap',
         'SL',
         'TP',
       ],
@@ -693,6 +705,7 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
     for (const pos of positions) {
       const d = getDigits(pos.symbol);
       const comm = pos.commission || 0;
+      const swap = pos.swap || 0;
       const gross = pos.profit || 0;
       rows.push([
         accountLabel(pos.account_id),
@@ -700,9 +713,10 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
         pos.side,
         pos.lots,
         pos.open_price.toFixed(d),
-        comm.toFixed(2),
         (pos.current_price ?? '').toString() ? Number(pos.current_price).toFixed(d) : '',
-        gross - comm,
+        gross.toFixed(2),
+        comm.toFixed(2),
+        swap.toFixed(2),
         pos.stop_loss != null ? pos.stop_loss : '',
         pos.take_profit != null ? pos.take_profit : '',
       ]);
@@ -740,7 +754,9 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
         'Qty',
         'Open Price',
         'Close Price',
-        'P&L',
+        'P&L (gross)',
+        'Commission',
+        'Swap',
         'Close reason',
         'Closed At',
       ],
@@ -748,6 +764,7 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
     for (const t of historyTrades) {
       const d = getDigits(t.symbol);
       const comm = t.commission || 0;
+      const swap = t.swap || 0;
       const gross = t.pnl || 0;
       rows.push([
         t.symbol,
@@ -755,7 +772,9 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
         t.lots,
         t.open_price.toFixed(d),
         t.close_price.toFixed(d),
-        gross - comm,
+        gross.toFixed(2),
+        comm.toFixed(2),
+        swap.toFixed(2),
         closeReasonBadge(t.close_reason, t.close_price, d).label,
         t.close_time,
       ]);
@@ -779,8 +798,8 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
   const accountMetrics = activeAccount
     ? [
         { label: 'Balance', value: activeAccount.balance as number },
-        { label: 'Equity', value: activeAccount.balance + (activeAccount.credit || 0) + totalPnl },
         { label: 'Credit', value: activeAccount.credit || 0 },
+        { label: 'Equity', value: activeAccount.balance + (activeAccount.credit || 0) + totalPnl },
         { label: 'Used Margin', value: activeAccount.margin_used },
         {
           label: 'Free Margin',
@@ -789,116 +808,31 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
         },
         {
           label: 'Floating PL',
-          value: netTotalPnl,
-          color: netTotalPnl >= 0 ? 'text-buy' : 'text-sell',
+          value: totalPnl,
+          color: totalPnl >= 0 ? 'text-buy' : 'text-sell',
           signed: true as const,
         },
       ]
     : [];
 
+  const th = 'text-left text-[10px] font-bold uppercase tracking-wider text-text-tertiary px-3 py-2.5 whitespace-nowrap';
+  const td = 'px-3 py-2.5 text-[11px] sm:text-xs text-text-primary tabular-nums align-middle';
+  // Right-aligned variants for numeric columns (qty / prices / P&L) so values line up.
+  const thNum = clsx(th, '!text-right');
+  const tdNum = clsx(td, 'text-right');
+  const theadRowClass = 'border-b border-border-primary/60 bg-bg-secondary/40';
+  const tbodyRowClass = 'border-b border-border-primary/25 hover:bg-bg-hover/40 transition-colors';
 
   const tabTitle = (id: TabId) =>
     id === 'open' ? 'Positions' : id === 'history' ? 'Closed Positions' : 'Pending';
 
-  const equity =
-    activeAccount != null
-      ? activeAccount.balance + (activeAccount.credit || 0) + totalPnl
-      : 0;
-  const freeMarginCalc =
-    activeAccount != null ? equity - activeAccount.margin_used : 0;
-  const marginLevelDisplay =
-    activeAccount != null && activeAccount.margin_level > 0
-      ? `${activeAccount.margin_level % 1 === 0 ? activeAccount.margin_level.toFixed(0) : activeAccount.margin_level.toFixed(2)}%`
-      : '—';
-
-  const tabItems = tabs.map((t) => ({ id: t.id, label: isTerminal ? tabTitle(t.id) : t.label, count: t.count }));
-
-  /** Header metric (terminal strip): eyebrow label over a mono value.
-   *  Plain render helpers (not inline components) so React keeps the DOM
-   *  between renders — an inline component type would remount every tick. */
-  const renderMetric = ({ label, value, tone, icon }: { label: React.ReactNode; value: string; tone?: string; icon?: React.ReactNode }) => (
-    <div className="flex flex-col items-end gap-0.5 shrink-0">
-      <span className="text-xxs font-semibold uppercase tracking-wide text-text-tertiary leading-none inline-flex items-center gap-0.5">
-        {label}
-        {icon}
-      </span>
-      <span className={clsx('text-xs font-mono font-semibold tabular-nums leading-tight', tone ?? 'text-text-primary')}>
-        {value}
-      </span>
-    </div>
-  );
-
-  /** SL / TP inline editor shared by the mobile cards and the desktop table.
-   *  A render function, NOT a component: a component declared inside render
-   *  gets a new identity each render, which would remount the inputs and
-   *  drop focus on every keystroke. */
-  const renderSltpEditor = (layout: 'row' | 'column') =>
-    sltpEdit ? (
-      <div className={clsx(layout === 'row' ? 'flex items-center gap-2 flex-wrap' : 'flex flex-col gap-1')}>
-        <div className="flex items-center gap-1">
-          <span className="text-text-tertiary w-5">SL:</span>
-          <div className="w-20">
-            <Input
-              type="number"
-              size="sm"
-              numeric
-              step="0.00001"
-              value={sltpEdit.sl}
-              onChange={(e) => setSltpEdit({ ...sltpEdit, sl: e.target.value })}
-              placeholder="—"
-              aria-label="Stop loss"
-            />
-          </div>
-        </div>
-        <div className="flex items-center gap-1">
-          <span className="text-text-tertiary w-5">TP:</span>
-          <div className="w-20">
-            <Input
-              type="number"
-              size="sm"
-              numeric
-              step="0.00001"
-              value={sltpEdit.tp}
-              onChange={(e) => setSltpEdit({ ...sltpEdit, tp: e.target.value })}
-              placeholder="—"
-              aria-label="Take profit"
-            />
-          </div>
-        </div>
-        <div className={clsx('flex gap-1', layout === 'column' && 'mt-0.5')}>
-          <Button size="xs" iconOnly variant="buy" onClick={() => void saveSltpEdit()} disabled={sltpSaving} title="Save" aria-label="Save SL/TP">
-            <Check className="w-3 h-3" aria-hidden />
-          </Button>
-          <Button size="xs" iconOnly variant="danger" onClick={() => setSltpEdit(null)} title="Cancel" aria-label="Cancel SL/TP edit">
-            <X className="w-3 h-3" aria-hidden />
-          </Button>
-        </div>
-      </div>
-    ) : null;
-
-  const cancelPendingOrder = async (orderId: string) => {
-    try {
-      await api.delete(`/orders/${orderId}`);
-      toast.success('Order cancelled');
-      void refreshPendingOrders();
-      void refreshAccount();
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed');
-    }
-  };
-
-  const copyBadge = (
-    <Badge variant="info" tone="outline" size="sm" title="Copy trade — only the Trade Master can close it">
-      COPY
-    </Badge>
-  );
 
   return (
-    <div className="h-full w-full min-w-0 flex flex-col min-h-0 bg-bg-base">
+    <div className={clsx('h-full w-full min-w-0 flex flex-col min-h-0', isTerminal ? 'bg-bg-base' : 'bg-bg-primary')}>
       {!isTerminal && activeAccount && (
-        <div className="px-2 py-2 shrink-0 space-y-2 border-b border-border-primary bg-bg-secondary">
+        <div className="px-2 py-2 shrink-0 space-y-2 border-b border-border-glass bg-bg-secondary/30">
           <ActiveAccountBadge account={activeAccount} variant="compact" />
-          <div className="flex flex-wrap gap-x-4 gap-y-1 items-center justify-between sm:justify-start text-xxs sm:text-xs">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 items-center justify-between sm:justify-start text-[10px] sm:text-xs">
             {accountMetrics.map((item) => (
               <div key={item.label} className="flex items-baseline gap-1.5 shrink-0">
                 <span className="text-text-tertiary font-medium whitespace-nowrap">{item.label}</span>
@@ -922,123 +856,160 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
           className={clsx(
             'flex flex-col flex-1 min-h-0 overflow-hidden w-full min-w-0',
             isTerminal
-              ? 'rounded-none border-0 bg-transparent'
-              : 'rounded-lg border border-border-primary bg-card',
+              ? 'rounded-none border-0 bg-transparent shadow-none'
+              : 'rounded-xl border border-border-glass bg-bg-secondary/25 shadow-sm',
           )}
         >
           {isTerminal ? (
-            <div className="flex shrink-0 items-center justify-between gap-2 sm:gap-4 min-w-0 px-2 sm:px-3 py-1.5 border-b border-border-primary">
-              <div className="flex items-center min-w-0 overflow-x-auto scrollbar-none no-scrollbar">
-                <Tabs
-                  variant="pills"
-                  size="sm"
-                  aria-label="Positions"
-                  tabs={tabItems}
-                  active={activeTab}
-                  onChange={(id) => setActiveTab(id as TabId)}
+            <div className="flex shrink-0 items-end justify-between gap-2 sm:gap-4 min-w-0 px-2 sm:px-3 py-2 border-b border-border-primary">
+              <div className="flex items-end gap-0 sm:gap-1 min-w-0 overflow-x-auto scrollbar-none no-scrollbar">
+                {tabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                    className={clsx(
+                      'shrink-0 px-2 sm:px-2.5 pb-1 text-left transition-colors border-b-2 -mb-px',
+                      activeTab === tab.id
+                        ? 'text-text-primary border-accent font-semibold text-xs sm:text-sm'
+                        : 'text-text-tertiary border-transparent font-medium text-xs sm:text-sm hover:text-text-secondary',
+                    )}
+                  >
+                    <span className="whitespace-nowrap">
+                      {tabTitle(tab.id)}
+                      <span className="tabular-nums opacity-75 font-normal"> ({tab.count})</span>
+                    </span>
+                  </button>
+                ))}
+                <ChevronRight
+                  className="w-4 h-4 text-text-tertiary shrink-0 mb-0.5 ml-0.5 opacity-80"
+                  aria-hidden
                 />
               </div>
-              <div className="flex items-center gap-3 sm:gap-4 md:gap-5 shrink-0 min-w-0 overflow-x-auto scrollbar-none no-scrollbar">
-                {activeAccount ? (
-                  <>
-                    {renderMetric({ label: 'Balance', value: `$${activeAccount.balance.toFixed(2)}` })}
-                    {renderMetric({
-                      label: <>Floating P&amp;L</>,
-                      value: `${netTotalPnl >= 0 ? '+' : ''}$${netTotalPnl.toFixed(2)}`,
-                      tone: pnlTone(netTotalPnl),
-                    })}
-                    {renderMetric({ label: 'Equity', value: `$${equity.toFixed(2)}` })}
-                    {renderMetric({ label: 'Margin Used', value: `$${activeAccount.margin_used.toFixed(2)}` })}
-                    {renderMetric({ label: 'Free Margin', value: `$${freeMarginCalc.toFixed(2)}` })}
-                    {renderMetric({
-                      label: 'Margin Level',
-                      value: marginLevelDisplay,
-                      icon: <Info className="w-3 h-3 text-text-tertiary" aria-label="Margin level info" />,
-                    })}
-                    {activeAccount.margin_used > 0 && (
-                      <MarginRing
-                        marginLevel={Number(activeAccount.margin_level) || 0}
-                        size={56}
-                        className="shrink-0"
-                      />
-                    )}
-                  </>
-                ) : null}
+              <div className="flex items-end gap-3 sm:gap-4 md:gap-5 shrink-0 min-w-0 overflow-x-auto scrollbar-none no-scrollbar">
                 {isTerminal && activeTab === 'open' && (
-                  <div className="flex items-center gap-1 shrink-0 border-l border-border-primary ml-1 pl-2">
-                    <Button
-                      size="sm"
-                      iconOnly
-                      variant={terminalOpenCardView ? 'primary' : 'ghost'}
+                  <div className="flex items-center gap-1 shrink-0 pb-0.5">
+                    <button
+                      type="button"
                       onClick={() => setTerminalOpenCardView((v) => !v)}
+                      className={clsx(
+                        'p-1.5 rounded-md transition-colors border',
+                        terminalOpenCardView
+                          ? 'text-accent bg-accent/15 border-accent/35'
+                          : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover border-transparent hover:border-border-primary',
+                      )}
                       title={terminalOpenCardView ? 'Table view' : 'Card view'}
-                      aria-label={terminalOpenCardView ? 'Switch to table view' : 'Switch to card view'}
                       aria-pressed={terminalOpenCardView}
                     >
                       {terminalOpenCardView ? (
-                        <LayoutList className="w-4 h-4" strokeWidth={1.75} aria-hidden />
+                        <LayoutList className="w-4 h-4" strokeWidth={1.75} />
                       ) : (
-                        <LayoutGrid className="w-4 h-4" strokeWidth={1.75} aria-hidden />
+                        <LayoutGrid className="w-4 h-4" strokeWidth={1.75} />
                       )}
-                    </Button>
+                    </button>
                   </div>
                 )}
-                <div className="flex items-center gap-0.5 shrink-0 ml-1 pl-1">
-                  <Button
-                    size="sm"
-                    iconOnly
-                    variant="ghost"
+                <div className="flex items-center gap-0.5 shrink-0 pb-0.5 ml-1 pl-1">
+                  <button
+                    type="button"
                     onClick={() => void handleRefresh()}
                     disabled={toolbarBusy || (activeTab === 'history' && historyLoading)}
+                    className="p-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover disabled:opacity-40 transition-colors"
                     title="Refresh"
-                    aria-label="Refresh"
                   >
-                    <RefreshCw className={clsx('w-4 h-4', toolbarBusy && 'animate-spin')} aria-hidden />
-                  </Button>
-                  <Button size="sm" iconOnly variant="ghost" onClick={exportCurrentCsv} title="Download CSV" aria-label="Download CSV">
-                    <Download className="w-4 h-4" aria-hidden />
-                  </Button>
+                    <RefreshCw className={clsx('w-4 h-4', toolbarBusy && 'animate-spin')} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exportCurrentCsv}
+                    className="p-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+                    title="Download CSV"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                  {activeAccountId && activeTab !== 'pending' && (
+                    <button
+                      type="button"
+                      onClick={() => { setSharePosition(null); setShareScope(activeTab === 'history' ? 'history' : 'open'); }}
+                      className="p-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+                      title={activeTab === 'history' ? 'Share trade history' : 'Share all open positions'}
+                    >
+                      <Share2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
           ) : (
             <>
-              <div className="shrink-0 bg-bg-secondary px-1 pt-1">
-                <Tabs
-                  variant="underline"
-                  size="sm"
-                  fullWidth
-                  aria-label="Positions"
-                  tabs={tabItems}
-                  active={activeTab}
-                  onChange={(id) => setActiveTab(id as TabId)}
-                />
+              <div className={clsx('flex shrink-0 border-b border-border-glass', isTerminal ? 'bg-bg-secondary' : 'bg-bg-primary/40')}>
+                {tabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                    className={clsx(
+                      'flex-1 min-w-0 py-2.5 px-1 sm:px-2 text-[10px] sm:text-xs font-bold transition-colors border-b-2 -mb-px',
+                      activeTab === tab.id
+                        ? clsx('text-text-primary border-[#6366F1]', 'bg-bg-secondary/70')
+                        : clsx(
+                            'text-text-tertiary border-transparent hover:text-text-secondary',
+                            'hover:bg-bg-hover/40',
+                          ),
+                    )}
+                  >
+                    <span className="block truncate text-center">{tab.label}</span>
+                    <span className="block text-center tabular-nums opacity-90">({tab.count})</span>
+                  </button>
+                ))}
               </div>
 
-              <div className="flex items-center justify-between gap-2 px-2 py-1.5 shrink-0 border-b border-border-primary bg-bg-secondary">
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onClick={() => void handleRefresh()}
-                  disabled={toolbarBusy || (activeTab === 'history' && historyLoading)}
-                  leftIcon={<RefreshCw className={clsx('w-3.5 h-3.5', toolbarBusy && 'animate-spin')} aria-hidden />}
+              <div className={clsx('flex items-center justify-between gap-2 px-2 py-1.5 shrink-0 border-b border-border-glass/60', isTerminal ? 'bg-bg-secondary' : 'bg-bg-primary/20')}>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => void handleRefresh()}
+                    disabled={toolbarBusy || (activeTab === 'history' && historyLoading)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] sm:text-xs font-semibold text-text-secondary bg-bg-secondary/80 border border-border-glass hover:bg-bg-hover hover:text-text-primary disabled:opacity-50"
+                  >
+                    <RefreshCw className={clsx('w-3.5 h-3.5', toolbarBusy && 'animate-spin')} />
+                    Refresh
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={exportCurrentCsv}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] sm:text-xs font-semibold text-text-secondary bg-bg-secondary/80 border border-border-glass hover:bg-bg-hover hover:text-text-primary"
                 >
-                  Refresh
-                </Button>
-                <Button size="xs" variant="ghost" onClick={exportCurrentCsv} leftIcon={<Download className="w-3.5 h-3.5" aria-hidden />}>
+                  <Download className="w-3.5 h-3.5" />
                   Download CSV
-                </Button>
+                </button>
+                {activeAccountId && activeTab !== 'pending' && (
+                  <button
+                    type="button"
+                    onClick={() => { setSharePosition(null); setShareScope(activeTab === 'history' ? 'history' : 'open'); }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] sm:text-xs font-semibold text-text-secondary bg-bg-secondary/80 border border-border-glass hover:bg-bg-hover hover:text-text-primary"
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                    {activeTab === 'history' ? 'Share history' : 'Share all'}
+                  </button>
+                )}
               </div>
             </>
           )}
 
-          <div className="flex-1 overflow-auto min-h-0 flex flex-col w-full min-w-0">
+          <div
+            className={clsx(
+              'flex-1 overflow-auto min-h-0 flex flex-col w-full min-w-0',
+              isTerminal ? 'bg-transparent' : 'bg-bg-primary/30',
+            )}
+          >
             {activeTab === 'open' && (
               <div className="min-w-0 w-full flex-1 flex flex-col min-h-0">
                 {isTerminal && terminalOpenCardView ? (
                   <div className="flex-1 overflow-y-auto min-h-0 p-2 sm:p-3">
                     {positions.length === 0 ? (
-                      <EmptyState compact title="No open positions" />
+                      <div className="px-4 py-12 text-center text-sm text-text-tertiary">No open positions</div>
                     ) : (
                       <div className="flex flex-wrap gap-2 content-start items-start">
                         {positions.map((pos) => {
@@ -1066,6 +1037,7 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                               digits={d}
                               marginExposureLine={marginExposureLine}
                               swapsFeeLine={swapsFeeLine}
+                              isAi={aiPositionIds.has(pos.id)}
                               onCloseFull={() =>
                                 setCloseModal({
                                   id: pos.id,
@@ -1102,99 +1074,191 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                 {/* Mobile card layout */}
                 <div className="md:hidden flex-1 overflow-y-auto space-y-2 p-2">
                   {positions.length === 0 ? (
-                    <EmptyState compact title="No open positions" />
+                    <div className="px-4 py-12 text-center text-sm text-text-tertiary">No open positions</div>
                   ) : (
                     positions.map((pos) => {
                       const d = getDigits(pos.symbol);
-                      const net = netPnl(pos);
+                      const gross = grossPnl(pos);
+                      const charges = pos.commission || 0;
+                      const swap = pos.swap || 0;
                       return (
-                        <Card key={pos.id} padding="sm" className="space-y-2">
+                        <div key={pos.id} className="rounded-xl border border-border-glass bg-bg-secondary/40 p-3 space-y-2">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-bold text-text-primary font-mono">{pos.symbol}</span>
-                              <SideBadge side={pos.side} />
-                              <TradeTypeBadge tradeType={pos.trade_type} />
+                              <span className="text-sm font-bold text-text-primary">{pos.symbol}</span>
+                              {aiPositionIds.has(pos.id) && <AiBadge />}
+                              <span className={clsx('text-[10px] font-bold uppercase', pos.side === 'buy' ? 'text-buy' : 'text-sell')}>{pos.side}</span>
+                              <span className={clsx('text-[10px] px-1.5 py-0.5 rounded-sm font-medium', tradeTypeChip(pos.trade_type, aiPositionIds.has(pos.id)).className)}>
+                                {tradeTypeChip(pos.trade_type, aiPositionIds.has(pos.id)).label}
+                              </span>
                             </div>
-                            <span className={clsx('font-mono text-sm font-bold tabular-nums', pnlTone(net))}>
-                              {net >= 0 ? '+' : ''}${net.toFixed(2)}
+                            <span className="font-mono text-sm font-bold tabular-nums" style={{ color: gross >= 0 ? '#2962FF' : '#FF2440' }} title="Gross P&L (price only)">
+                              {gross >= 0 ? '+' : ''}${gross.toFixed(2)}
                             </span>
                           </div>
-                          <div className="grid grid-cols-3 gap-x-3 gap-y-1 text-xs">
-                            <div><span className="text-text-tertiary">Qty</span> <span className="text-text-primary font-mono tabular-nums">{pos.lots}</span></div>
-                            <div><span className="text-text-tertiary">Open</span> <span className="text-text-primary font-mono tabular-nums">{pos.open_price.toFixed(d)}</span></div>
-                            <div><span className="text-text-tertiary">Now</span> <span className="text-text-primary font-mono tabular-nums">{pos.current_price != null ? pos.current_price.toFixed(d) : '—'}</span></div>
+                          <div className="grid grid-cols-3 gap-x-3 gap-y-1 text-[11px]">
+                            <div><span className="text-text-tertiary">Qty</span> <span className="text-text-primary font-mono">{pos.lots}</span></div>
+                            <div><span className="text-text-tertiary">Open</span> <span className="text-text-primary font-mono">{pos.open_price.toFixed(d)}</span></div>
+                            <div><span className="text-text-tertiary">Now</span> <AnimatedPrice value={pos.current_price} digits={d} className="text-text-primary font-mono" /></div>
+                            <div><span className="text-text-tertiary">Comm.</span> <span className="text-text-primary font-mono">-${Math.abs(charges).toFixed(2)}</span></div>
+                            <div><span className="text-text-tertiary">Swap</span> <span className="text-text-primary font-mono">{swap >= 0 ? '+' : '-'}${Math.abs(swap).toFixed(2)}</span></div>
                             <div><span className="text-text-tertiary">Acct</span> <span className="text-text-secondary">{accountLabel(pos.account_id)}</span></div>
                           </div>
-                          <div className="flex items-center justify-between pt-1 border-t border-border-secondary">
-                            <div className="text-xxs">
+                          <div className="flex items-center justify-between pt-1 border-t border-border-glass/40">
+                            <div className="text-[10px]">
                               {sltpEdit && sltpEdit.positionId === pos.id ? (
-                                renderSltpEditor('row')
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-text-tertiary">SL:</span>
+                                    <input type="number" step="0.00001" value={sltpEdit.sl} onChange={(e) => setSltpEdit({ ...sltpEdit, sl: e.target.value })} className="w-20 px-1 py-0.5 text-[10px] font-mono bg-bg-input border border-border-glass rounded text-text-primary" placeholder="—" />
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-text-tertiary">TP:</span>
+                                    <input type="number" step="0.00001" value={sltpEdit.tp} onChange={(e) => setSltpEdit({ ...sltpEdit, tp: e.target.value })} className="w-20 px-1 py-0.5 text-[10px] font-mono bg-bg-input border border-border-glass rounded text-text-primary" placeholder="—" />
+                                  </div>
+                                  <button type="button" onClick={() => void saveSltpEdit()} disabled={sltpSaving} className="p-1 rounded bg-buy/15 text-buy hover:bg-buy/25 disabled:opacity-50"><Check className="w-3.5 h-3.5" /></button>
+                                  <button type="button" onClick={() => setSltpEdit(null)} className="p-1 rounded bg-sell/15 text-sell hover:bg-sell/25"><X className="w-3.5 h-3.5" /></button>
+                                </div>
                               ) : (
-                                <button type="button" onClick={() => setSltpEdit({ positionId: pos.id, sl: pos.stop_loss != null ? pos.stop_loss.toFixed(d) : '', tp: pos.take_profit != null ? pos.take_profit.toFixed(d) : '' })} className="text-text-tertiary active:text-text-secondary font-mono tabular-nums">
+                                <button type="button" onClick={() => setSltpEdit({ positionId: pos.id, sl: pos.stop_loss != null ? pos.stop_loss.toFixed(d) : '', tp: pos.take_profit != null ? pos.take_profit.toFixed(d) : '' })} className="text-text-tertiary active:text-text-secondary">
                                   SL: {pos.stop_loss != null ? pos.stop_loss.toFixed(d) : '—'} · TP: {pos.take_profit != null ? pos.take_profit.toFixed(d) : '—'}
-                                  <Pencil className="w-2.5 h-2.5 inline ml-1 opacity-60" aria-hidden />
+                                  <Pencil className="w-2.5 h-2.5 inline ml-1 opacity-60" />
                                 </button>
                               )}
                             </div>
                             <div className="inline-flex items-center gap-2">
-                              <Button size="sm" iconOnly variant="ghost" onClick={() => setSharePosition(pos)} aria-label="Share trade">
-                                <Share2 className="w-4 h-4" aria-hidden />
-                              </Button>
+                              <button
+                                type="button"
+                                onClick={() => { setShareScope(null); setSharePosition(pos); }}
+                                className="p-1.5 rounded-lg text-text-tertiary active:text-text-primary"
+                                aria-label="Share trade"
+                              >
+                                <Share2 className="w-4 h-4" />
+                              </button>
                               {pos.trade_type === 'copy_trade' ? (
-                                copyBadge
+                                <span className="px-2 py-1.5 rounded-lg text-[10px] font-bold uppercase bg-info/15 text-info border border-info/30" title="Copy trade — only the Trade Master can close it">
+                                  COPY
+                                </span>
                               ) : (
-                                <Button size="sm" variant="danger" className="uppercase" onClick={() => setCloseModal({ id: pos.id, symbol: pos.symbol, side: pos.side, lots: pos.lots, closeLots: String(pos.lots), selectedPct: 100 })}>
+                                <button type="button" onClick={() => setCloseModal({ id: pos.id, symbol: pos.symbol, side: pos.side, lots: pos.lots, closeLots: String(pos.lots), selectedPct: 100 })} className="px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase bg-sell/15 text-sell border border-sell/30 active:bg-sell/25">
                                   Close
-                                </Button>
+                                </button>
                               )}
                             </div>
                           </div>
-                        </Card>
+                        </div>
                       );
                     })
                   )}
                 </div>
                 {/* Desktop table layout — block + full width so table aligns left, not centered in flex */}
                 <div className="hidden md:block w-full min-w-0 flex-1 overflow-x-auto">
-                  <Table dense className="min-w-[940px]">
-                    <THead>
-                      <TR>
-                        <TH>Account</TH>
-                        <TH>Symbol</TH>
-                        <TH>Type</TH>
-                        <TH>Side</TH>
-                        <TH align="right">Qty</TH>
-                        <TH align="right">Open</TH>
-                        <TH align="right">Charges</TH>
-                        <TH align="right">Current</TH>
-                        <TH align="right">P&amp;L</TH>
-                        <TH>SL / TP</TH>
-                        <TH align="right">Action</TH>
-                      </TR>
-                    </THead>
-                    <TBody>
+                  <table className="w-full min-w-[940px] border-collapse">
+                    <thead>
+                      <tr className={theadRowClass}>
+                        <th className={th}>Account</th>
+                        <th className={th}>Symbol</th>
+                        <th className={th}>Type</th>
+                        <th className={th}>Side</th>
+                        <th className={thNum}>Qty</th>
+                        <th className={thNum}>Open</th>
+                        <th className={thNum}>Comm.</th>
+                        <th className={thNum}>Swap</th>
+                        <th className={thNum}>Current</th>
+                        <th className={thNum}>P&amp;L</th>
+                        <th className={th}>SL / TP</th>
+                        <th className={clsx(th, 'text-right pr-3')}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
                       {positions.map((pos) => {
                         const d = getDigits(pos.symbol);
                         const charges = pos.commission || 0;
-                        const net = netPnl(pos);
+                        const swap = pos.swap || 0;
+                        const gross = grossPnl(pos);
                         return (
-                          <TR key={pos.id} interactive>
-                            <TD muted>{accountLabel(pos.account_id)}</TD>
-                            <TD className="font-bold font-mono">{pos.symbol}</TD>
-                            <TD><TradeTypeBadge tradeType={pos.trade_type} /></TD>
-                            <TD><SideBadge side={pos.side} /></TD>
-                            <TD numeric>{pos.lots}</TD>
-                            <TD numeric>{pos.open_price.toFixed(d)}</TD>
-                            <TD numeric muted title="Commission charged by the broker on this position">
+                          <tr key={pos.id} className={tbodyRowClass}>
+                            <td className={td}>{accountLabel(pos.account_id)}</td>
+                            <td className={clsx(td, 'font-bold')}>
+                              <span className="inline-flex items-center gap-1.5">
+                                {pos.symbol}
+                                {aiPositionIds.has(pos.id) && <AiBadge />}
+                              </span>
+                            </td>
+                            <td className={td}>
+                              <span className={clsx('text-[10px] px-1.5 py-0.5 rounded-sm font-medium', tradeTypeChip(pos.trade_type, aiPositionIds.has(pos.id)).className)}>
+                                {tradeTypeChip(pos.trade_type, aiPositionIds.has(pos.id)).label}
+                              </span>
+                            </td>
+                            <td className={td}>
+                              <span
+                                className={clsx(
+                                  'inline-flex px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide',
+                                  pos.side === 'buy' ? 'bg-buy/12 text-buy' : 'bg-sell/12 text-sell',
+                                )}
+                              >
+                                {pos.side}
+                              </span>
+                            </td>
+                            <td className={tdNum}>{pos.lots}</td>
+                            <td className={clsx(tdNum, 'font-mono')}>{pos.open_price.toFixed(d)}</td>
+                            <td className={clsx(tdNum, 'font-mono text-text-secondary')} title="Commission charged by the broker on this position">
                               {charges > 0 ? `-$${charges.toFixed(2)}` : '—'}
-                            </TD>
-                            <TD numeric>{pos.current_price != null ? pos.current_price.toFixed(d) : '—'}</TD>
-                            <TD numeric className={clsx('font-bold', pnlTone(net))}>
-                              {net >= 0 ? '+' : ''}${net.toFixed(2)}
-                            </TD>
-                            <TD className="text-xxs">
+                            </td>
+                            <td className={clsx(tdNum, 'font-mono text-text-secondary')} title="Overnight swap accrued on this position">
+                              {swap !== 0 ? `${swap >= 0 ? '+' : '-'}$${Math.abs(swap).toFixed(2)}` : '—'}
+                            </td>
+                            <td className={clsx(tdNum, 'font-mono')}>
+                              <AnimatedPrice value={pos.current_price} digits={d} />
+                            </td>
+                            <td className={clsx(tdNum, 'font-mono font-bold tabular-nums')} style={{ color: gross >= 0 ? '#2962FF' : '#FF2440' }} title="Gross P&L (price only) — commission and swap are shown separately">
+                              {gross >= 0 ? '+' : ''}${gross.toFixed(2)}
+                            </td>
+                            <td className={clsx(td, 'text-[10px]')}>
                               {sltpEdit && sltpEdit.positionId === pos.id ? (
-                                renderSltpEditor('column')
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-text-tertiary w-5">SL:</span>
+                                    <input
+                                      type="number"
+                                      step="0.00001"
+                                      value={sltpEdit.sl}
+                                      onChange={(e) => setSltpEdit({ ...sltpEdit, sl: e.target.value })}
+                                      className="w-20 px-1 py-0.5 text-[10px] font-mono bg-bg-input border border-border-glass rounded text-text-primary"
+                                      placeholder="—"
+                                    />
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-text-tertiary w-5">TP:</span>
+                                    <input
+                                      type="number"
+                                      step="0.00001"
+                                      value={sltpEdit.tp}
+                                      onChange={(e) => setSltpEdit({ ...sltpEdit, tp: e.target.value })}
+                                      className="w-20 px-1 py-0.5 text-[10px] font-mono bg-bg-input border border-border-glass rounded text-text-primary"
+                                      placeholder="—"
+                                    />
+                                  </div>
+                                  <div className="flex gap-1 mt-0.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => void saveSltpEdit()}
+                                      disabled={sltpSaving}
+                                      className="p-0.5 rounded bg-buy/15 text-buy hover:bg-buy/25 disabled:opacity-50"
+                                      title="Save"
+                                    >
+                                      <Check className="w-3 h-3" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setSltpEdit(null)}
+                                      className="p-0.5 rounded bg-sell/15 text-sell hover:bg-sell/25"
+                                      title="Cancel"
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                </div>
                               ) : (
                                 <div className="flex flex-wrap gap-1.5 items-center">
                                   {pos.stop_loss != null ? (
@@ -1208,24 +1272,22 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                                       className="text-left group inline-flex items-center gap-1 cursor-pointer"
                                       title="Click to edit Stop Loss"
                                     >
-                                      <span className="text-danger font-mono tabular-nums">SL: {pos.stop_loss.toFixed(d)}</span>
-                                      <Pencil className="w-2.5 h-2.5 opacity-0 group-hover:opacity-60 text-text-tertiary transition-opacity" aria-hidden />
+                                      <span className="text-[#ef5350]">SL: {pos.stop_loss.toFixed(d)}</span>
+                                      <Pencil className="w-2.5 h-2.5 opacity-0 group-hover:opacity-60 text-text-tertiary transition-opacity" />
                                     </button>
                                   ) : (
-                                    <Button
-                                      size="xs"
-                                      variant="danger"
-                                      className="uppercase tracking-wide"
+                                    <button
+                                      type="button"
                                       onClick={() => setSltpEdit({
                                         positionId: pos.id,
                                         sl: '',
                                         tp: pos.take_profit != null ? pos.take_profit.toFixed(d) : '',
                                       })}
+                                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide border border-[#ef5350]/30 text-[#ef5350] bg-[#ef5350]/5 hover:bg-[#ef5350]/15 transition-colors"
                                       title="Add Stop Loss"
-                                      leftIcon={<Plus className="w-2.5 h-2.5" aria-hidden />}
                                     >
-                                      SL
-                                    </Button>
+                                      <Plus className="w-2.5 h-2.5" /> SL
+                                    </button>
                                   )}
                                   {pos.take_profit != null ? (
                                     <button
@@ -1238,40 +1300,46 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                                       className="text-left group inline-flex items-center gap-1 cursor-pointer"
                                       title="Click to edit Take Profit"
                                     >
-                                      <span className="text-success font-mono tabular-nums">TP: {pos.take_profit.toFixed(d)}</span>
-                                      <Pencil className="w-2.5 h-2.5 opacity-0 group-hover:opacity-60 text-text-tertiary transition-opacity" aria-hidden />
+                                      <span className="text-[#6366F1]">TP: {pos.take_profit.toFixed(d)}</span>
+                                      <Pencil className="w-2.5 h-2.5 opacity-0 group-hover:opacity-60 text-text-tertiary transition-opacity" />
                                     </button>
                                   ) : (
-                                    <Button
-                                      size="xs"
-                                      variant="outline"
-                                      className="uppercase tracking-wide !text-success !border-success/25 !bg-success/10 hover:!bg-success/20"
+                                    <button
+                                      type="button"
                                       onClick={() => setSltpEdit({
                                         positionId: pos.id,
                                         sl: pos.stop_loss != null ? pos.stop_loss.toFixed(d) : '',
                                         tp: '',
                                       })}
+                                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide border border-[#6366F1]/30 text-[#6366F1] bg-[#6366F1]/5 hover:bg-[#6366F1]/15 transition-colors"
                                       title="Add Take Profit"
-                                      leftIcon={<Plus className="w-2.5 h-2.5" aria-hidden />}
                                     >
-                                      TP
-                                    </Button>
+                                      <Plus className="w-2.5 h-2.5" /> TP
+                                    </button>
                                   )}
                                 </div>
                               )}
-                            </TD>
-                            <TD align="right">
+                            </td>
+                            <td className={clsx(td, 'text-right pr-2')}>
                               <div className="inline-flex items-center gap-1.5">
-                                <Button size="xs" iconOnly variant="ghost" onClick={() => setSharePosition(pos)} title="Share trade" aria-label="Share trade">
-                                  <Share2 className="w-3.5 h-3.5" aria-hidden />
-                                </Button>
+                                <button
+                                  type="button"
+                                  onClick={() => { setShareScope(null); setSharePosition(pos); }}
+                                  title="Share trade"
+                                  className="p-1 rounded-md text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-fast"
+                                >
+                                  <Share2 className="w-3.5 h-3.5" />
+                                </button>
                                 {pos.trade_type === 'copy_trade' ? (
-                                  copyBadge
+                                  <span
+                                    className="px-2 py-1 rounded-md text-[9px] font-bold uppercase bg-info/15 text-info border border-info/30"
+                                    title="Copy trade — only the Trade Master can close it"
+                                  >
+                                    COPY
+                                  </span>
                                 ) : (
-                                  <Button
-                                    size="xs"
-                                    variant="danger"
-                                    className="uppercase"
+                                  <button
+                                    type="button"
                                     onClick={() =>
                                       setCloseModal({
                                         id: pos.id,
@@ -1282,24 +1350,25 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                                         selectedPct: 100,
                                       })
                                     }
+                                    className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase bg-sell/15 text-sell border border-sell/30 hover:bg-sell/25"
                                   >
                                     Close
-                                  </Button>
+                                  </button>
                                 )}
                               </div>
-                            </TD>
-                          </TR>
+                            </td>
+                          </tr>
                         );
                       })}
                       {positions.length === 0 && (
-                        <TR>
-                          <TD colSpan={11} className="!whitespace-normal">
-                            <EmptyState compact title="No open positions" />
-                          </TD>
-                        </TR>
+                        <tr>
+                          <td colSpan={12} className="px-4 py-12 text-center text-sm text-text-tertiary">
+                            No open positions
+                          </td>
+                        </tr>
                       )}
-                    </TBody>
-                  </Table>
+                    </tbody>
+                  </table>
                 </div>
                   </>
                 )}
@@ -1311,84 +1380,119 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                 {/* Mobile card layout */}
                 <div className="md:hidden flex-1 overflow-y-auto space-y-2 p-2">
                   {pendingOrders.length === 0 ? (
-                    <EmptyState compact title="No pending orders" />
+                    <div className="px-4 py-12 text-center text-sm text-text-tertiary">No pending orders</div>
                   ) : (
                     pendingOrders.map((order) => {
                       const d = getDigits(order.symbol);
                       return (
-                        <Card key={order.id} padding="sm" className="space-y-2">
+                        <div key={order.id} className="rounded-xl border border-border-glass bg-bg-secondary/40 p-3 space-y-2">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-bold text-text-primary font-mono">{order.symbol}</span>
-                              <SideBadge side={order.side} />
-                              <span className="text-xxs text-text-tertiary">{order.order_type.replace(/_/g, ' ')}</span>
+                              <span className="text-sm font-bold text-text-primary">{order.symbol}</span>
+                              <span className={clsx('text-[10px] font-bold uppercase', order.side === 'buy' ? 'text-buy' : 'text-sell')}>{order.side}</span>
+                              <span className="text-[10px] text-text-tertiary">{order.order_type.replace(/_/g, ' ')}</span>
                             </div>
                             <span className="text-xs font-mono font-semibold text-text-primary tabular-nums">@ {order.price.toFixed(d)}</span>
                           </div>
-                          <div className="grid grid-cols-3 gap-x-3 gap-y-1 text-xs">
-                            <div><span className="text-text-tertiary">Qty</span> <span className="text-text-primary font-mono tabular-nums">{order.lots}</span></div>
-                            <div><span className="text-text-tertiary">SL</span> <span className="text-text-secondary font-mono tabular-nums">{order.stop_loss != null ? order.stop_loss.toFixed(d) : '—'}</span></div>
-                            <div><span className="text-text-tertiary">TP</span> <span className="text-text-secondary font-mono tabular-nums">{order.take_profit != null ? order.take_profit.toFixed(d) : '—'}</span></div>
+                          <div className="grid grid-cols-3 gap-x-3 gap-y-1 text-[11px]">
+                            <div><span className="text-text-tertiary">Qty</span> <span className="text-text-primary font-mono">{order.lots}</span></div>
+                            <div><span className="text-text-tertiary">SL</span> <span className="text-text-secondary font-mono">{order.stop_loss != null ? order.stop_loss.toFixed(d) : '—'}</span></div>
+                            <div><span className="text-text-tertiary">TP</span> <span className="text-text-secondary font-mono">{order.take_profit != null ? order.take_profit.toFixed(d) : '—'}</span></div>
                           </div>
-                          <div className="flex items-center justify-between pt-1 border-t border-border-secondary">
-                            <span className="text-xxs text-text-tertiary">{accountLabel(order.account_id)}</span>
-                            <Button size="sm" variant="danger" className="uppercase" onClick={() => void cancelPendingOrder(order.id)}>
+                          <div className="flex items-center justify-between pt-1 border-t border-border-glass/40">
+                            <span className="text-[10px] text-text-tertiary">{accountLabel(order.account_id)}</span>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  await api.delete(`/orders/${order.id}`);
+                                  toast.success('Order cancelled');
+                                  refreshPositions();
+                                } catch (e: unknown) {
+                                  toast.error(e instanceof Error ? e.message : 'Failed');
+                                }
+                              }}
+                              className="px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase bg-sell/15 text-sell border border-sell/30 active:bg-sell/25"
+                            >
                               Cancel
-                            </Button>
+                            </button>
                           </div>
-                        </Card>
+                        </div>
                       );
                     })
                   )}
                 </div>
                 {/* Desktop table layout */}
                 <div className="hidden md:block w-full min-w-0 flex-1 overflow-x-auto">
-                  <Table dense className="min-w-[560px]">
-                    <THead>
-                      <TR>
-                        <TH>Account</TH>
-                        <TH>Symbol</TH>
-                        <TH>Side</TH>
-                        <TH>Type</TH>
-                        <TH align="right">Qty</TH>
-                        <TH align="right">Price</TH>
-                        <TH>SL / TP</TH>
-                        <TH align="right">Action</TH>
-                      </TR>
-                    </THead>
-                    <TBody>
+                  <table className="w-full min-w-[560px] border-collapse">
+                    <thead>
+                      <tr className={theadRowClass}>
+                        <th className={th}>Account</th>
+                        <th className={th}>Symbol</th>
+                        <th className={th}>Side</th>
+                        <th className={th}>Type</th>
+                        <th className={th}>Qty</th>
+                        <th className={th}>Price</th>
+                        <th className={th}>SL / TP</th>
+                        <th className={clsx(th, 'text-right pr-3')}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
                       {pendingOrders.map((order) => {
                         const d = getDigits(order.symbol);
                         return (
-                          <TR key={order.id} interactive>
-                            <TD muted>{accountLabel(order.account_id)}</TD>
-                            <TD className="font-bold font-mono">{order.symbol}</TD>
-                            <TD><SideBadge side={order.side} /></TD>
-                            <TD muted className="capitalize">{order.order_type.replace(/_/g, ' ')}</TD>
-                            <TD numeric>{order.lots}</TD>
-                            <TD numeric>{order.price.toFixed(d)}</TD>
-                            <TD muted className="text-xxs font-mono tabular-nums">
+                          <tr key={order.id} className={tbodyRowClass}>
+                            <td className={td}>{accountLabel(order.account_id)}</td>
+                            <td className={clsx(td, 'font-bold')}>{order.symbol}</td>
+                            <td className={td}>
+                              <span
+                                className={clsx(
+                                  'font-bold uppercase',
+                                  order.side === 'buy' ? 'text-buy' : 'text-sell',
+                                )}
+                              >
+                                {order.side}
+                              </span>
+                            </td>
+                            <td className={clsx(td, 'text-text-tertiary')}>
+                              {order.order_type.replace(/_/g, ' ')}
+                            </td>
+                            <td className={td}>{order.lots}</td>
+                            <td className={clsx(td, 'font-mono')}>{order.price.toFixed(d)}</td>
+                            <td className={clsx(td, 'text-[10px] text-text-tertiary')}>
                               SL: {order.stop_loss != null ? order.stop_loss.toFixed(d) : '—'}
                               <br />
                               TP: {order.take_profit != null ? order.take_profit.toFixed(d) : '—'}
-                            </TD>
-                            <TD align="right">
-                              <Button size="xs" variant="danger" className="uppercase" onClick={() => void cancelPendingOrder(order.id)}>
+                            </td>
+                            <td className={clsx(td, 'text-right pr-2')}>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    await api.delete(`/orders/${order.id}`);
+                                    toast.success('Order cancelled');
+                                    refreshPositions();
+                                  } catch (e: unknown) {
+                                    toast.error(e instanceof Error ? e.message : 'Failed');
+                                  }
+                                }}
+                                className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase bg-sell/15 text-sell border border-sell/30 hover:bg-sell/25"
+                              >
                                 Cancel
-                              </Button>
-                            </TD>
-                          </TR>
+                              </button>
+                            </td>
+                          </tr>
                         );
                       })}
                       {pendingOrders.length === 0 && (
-                        <TR>
-                          <TD colSpan={8} className="!whitespace-normal">
-                            <EmptyState compact title="No pending orders" />
-                          </TD>
-                        </TR>
+                        <tr>
+                          <td colSpan={8} className="px-4 py-12 text-center text-sm text-text-tertiary">
+                            No pending orders
+                          </td>
+                        </tr>
                       )}
-                    </TBody>
-                  </Table>
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}
@@ -1396,24 +1500,23 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
             {activeTab === 'history' && (
               <div className="min-w-0 w-full flex-1 flex flex-col min-h-0 overflow-hidden">
                 {historyLoading ? (
-                  <div className="p-3 space-y-2 flex-1 min-h-[120px]" aria-busy aria-label="Loading history">
-                    <Skeleton className="h-7 w-full" />
-                    <Skeleton className="h-7 w-full" />
-                    <Skeleton className="h-7 w-5/6" />
+                  <div className="px-4 py-12 text-center text-text-tertiary animate-pulse text-sm flex-1 flex items-center justify-center min-h-[120px]">
+                    Loading history…
                   </div>
                 ) : (
                   <>
                   {/* Mobile card layout */}
                   <div className="md:hidden flex-1 overflow-y-auto space-y-2 p-2">
                     {historyTrades.length === 0 ? (
-                      <EmptyState compact title="No trade history" />
+                      <div className="px-4 py-12 text-center text-sm text-text-tertiary">No trade history</div>
                     ) : (
                       historyTrades.map((trade) => {
                         const d = getDigits(trade.symbol);
-                        const pnl = trade.pnl || 0;
+                        const gross = trade.pnl || 0;
                         const charges = trade.commission || 0;
-                        const net = pnl - charges + (trade.swap || 0);
+                        const swap = trade.swap || 0;
                         const exitBadge = closeReasonBadge(trade.close_reason, trade.close_price, d);
+                        const typeChip = tradeTypeChip(trade.trade_type, trade.is_ai);
                         // Re-use the same Position shape that ShareTradeModal
                         // expects so a closed trade can be shared from this
                         // card too. Open positions had a share button on
@@ -1435,108 +1538,160 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                           created_at: trade.close_time,
                         };
                         return (
-                          <Card key={trade.id} padding="sm" className="space-y-2">
+                          <div key={trade.id} className="rounded-xl border border-border-glass bg-bg-secondary/40 p-3 space-y-2">
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-2">
-                                <span className="text-sm font-bold text-text-primary font-mono">{trade.symbol}</span>
-                                <SideBadge side={trade.side} />
-                                <TradeTypeBadge tradeType={trade.trade_type} />
+                                <span className="text-sm font-bold text-text-primary">{trade.symbol}</span>
+                                <span className={clsx('text-[10px] font-bold uppercase', trade.side === 'buy' ? 'text-buy' : 'text-sell')}>{trade.side}</span>
+                                <span className={clsx('text-[10px] px-1.5 py-0.5 rounded-sm font-medium', typeChip.className)}>
+                                  {typeChip.label}
+                                </span>
                               </div>
                               <div className="inline-flex items-center gap-2">
-                                <Button size="sm" iconOnly variant="ghost" onClick={() => setSharePosition(sharePos)} aria-label="Share trade">
-                                  <Share2 className="w-4 h-4" aria-hidden />
-                                </Button>
-                                <span className={clsx('font-mono text-sm font-bold tabular-nums', pnlTone(net))}>
-                                  {net >= 0 ? '+' : ''}${net.toFixed(2)}
+                                <button
+                                  type="button"
+                                  onClick={() => { setShareScope(null); setSharePosition(sharePos); }}
+                                  className="p-1 -m-1 rounded-md text-text-tertiary active:text-text-primary"
+                                  aria-label="Share trade"
+                                >
+                                  <Share2 className="w-4 h-4" />
+                                </button>
+                                <span className="font-mono text-sm font-bold tabular-nums" style={{ color: gross >= 0 ? '#2962FF' : '#FF2440' }} title="Gross P&L (price only)">
+                                  {gross >= 0 ? '+' : ''}${gross.toFixed(2)}
                                 </span>
                               </div>
                             </div>
-                            <div className="grid grid-cols-3 gap-x-3 gap-y-1 text-xs">
-                              <div><span className="text-text-tertiary">Qty</span> <span className="text-text-primary font-mono tabular-nums">{trade.lots}</span></div>
-                              <div><span className="text-text-tertiary">Open</span> <span className="text-text-primary font-mono tabular-nums">{trade.open_price.toFixed(d)}</span></div>
-                              <div><span className="text-text-tertiary">Close</span> <span className="text-text-primary font-mono tabular-nums">{trade.close_price.toFixed(d)}</span></div>
+                            <div className="grid grid-cols-3 gap-x-3 gap-y-1 text-[11px]">
+                              <div><span className="text-text-tertiary">Qty</span> <span className="text-text-primary font-mono">{trade.lots}</span></div>
+                              <div><span className="text-text-tertiary">Open</span> <span className="text-text-primary font-mono">{trade.open_price.toFixed(d)}</span></div>
+                              <div><span className="text-text-tertiary">Close</span> <span className="text-text-primary font-mono">{trade.close_price.toFixed(d)}</span></div>
                               <div>
                                 <span className="text-text-tertiary">SL</span>{' '}
-                                <span className={clsx('font-mono tabular-nums', trade.stop_loss != null ? 'text-danger' : 'text-text-tertiary')}>
+                                <span className={clsx('font-mono', trade.stop_loss != null ? 'text-sell' : 'text-text-tertiary')}>
                                   {trade.stop_loss != null ? trade.stop_loss.toFixed(d) : '—'}
                                 </span>
                               </div>
                               <div>
                                 <span className="text-text-tertiary">TP</span>{' '}
-                                <span className={clsx('font-mono tabular-nums', trade.take_profit != null ? 'text-success' : 'text-text-tertiary')}>
+                                <span className={clsx('font-mono', trade.take_profit != null ? 'text-buy' : 'text-text-tertiary')}>
                                   {trade.take_profit != null ? trade.take_profit.toFixed(d) : '—'}
                                 </span>
                               </div>
                               <div>
-                                <Badge variant={exitBadge.variant} size="sm" className="normal-case tracking-normal">{exitBadge.label}</Badge>
+                                <span className="text-text-tertiary">Comm.</span>{' '}
+                                <span className="text-text-primary font-mono">-${Math.abs(charges).toFixed(2)}</span>
+                              </div>
+                              <div>
+                                <span className="text-text-tertiary">Swap</span>{' '}
+                                <span className="text-text-primary font-mono">{swap >= 0 ? '+' : '-'}${Math.abs(swap).toFixed(2)}</span>
+                              </div>
+                              <div>
+                                <span className={clsx('inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide', exitBadge.className)}>
+                                  {exitBadge.label}
+                                </span>
                               </div>
                             </div>
-                            <div className="text-xxs text-text-tertiary pt-1 border-t border-border-secondary">
+                            <div className="text-[10px] text-text-tertiary pt-1 border-t border-border-glass/40">
                               {new Date(trade.close_time).toLocaleString()}
                             </div>
-                          </Card>
+                          </div>
                         );
                       })
                     )}
                   </div>
                   {/* Desktop table layout */}
                   <div className="hidden md:block w-full min-w-0 overflow-auto flex-1 min-h-0">
-                  <Table dense className="min-w-[1020px]">
-                    <THead>
-                      <TR>
-                        <TH>Symbol</TH>
-                        <TH>Type</TH>
-                        <TH>Side</TH>
-                        <TH align="right">Qty</TH>
-                        <TH align="right">Open</TH>
-                        <TH align="right">Close</TH>
-                        <TH align="right">SL</TH>
-                        <TH align="right">TP</TH>
-                        <TH align="right">P&amp;L</TH>
-                        <TH>Reason</TH>
-                        <TH>Closed</TH>
-                      </TR>
-                    </THead>
-                    <TBody>
+                  <table className="w-full min-w-[1020px] border-collapse">
+                    <thead>
+                      <tr className={theadRowClass}>
+                        <th className={th}>Symbol</th>
+                        <th className={th}>Type</th>
+                        <th className={th}>Side</th>
+                        <th className={th}>Qty</th>
+                        <th className={th}>Open</th>
+                        <th className={th}>Close</th>
+                        <th className={th}>SL</th>
+                        <th className={th}>TP</th>
+                        <th className={th}>Comm.</th>
+                        <th className={th}>Swap</th>
+                        <th className={th}>
+                          <span className="block">P&amp;L</span>
+                        </th>
+                        <th className={th}>
+                          <span className="block">Reason</span>
+                        </th>
+                        <th className={th}>Closed</th>
+                      </tr>
+                    </thead>
+                    <tbody>
                       {historyTrades.map((trade) => {
                         const d = getDigits(trade.symbol);
-                        const pnl = trade.pnl || 0;
+                        const gross = trade.pnl || 0;
                         const charges = trade.commission || 0;
-                        const net = pnl - charges + (trade.swap || 0);
+                        const swap = trade.swap || 0;
                         const exitBadge = closeReasonBadge(trade.close_reason, trade.close_price, d);
+                        const typeChip = tradeTypeChip(trade.trade_type, trade.is_ai);
                         return (
-                          <TR key={trade.id} interactive>
-                            <TD className="font-bold font-mono">{trade.symbol}</TD>
-                            <TD><TradeTypeBadge tradeType={trade.trade_type} /></TD>
-                            <TD><SideBadge side={trade.side} /></TD>
-                            <TD numeric>{trade.lots}</TD>
-                            <TD numeric>{trade.open_price.toFixed(d)}</TD>
-                            <TD numeric>{trade.close_price.toFixed(d)}</TD>
-                            <TD numeric className={trade.stop_loss != null ? 'text-danger' : 'text-text-tertiary'}>
+                          <tr key={trade.id} className={tbodyRowClass}>
+                            <td className={clsx(td, 'font-bold')}>{trade.symbol}</td>
+                            <td className={td}>
+                              <span className={clsx('text-[10px] px-1.5 py-0.5 rounded-sm font-medium', typeChip.className)}>
+                                {typeChip.label}
+                              </span>
+                            </td>
+                            <td className={td}>
+                              <span
+                                className={clsx(
+                                  'font-bold uppercase',
+                                  trade.side === 'buy' ? 'text-buy' : 'text-sell',
+                                )}
+                              >
+                                {trade.side}
+                              </span>
+                            </td>
+                            <td className={td}>{trade.lots}</td>
+                            <td className={clsx(td, 'font-mono')}>{trade.open_price.toFixed(d)}</td>
+                            <td className={clsx(td, 'font-mono')}>{trade.close_price.toFixed(d)}</td>
+                            <td className={clsx(td, 'font-mono', trade.stop_loss != null ? 'text-sell' : 'text-text-tertiary')}>
                               {trade.stop_loss != null ? trade.stop_loss.toFixed(d) : '—'}
-                            </TD>
-                            <TD numeric className={trade.take_profit != null ? 'text-success' : 'text-text-tertiary'}>
+                            </td>
+                            <td className={clsx(td, 'font-mono', trade.take_profit != null ? 'text-buy' : 'text-text-tertiary')}>
                               {trade.take_profit != null ? trade.take_profit.toFixed(d) : '—'}
-                            </TD>
-                            <TD numeric className={clsx('font-bold', pnlTone(net))}>
-                              {net >= 0 ? '+' : ''}${net.toFixed(2)}
-                            </TD>
-                            <TD>
-                              <Badge variant={exitBadge.variant} size="sm" className="normal-case tracking-normal">{exitBadge.label}</Badge>
-                            </TD>
-                            <TD muted className="text-xxs">{new Date(trade.close_time).toLocaleString()}</TD>
-                          </TR>
+                            </td>
+                            <td className={clsx(td, 'font-mono text-text-secondary tabular-nums')} title="Commission">
+                              -${Math.abs(charges).toFixed(2)}
+                            </td>
+                            <td className={clsx(td, 'font-mono text-text-secondary tabular-nums')} title="Swap">
+                              {swap >= 0 ? '+' : '-'}${Math.abs(swap).toFixed(2)}
+                            </td>
+                            <td className={clsx(td, 'font-mono font-bold tabular-nums')} style={{ color: gross >= 0 ? '#2962FF' : '#FF2440' }} title="Gross P&L (price only)">
+                              {gross >= 0 ? '+' : ''}${gross.toFixed(2)}
+                            </td>
+                            <td className={td}>
+                              <span
+                                className={clsx(
+                                  'inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide',
+                                  exitBadge.className,
+                                )}
+                              >
+                                {exitBadge.label}
+                              </span>
+                            </td>
+                            <td className={clsx(td, 'text-[10px] text-text-tertiary')}>
+                              {new Date(trade.close_time).toLocaleString()}
+                            </td>
+                          </tr>
                         );
                       })}
                       {historyTrades.length === 0 && (
-                        <TR>
-                          <TD colSpan={11} className="!whitespace-normal">
-                            <EmptyState compact title="No trade history" />
-                          </TD>
-                        </TR>
+                        <tr>
+                          <td colSpan={13} className="px-4 py-12 text-center text-sm text-text-tertiary">
+                            No trade history
+                          </td>
+                        </tr>
                       )}
-                    </TBody>
-                  </Table>
+                    </tbody>
+                  </table>
                   </div>
                   </>
                 )}
@@ -1562,69 +1717,89 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
               loss: `Close ${lossPositions.length} losing position${lossPositions.length !== 1 ? 's' : ''} at market price.`,
             };
             const count = countMap[bulkConfirm];
+            const shell = clsx(
+              'relative w-full max-w-[280px] rounded-xl border p-3.5 shadow-2xl overflow-hidden pointer-events-auto',
+              'bg-card border-border-primary',
+            );
+            const titleCls = clsx('text-sm font-bold pr-2 text-text-primary');
+            const bodyCls = clsx('text-xs text-text-secondary');
             return (
               <div className="fixed inset-0 p-0" style={{ zIndex: 2147483646, isolation: 'isolate' }}>
                 <button
                   type="button"
                   tabIndex={-1}
                   aria-label="Dismiss"
-                  className="absolute inset-0 z-0 m-0 h-full w-full cursor-default border-0 bg-bg-overlay p-0"
+                  className="absolute inset-0 z-0 m-0 h-full w-full cursor-default border-0 bg-bg-base/70 p-0 backdrop-blur-sm"
                   onClick={() => setBulkConfirm(null)}
                 />
                 <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-4">
                   <div
                     role="dialog"
                     aria-modal="true"
-                    aria-labelledby="bulk-close-title"
-                    className="relative w-full max-w-[280px] rounded-sheet border border-border-primary bg-card p-3.5 shadow-lg overflow-hidden pointer-events-auto"
+                    className={shell}
                     onMouseDown={(e) => e.stopPropagation()}
                   >
                   <div className="flex items-start justify-between gap-2 mb-3">
-                    <h3 id="bulk-close-title" className="text-sm font-bold pr-2 text-text-primary">
+                    <h3 id="bulk-close-title" className={titleCls}>
                       {labelMap[bulkConfirm]}
                     </h3>
-                    <Button
-                      size="xs"
-                      iconOnly
-                      variant="ghost"
+                    <button
+                      type="button"
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
                         setBulkConfirm(null);
                       }}
+                      className={clsx(
+                        'shrink-0 w-7 h-7 flex items-center justify-center rounded-lg transition-colors',
+                        'bg-bg-hover text-text-tertiary hover:text-text-primary',
+                      )}
                       aria-label="Close"
                     >
-                      <X className="w-4 h-4" strokeWidth={2.5} aria-hidden />
-                    </Button>
+                      <X className="w-4 h-4" strokeWidth={2.5} />
+                    </button>
                   </div>
-                  <p className="text-xs text-text-secondary mb-2">{descMap[bulkConfirm]}</p>
+                  <p className={clsx(bodyCls, 'mb-2')}>{descMap[bulkConfirm]}</p>
                   {count === 0 ? (
                     <>
-                      <p className="text-xs mb-3 text-text-tertiary">
+                      <p className={clsx('text-[11px] mb-3 text-text-tertiary')}>
                         No matching positions found.
                       </p>
-                      <Button variant="secondary" size="sm" fullWidth onClick={() => setBulkConfirm(null)}>
+                      <button
+                        type="button"
+                        onClick={() => setBulkConfirm(null)}
+                        className={clsx(
+                          'w-full py-2.5 font-bold rounded-lg text-sm',
+                          'bg-bg-hover text-text-primary',
+                        )}
+                      >
                         OK
-                      </Button>
+                      </button>
                     </>
                   ) : (
                     <>
-                      <p className="text-xs mb-4 text-text-tertiary">
+                      <p className={clsx('text-[11px] mb-4 text-text-tertiary')}>
                         This action cannot be undone.
                       </p>
                       <div className="flex gap-2">
-                        <Button variant="secondary" size="sm" fullWidth onClick={() => setBulkConfirm(null)}>
+                        <button
+                          type="button"
+                          onClick={() => setBulkConfirm(null)}
+                          className={clsx(
+                            'flex-1 py-2.5 font-bold rounded-lg text-sm active:scale-[0.98] transition-all',
+                            'bg-bg-hover text-text-primary',
+                          )}
+                        >
                           Cancel
-                        </Button>
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          fullWidth
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => void executeBulkClose(bulkConfirm)}
                           disabled={bulkBusy}
+                          className="flex-1 py-2.5 bg-sell text-white font-bold rounded-lg shadow-lg shadow-sell/20 active:scale-[0.98] transition-all disabled:opacity-50 text-sm"
                         >
                           {bulkBusy ? 'Closing…' : 'Confirm'}
-                        </Button>
+                        </button>
                       </div>
                     </>
                   )}
@@ -1644,7 +1819,7 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
               type="button"
               tabIndex={-1}
               aria-label="Dismiss"
-              className="absolute inset-0 z-0 m-0 h-full w-full cursor-default border-0 bg-bg-overlay p-0"
+              className="absolute inset-0 z-0 m-0 h-full w-full cursor-default border-0 bg-bg-base/70 p-0 backdrop-blur-sm"
               onClick={() => { if (!closeSubmitting) setCloseModal(null); }}
             />
             <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-4">
@@ -1652,41 +1827,51 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="close-position-title"
-                className="pointer-events-auto relative w-full max-w-[420px] rounded-sheet border border-border-primary bg-card p-3.5 shadow-lg overflow-hidden"
+                className="pointer-events-auto relative w-full max-w-[420px] rounded-xl border border-border-primary p-3.5 shadow-2xl overflow-hidden"
+                style={{ background: 'var(--bg-card)' }}
                 onMouseDown={(e) => e.stopPropagation()}
               >
               <div className="flex items-start justify-between gap-2 mb-3">
                 <h3 id="close-position-title" className="text-sm font-bold text-text-primary">
                   Close Position
                 </h3>
-                <Button
-                  size="xs"
-                  iconOnly
-                  variant="ghost"
+                <button
+                  type="button"
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     setCloseModal(null);
                   }}
+                  className={clsx(
+                    'shrink-0 w-7 h-7 flex items-center justify-center rounded-lg transition-colors',
+                    'bg-bg-hover text-text-tertiary hover:text-text-primary',
+                  )}
                   aria-label="Close dialog"
                 >
-                  <X className="w-4 h-4" strokeWidth={2.5} aria-hidden />
-                </Button>
+                  <X className="w-4 h-4" strokeWidth={2.5} />
+                </button>
               </div>
 
               <div className="space-y-3">
-                <div className="rounded-lg p-3 space-y-1.5 border bg-bg-secondary border-border-primary">
-                  <div className="flex justify-between text-xs font-medium">
+                <div
+                  className={clsx(
+                    'rounded-lg p-3 space-y-1.5 border',
+                    'bg-bg-secondary border-border-primary',
+                  )}
+                >
+                  <div className="flex justify-between text-[11px] font-medium">
                     <span className="text-text-secondary">Symbol</span>
                     <span className="font-mono text-text-primary">{closeModal.symbol}</span>
                   </div>
-                  <div className="flex justify-between text-xs font-medium">
+                  <div className="flex justify-between text-[11px] font-medium">
                     <span className="text-text-secondary">Side</span>
-                    <SideBadge side={closeModal.side} />
+                    <span className={clsx('font-bold', closeModal.side === 'buy' ? 'text-buy' : 'text-sell')}>
+                      {closeModal.side.toUpperCase()}
+                    </span>
                   </div>
-                  <div className="flex justify-between text-xs font-medium">
+                  <div className="flex justify-between text-[11px] font-medium">
                     <span className="text-text-secondary">Open lots</span>
-                    <span className="font-mono text-text-primary tabular-nums">{closeModal.lots}</span>
+                    <span className="font-mono text-text-primary">{closeModal.lots}</span>
                   </div>
                   {(() => {
                     // Live P/L for the position being closed. Looked up by id
@@ -1694,68 +1879,106 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                     // positions list does — closing a trade should never show
                     // a stale number to the user about to commit.
                     const pos = positions.find((p) => p.id === closeModal.id);
-                    const pnl = pos?.profit ?? 0;
+                    const gross = pos?.profit ?? 0;
                     const charges = pos?.commission ?? 0;
-                    const net = pnl - charges + (pos?.swap ?? 0);
+                    const swap = pos?.swap ?? 0;
                     return (
-                      <div className="flex justify-between text-xs font-medium pt-1.5 mt-1.5 border-t border-border-secondary">
-                        <span className="text-text-secondary">P&amp;L</span>
-                        <span className={clsx('font-mono font-bold tabular-nums', pnlTone(net))}>
-                          {net >= 0 ? '+' : ''}${net.toFixed(2)}
-                        </span>
-                      </div>
+                      <>
+                        <div className="flex justify-between text-[11px] font-medium pt-1.5 mt-1.5 border-t border-border-primary/50">
+                          <span className="text-text-secondary">P&amp;L (gross)</span>
+                          <span
+                            className="font-mono font-bold tabular-nums"
+                            style={{ color: gross >= 0 ? '#2962FF' : '#FF2440' }}
+                          >
+                            {gross >= 0 ? '+' : ''}${gross.toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-[11px] font-medium">
+                          <span className="text-text-secondary">Commission</span>
+                          <span className="font-mono text-text-primary tabular-nums">-${Math.abs(charges).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-[11px] font-medium">
+                          <span className="text-text-secondary">Swap</span>
+                          <span className="font-mono text-text-primary tabular-nums">{swap >= 0 ? '+' : '-'}${Math.abs(swap).toFixed(2)}</span>
+                        </div>
+                      </>
                     );
                   })()}
                 </div>
 
                 <div>
-                  <label htmlFor="close-position-lots" className="text-xxs font-bold uppercase tracking-[0.12em] block mb-1.5 text-text-tertiary">
+                  <label
+                    className={clsx(
+                      'text-[9px] font-bold uppercase tracking-wider block mb-1.5',
+                      'text-text-tertiary',
+                    )}
+                  >
                     Lots to close
                   </label>
-                  {/* Per-percentage chips. We always let the user click any
-                      chip and always show the corresponding partial P&L —
-                      even for a 0.01-lot trade where the broker can't
-                      physically split the lot, the trader can still see
-                      what 25%/50%/75% of the current P&L *would* be. If the
-                      lot snap forces a full close we surface that as a note
-                      below the input so the trader knows what'll actually
-                      happen when they hit Close. */}
-                  <Segmented
-                    fullWidth
-                    size="xs"
-                    aria-label="Lots to close"
-                    className="mb-2"
-                    value={closeModal.selectedPct != null ? String(closeModal.selectedPct) : ''}
-                    onChange={(v) => {
-                      if (v === '100') {
-                        setCloseModal((m) =>
-                          m ? { ...m, closeLots: formatLotsInput(m.lots), selectedPct: 100 } : m,
-                        );
-                        return;
-                      }
-                      const pct = Number(v) as 25 | 50 | 75;
-                      const snapped = snapLotsForCloseFraction(closeModal.lots, closeModal.symbol, instruments, pct / 100);
-                      setCloseModal((m) =>
-                        m ? { ...m, closeLots: formatLotsInput(snapped), selectedPct: pct } : m,
-                      );
-                    }}
-                    options={[
-                      { value: '25', label: '25%' },
-                      { value: '50', label: '50%' },
-                      { value: '75', label: '75%' },
-                      { value: '100', label: 'Full' },
-                    ]}
-                  />
-                  <Input
-                    id="close-position-lots"
+                  {(() => {
+                    // Per-percentage chips. We always let the user click any
+                    // chip and always show the corresponding partial P&L —
+                    // even for a 0.01-lot trade where the broker can't
+                    // physically split the lot, the trader can still see
+                    // what 25%/50%/75% of the current P&L *would* be. If the
+                    // lot snap forces a full close we surface that as a note
+                    // below the input so the trader knows what'll actually
+                    // happen when they hit Close.
+                    return (
+                      <div className="flex flex-wrap gap-1.5 mb-2">
+                        {([25, 50, 75] as const).map((pct) => {
+                          const v = snapLotsForCloseFraction(closeModal.lots, closeModal.symbol, instruments, pct / 100);
+                          const active = closeModal.selectedPct === pct;
+                          return (
+                            <button
+                              key={pct}
+                              type="button"
+                              onClick={() => {
+                                setCloseModal((m) =>
+                                  m ? { ...m, closeLots: formatLotsInput(v), selectedPct: pct } : m,
+                                );
+                              }}
+                              className={clsx(
+                                'cursor-pointer px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border transition-colors',
+                                active
+                                  ? 'bg-accent/10 border-accent/40 text-accent'
+                                  : 'bg-bg-secondary border-border-primary text-text-primary hover:bg-bg-hover',
+                              )}
+                            >
+                              {pct}%
+                            </button>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCloseModal((m) =>
+                              m ? { ...m, closeLots: formatLotsInput(m.lots), selectedPct: 100 } : m,
+                            );
+                          }}
+                          className={clsx(
+                            'cursor-pointer px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border transition-colors',
+                            closeModal.selectedPct === 100
+                              ? 'bg-accent/15 border-accent/50 text-accent'
+                              : 'bg-accent/5 border-accent/20 text-accent hover:bg-accent/10',
+                          )}
+                        >
+                          Full
+                        </button>
+                      </div>
+                    );
+                  })()}
+                  <input
                     type="number"
-                    size="md"
-                    numeric
                     step="0.01"
                     min="0.01"
                     max={closeModal.lots}
                     value={closeModal.closeLots}
                     onChange={(e) => setCloseModal({ ...closeModal, closeLots: e.target.value, selectedPct: null })}
+                    className={clsx(
+                      'w-full px-3 py-2 rounded-lg font-mono text-sm outline-none transition-all border',
+                      'bg-bg-secondary border-border-primary text-text-primary focus:border-sell',
+                    )}
                   />
                   {(() => {
                     // Estimated P&L for the chosen close size. When a chip is
@@ -1775,9 +1998,9 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                     } else {
                       return null;
                     }
-                    const partPnl = (pos.profit ?? 0) * frac;
+                    const partGross = (pos.profit ?? 0) * frac;
                     const partCharges = (pos.commission ?? 0) * frac;
-                    const net = partPnl - partCharges + (pos.swap ?? 0) * frac;
+                    const partSwap = (pos.swap ?? 0) * frac;
                     const pct = Math.round(frac * 100);
                     // Will the broker actually close less than the full lot?
                     const willClose = Number.isFinite(closeLotsNum) && closeLotsNum > 0
@@ -1786,16 +2009,27 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                     const forcedFull = pct < 100 && willClose >= closeModal.lots - 1e-9;
                     return (
                       <>
-                        <div className="mt-2 flex items-center justify-between px-3 py-2 rounded-md bg-bg-secondary border border-border-primary">
-                          <span className="text-xxs font-semibold uppercase tracking-[0.12em] text-text-tertiary">
-                            Est. P&amp;L {pct < 100 ? `(${pct}%)` : ''}
+                        <div className="mt-2 flex items-center justify-between px-3 py-2 rounded-lg bg-bg-secondary border border-border-primary">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
+                            Est. P&amp;L (gross) {pct < 100 ? `(${pct}%)` : ''}
                           </span>
-                          <span className={clsx('font-mono text-sm font-bold tabular-nums', pnlTone(net))}>
-                            {net >= 0 ? '+' : ''}${net.toFixed(2)}
+                          <span
+                            className="font-mono text-sm font-bold tabular-nums"
+                            style={{ color: partGross >= 0 ? '#2962FF' : '#FF2440' }}
+                          >
+                            {partGross >= 0 ? '+' : ''}${partGross.toFixed(2)}
                           </span>
                         </div>
+                        <div className="mt-1 flex items-center justify-between px-3 text-[10px] text-text-tertiary">
+                          <span>Commission {pct < 100 ? `(${pct}%)` : ''}</span>
+                          <span className="font-mono tabular-nums">-${Math.abs(partCharges).toFixed(2)}</span>
+                        </div>
+                        <div className="mt-0.5 flex items-center justify-between px-3 text-[10px] text-text-tertiary">
+                          <span>Swap {pct < 100 ? `(${pct}%)` : ''}</span>
+                          <span className="font-mono tabular-nums">{partSwap >= 0 ? '+' : '-'}${Math.abs(partSwap).toFixed(2)}</span>
+                        </div>
                         {forcedFull && (
-                          <p className="mt-1.5 text-xxs text-text-tertiary leading-tight">
+                          <p className="mt-1.5 text-[10px] text-text-tertiary leading-tight">
                             Lot size too small to partial-close — Close will exit the full position.
                           </p>
                         )}
@@ -1805,14 +2039,19 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                 </div>
 
                 <div className="flex gap-2">
-                  <Button variant="secondary" size="sm" fullWidth onClick={() => setCloseModal(null)}>
+                  <button
+                    type="button"
+                    onClick={() => setCloseModal(null)}
+                    className={clsx(
+                      'flex-1 py-2.5 font-bold rounded-lg text-sm active:scale-[0.98] transition-all',
+                      'bg-bg-hover text-text-primary',
+                    )}
+                  >
                     Cancel
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    fullWidth
-                    loading={closeSubmitting}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={closeSubmitting}
                     onClick={() => {
                       const cl = parseFloat(closeModal.closeLots);
                       if (Number.isNaN(cl) || cl <= 0) {
@@ -1825,17 +2064,26 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                       }
                       closePosition(closeModal.id, cl < closeModal.lots - 1e-9 ? cl : undefined);
                     }}
+                    className="flex-1 py-2.5 bg-sell text-white font-bold rounded-lg shadow-lg shadow-sell/20 active:scale-[0.98] transition-all text-sm flex items-center justify-center gap-2 disabled:opacity-70 disabled:pointer-events-none"
                   >
-                    {closeSubmitting ? 'Closing…' : 'Close'}
-                  </Button>
+                    {closeSubmitting ? (
+                      <>
+                        <span className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                        Closing…
+                      </>
+                    ) : 'Close'}
+                  </button>
                 </div>
 
-                <div className="pt-3 mt-1 border-t border-border-primary">
-                  <p className="text-xxs font-semibold uppercase tracking-[0.12em] text-center mb-2 text-text-tertiary">
+                <div className={clsx('pt-3 mt-1 border-t border-border-primary')}>
+                  <p
+                    className={clsx(
+                      'text-[9px] font-semibold uppercase tracking-wider text-center mb-2',
+                      'text-text-tertiary',
+                    )}
+                  >
                     Bulk close
                   </p>
-                  {/* Stacked icon / label / count tiles — no primitive has
-                      this layout, so they stay raw buttons on token utilities. */}
                   <div className="grid grid-cols-3 gap-1.5">
                     <button
                       type="button"
@@ -1844,11 +2092,14 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                         setBulkConfirm('all');
                       }}
                       disabled={bulkBusy || positions.length === 0}
-                      className="flex flex-col items-center gap-0.5 py-2 px-0.5 rounded-md border transition-colors active:translate-y-px disabled:opacity-40 disabled:pointer-events-none bg-bg-secondary border-border-primary hover:bg-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+                      className={clsx(
+                        'flex flex-col items-center gap-0.5 py-2 px-0.5 rounded-lg border active:scale-[0.98] transition-all disabled:opacity-40',
+                        'bg-bg-secondary border-border-primary hover:bg-bg-hover',
+                      )}
                     >
-                      <Layers className="w-3.5 h-3.5 text-text-secondary" aria-hidden />
-                      <span className="text-xxs font-bold text-text-primary">All</span>
-                      <span className="text-xxs tabular-nums text-text-tertiary">
+                      <Layers className="w-3.5 h-3.5 text-text-secondary" />
+                      <span className="text-[9px] font-bold text-text-primary">All</span>
+                      <span className="text-[9px] tabular-nums text-text-tertiary">
                         ({positions.length})
                       </span>
                     </button>
@@ -1859,13 +2110,16 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                         setBulkConfirm('profit');
                       }}
                       disabled={bulkBusy || profitPositions.length === 0}
-                      className="flex flex-col items-center gap-0.5 py-2 px-0.5 rounded-md border transition-colors active:translate-y-px disabled:opacity-40 disabled:pointer-events-none bg-success/5 border-success/20 hover:bg-success/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+                      className={clsx(
+                        'flex flex-col items-center gap-0.5 py-2 px-0.5 rounded-lg border active:scale-[0.98] transition-all disabled:opacity-40',
+                        'bg-accent/5 border-accent/20 hover:bg-accent/10',
+                      )}
                     >
-                      <TrendingUp className="w-3.5 h-3.5 text-success" aria-hidden />
-                      <span className="text-xxs font-bold text-success">
+                      <TrendingUp className="w-3.5 h-3.5 text-accent" />
+                      <span className="text-[9px] font-bold text-accent">
                         Profit
                       </span>
-                      <span className="text-xxs tabular-nums text-text-tertiary">
+                      <span className="text-[9px] tabular-nums text-text-tertiary">
                         ({profitPositions.length})
                       </span>
                     </button>
@@ -1876,13 +2130,16 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                         setBulkConfirm('loss');
                       }}
                       disabled={bulkBusy || lossPositions.length === 0}
-                      className="flex flex-col items-center gap-0.5 py-2 px-0.5 rounded-md border transition-colors active:translate-y-px disabled:opacity-40 disabled:pointer-events-none bg-danger/5 border-danger/20 hover:bg-danger/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+                      className={clsx(
+                        'flex flex-col items-center gap-0.5 py-2 px-0.5 rounded-lg border active:scale-[0.98] transition-all disabled:opacity-40',
+                        'bg-sell/5 border-sell/20 hover:bg-sell/10',
+                      )}
                     >
-                      <TrendingDown className="w-3.5 h-3.5 text-danger" aria-hidden />
-                      <span className="text-xxs font-bold text-danger">
+                      <TrendingDown className="w-3.5 h-3.5 text-sell" />
+                      <span className="text-[9px] font-bold text-sell">
                         Loss
                       </span>
-                      <span className="text-xxs tabular-nums text-text-tertiary">
+                      <span className="text-[9px] tabular-nums text-text-tertiary">
                         ({lossPositions.length})
                       </span>
                     </button>
@@ -1901,6 +2158,18 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
           onClose={() => setSharePosition(null)}
           position={sharePosition}
           leverage={Number(activeAccount?.leverage) || 100}
+          accountId={activeAccountId ?? null}
+        />
+      )}
+
+      {shareScope && (
+        <ShareTradeModal
+          open={!!shareScope}
+          onClose={() => setShareScope(null)}
+          position={null}
+          leverage={Number(activeAccount?.leverage) || 100}
+          accountId={activeAccountId ?? null}
+          initialScope={shareScope}
         />
       )}
     </div>

@@ -3,13 +3,11 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { clsx } from 'clsx';
-import { Search, Star, Newspaper, BarChart3 } from 'lucide-react';
+import { ChevronDown, Search, Star, Newspaper, BarChart3 } from 'lucide-react';
 import { useTradingStore, type InstrumentInfo } from '@/stores/tradingStore';
 import { tradingTerminalUrl } from '@/lib/tradingNav';
-import { Button, EmptyState, Input, Segmented, Select } from '@/components/ui';
 import SymbolIcon from './SymbolIcon';
-import { getMarketStatus } from '@/lib/marketHours';
-import { quoteFreshness } from '@/lib/quoteStatus';
+import AnimatedPrice from '@/components/ui/AnimatedPrice';
 
 type Trend = 'up' | 'down' | 'neutral';
 type Segment = 'All' | 'Forex' | 'Crypto' | 'Indices' | 'Commodities' | 'Metals' | 'Stocks';
@@ -83,11 +81,6 @@ function spreadInPips(
   return Math.max(0, Math.round(((ask - bid) / pip) * 10) / 10);
 }
 
-/** Tick flash class: the price cell blinks green on an up-tick, red on a down-tick. */
-function flashClass(trend: Trend | undefined): string | false {
-  return trend === 'up' ? 'flash-up' : trend === 'down' ? 'flash-down' : false;
-}
-
 export type InstrumentsTableProps = {
   onExitMarkets?: () => void;
   onViewNews?: () => void;
@@ -108,10 +101,12 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
   const [view, setView] = useState<View>('instruments');
   const [search, setSearch] = useState('');
   const [segment, setSegment] = useState<Segment>('All');
+  const [segOpen, setSegOpen] = useState(false);
   const [starred, setStarred] = useState<Set<string>>(new Set());
   const [starredOnly, setStarredOnly] = useState(false);
   const [bidFlash, setBidFlash] = useState<Record<string, Trend>>({});
   const [askFlash, setAskFlash] = useState<Record<string, Trend>>({});
+  const segRef = useRef<HTMLDivElement>(null);
 
   const dayLowRef = useRef<Record<string, number>>({});
   const dayHighRef = useRef<Record<string, number>>({});
@@ -167,6 +162,15 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
     return () => clearTimeout(timer);
   }, [prices, watchlist]);
 
+  // Close segment dropdown on outside click
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (segRef.current && !segRef.current.contains(e.target as Node)) setSegOpen(false);
+    };
+    if (segOpen) document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [segOpen]);
+
   const rows = useMemo(() => {
     /* When the user is searching, broaden the source to every priced
        instrument so terms like 'silver'/'gold'/'bitcoin' can find symbols
@@ -202,7 +206,7 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
     if (acc) router.push(tradingTerminalUrl(acc, { view: 'chart' }));
   };
 
-  const toggleStar = (symbol: string, e: React.MouseEvent | React.KeyboardEvent) => {
+  const toggleStar = (symbol: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setStarred((p) => {
       const next = new Set(p);
@@ -214,67 +218,131 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
 
   return (
     <div className="h-full min-h-0 flex flex-col bg-bg-base text-text-primary">
-      {/* Top toolbar — view toggle + search + segment select + star */}
+      {/* Top toolbar — view toggle + search + segment dropdown + star */}
       <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-border-primary bg-bg-secondary">
         {/* View toggle: Instruments / News */}
-        <Segmented
-          size="xs"
-          aria-label="Markets view"
-          value={view}
-          onChange={(v) => {
-            setView(v);
-            if (v === 'news' && onViewNews) onViewNews();
-          }}
-          options={[
-            { value: 'instruments', icon: <BarChart3 aria-hidden />, label: <span className="sr-only">Instruments</span> },
-            { value: 'news', icon: <Newspaper aria-hidden />, label: <span className="sr-only">News</span> },
-          ]}
-        />
+        <div className="flex items-center gap-1 shrink-0 rounded-lg border border-border-primary bg-bg-secondary p-0.5">
+          <button
+            type="button"
+            onClick={() => setView('instruments')}
+            className={clsx(
+              'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold uppercase tracking-wide transition-colors',
+              view === 'instruments'
+                ? 'bg-accent/15 text-accent'
+                : 'text-text-tertiary hover:text-text-primary',
+            )}
+            aria-label="Instruments"
+          >
+            <BarChart3 className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setView('news');
+              if (onViewNews) onViewNews();
+            }}
+            className={clsx(
+              'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold uppercase tracking-wide transition-colors',
+              view === 'news' ? 'bg-accent/15 text-accent' : 'text-text-tertiary hover:text-text-primary',
+            )}
+            aria-label="News"
+          >
+            <Newspaper className="w-3.5 h-3.5" />
+          </button>
+        </div>
 
         {/* Search */}
-        <div className="flex-1 min-w-0">
-          <Input
+        <div className="relative flex-1 min-w-0">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-tertiary" />
+          <input
             type="text"
-            size="sm"
-            icon={<Search aria-hidden />}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search..."
-            aria-label="Search instruments"
+            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-border-primary bg-bg-secondary text-text-primary placeholder:text-text-tertiary outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20"
           />
         </div>
 
-        {/* Segment select */}
-        <div className="shrink-0 w-[120px]">
-          <Select size="sm" value={segment} onChange={(e) => setSegment(e.target.value as Segment)} aria-label="Segment">
-            {SEGMENTS.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </Select>
+        {/* Segment dropdown */}
+        <div className="relative shrink-0" ref={segRef}>
+          <button
+            type="button"
+            onClick={() => setSegOpen((p) => !p)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-border-primary bg-bg-secondary text-text-primary hover:border-border-secondary transition-colors min-w-[110px] justify-between"
+          >
+            <span>{segment}</span>
+            <ChevronDown
+              className={clsx('w-3.5 h-3.5 text-text-tertiary transition-transform', segOpen && 'rotate-180')}
+            />
+          </button>
+          {segOpen && (
+            <div className="absolute right-0 top-full mt-1 w-[140px] rounded-lg border border-border-primary bg-card shadow-2xl z-50 py-1">
+              {SEGMENTS.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => {
+                    setSegment(s);
+                    setSegOpen(false);
+                  }}
+                  className={clsx(
+                    'w-full text-left px-3 py-1.5 text-xs transition-colors',
+                    s === segment
+                      ? 'bg-accent/10 text-accent font-bold'
+                      : 'text-text-secondary hover:bg-bg-hover',
+                  )}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Starred filter toggle */}
-        <Button
-          size="sm"
-          iconOnly
-          variant={starredOnly ? 'primary' : 'outline'}
+        <button
+          type="button"
           onClick={() => setStarredOnly((p) => !p)}
+          className={clsx(
+            'shrink-0 p-1.5 rounded-lg border transition-colors',
+            starredOnly
+              ? 'bg-accent/10 border-accent/40 text-accent'
+              : 'bg-bg-secondary border-border-primary text-text-tertiary hover:text-text-primary',
+          )}
           aria-label="Show starred only"
-          aria-pressed={starredOnly}
         >
-          <Star className="w-3.5 h-3.5" fill={starredOnly ? 'currentColor' : 'none'} aria-hidden />
-        </Button>
+          <Star className="w-3.5 h-3.5" fill={starredOnly ? 'currentColor' : 'none'} />
+        </button>
       </div>
 
-      {/* Quote cards — one card per instrument: identity on the left, a
-          day-range meter in the middle (where the price sits between the
-          session low and high), and SELL/BUY price pills on the right.
-          No spreadsheet columns — this list is deliberately not another
-          MT-style table. */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="p-2 flex flex-col gap-1.5">
+      {/* Header + rows share a horizontal scroll container so the columns
+          keep their width and scroll together on narrow/tablet viewports
+          instead of being clipped. */}
+      <div className="flex-1 min-h-0 overflow-auto">
+      {/* w-max min-w-full: the table is at least as wide as the panel (so the
+          header background + rows span fully to the right edge — no white gap)
+          and grows wider than it when the columns need more room (horizontal
+          scroll). */}
+      <div className="w-max min-w-full">
+      {/* Table header — sticky so it stays put on vertical scroll and moves
+          together with the columns on horizontal scroll. */}
+      <div className="sticky top-0 z-10 grid grid-cols-[minmax(160px,1.6fr)_minmax(80px,1fr)_minmax(80px,1fr)_70px_80px_minmax(90px,1fr)_minmax(90px,1fr)_minmax(140px,1.4fr)] gap-3 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-text-tertiary border-b border-border-primary bg-bg-secondary">
+        <div>Instruments</div>
+        <div className="text-right">Bid</div>
+        <div className="text-right">Ask</div>
+        <div className="text-right">Spread</div>
+        <div className="text-right">Leverage</div>
+        <div className="text-right">Day High</div>
+        <div className="text-right">Day Low</div>
+        <div>Description</div>
+      </div>
+
+      {/* Table rows — scroll (both axes) is handled by the shared parent. */}
+      <div>
         {rows.length === 0 ? (
-          <EmptyState compact icon={<Search />} title="No instruments match" />
+          <div className="flex items-center justify-center py-10 text-xs text-text-tertiary">
+            No instruments match
+          </div>
         ) : (
           rows.map((symbol) => {
             const tick = prices[symbol];
@@ -285,92 +353,97 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
             const dayHigh = dayHighRef.current[symbol];
             const dayLow = dayLowRef.current[symbol];
             const spread = tick ? spreadInPips(symbol, tick.bid, tick.ask, instruments) : null;
-            const desc = SYMBOL_DESC[symbol] || segmentOf(symbol, instruments);
+            const desc = SYMBOL_DESC[symbol] || '';
             const isStarred = starred.has(symbol);
-            const range = dayHigh != null && dayLow != null ? dayHigh - dayLow : 0;
-            const pos = tick && range > 0
-              ? Math.min(96, Math.max(4, ((tick.bid - (dayLow as number)) / range) * 100))
-              : 50;
-            // Market open but no live tick → feed down; grey the pills and say so.
-            const instSeg = (instruments.find((i) => i.symbol === symbol) as { segment?: string } | undefined)?.segment;
-            const stale = quoteFreshness(tick, getMarketStatus(symbol, instSeg).isOpen) === 'stale';
 
             return (
-              <div
+              <button
                 key={symbol}
-                role="button"
-                tabIndex={0}
+                type="button"
                 onClick={() => handleRowClick(symbol)}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleRowClick(symbol); } }}
                 className={clsx(
-                  'grid grid-cols-[minmax(140px,1.1fr)_minmax(110px,1fr)_auto] items-center gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors',
+                  'w-full grid grid-cols-[minmax(160px,1.6fr)_minmax(80px,1fr)_minmax(80px,1fr)_70px_80px_minmax(90px,1fr)_minmax(90px,1fr)_minmax(140px,1.4fr)] gap-3 px-3 py-1.5 text-left border-b border-border-secondary transition-colors items-center',
                   sel
-                    ? 'border-accent/50 bg-accent/10'
-                    : 'border-border-primary bg-card hover:border-border-strong hover:bg-bg-hover',
+                    ? 'bg-accent/[0.06] border-l-[3px] border-l-accent pl-[9px]'
+                    : 'border-l-[3px] border-l-transparent hover:bg-bg-hover',
                 )}
               >
-                {/* identity */}
-                <div className="flex items-center gap-2.5 min-w-0">
+                {/* Instruments — star + dot + symbol + flag */}
+                <div className="flex items-center gap-2 min-w-0">
                   <span
                     role="button"
                     tabIndex={0}
                     onClick={(e) => toggleStar(symbol, e)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleStar(symbol, e); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleStar(symbol, e as any); }}
                     className={clsx(
                       'shrink-0 transition-colors cursor-pointer',
-                      isStarred ? 'text-warning' : 'text-text-tertiary/50 hover:text-text-tertiary',
+                      isStarred ? 'text-accent' : 'text-text-tertiary/50 hover:text-text-tertiary',
                     )}
                     aria-label="Star"
-                    aria-pressed={isStarred}
                   >
-                    <Star className="w-3 h-3" fill={isStarred ? 'currentColor' : 'none'} aria-hidden />
+                    <Star className="w-3 h-3" fill={isStarred ? 'currentColor' : 'none'} />
                   </span>
-                  <SymbolIcon symbol={symbol} size={22} />
-                  <div className="min-w-0">
-                    <div className="text-base font-bold text-text-primary font-mono leading-tight truncate">{symbol}</div>
-                    <div className="text-xxs text-text-tertiary leading-tight truncate">{desc}</div>
-                  </div>
+                  <span
+                    className={clsx(
+                      'w-2.5 shrink-0 text-[10px] leading-none',
+                      bFlash === 'up' ? 'text-buy' : bFlash === 'down' ? 'text-sell' : 'text-text-tertiary',
+                    )}
+                    aria-hidden
+                  >
+                    {bFlash === 'up' ? '\u25B2' : bFlash === 'down' ? '\u25BC' : '\u2022'}
+                  </span>
+                  <SymbolIcon symbol={symbol} size={16} />
+                  <span className="text-[13px] font-semibold text-text-primary font-mono truncate">{symbol}</span>
                 </div>
 
-                {/* day-range meter */}
-                <div className="hidden md:block min-w-0 px-1">
-                  <div className="flex justify-between text-xxs font-mono text-text-tertiary mb-1 tabular-nums">
-                    <span>L {dayLow != null ? dayLow.toFixed(digits) : '—'}</span>
-                    <span>H {dayHigh != null ? dayHigh.toFixed(digits) : '—'}</span>
-                  </div>
-                  <div className="relative h-1 rounded-full bg-bg-active">
-                    <span
-                      className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-accent"
-                      style={{ left: `${pos}%` }}
-                    />
-                  </div>
-                  <div className="mt-1 text-center text-xxs font-mono text-text-tertiary tabular-nums">
-                    spread {spread != null ? spread.toFixed(1) : '—'} · 1:{leverage}
-                  </div>
+                {/* Bid */}
+                <div
+                  className={clsx(
+                    'text-right text-[13px] font-mono font-semibold tabular-nums tracking-tight',
+                    bFlash === 'up' ? 'text-buy' : bFlash === 'down' ? 'text-sell' : 'text-text-primary',
+                  )}
+                >
+                  <AnimatedPrice value={tick?.bid} digits={digits} />
                 </div>
 
-                {/* sell / buy pills — the pill flashes green/red on a tick
-                    (flash-up / flash-down) and the price text takes the
-                    tick direction colour for the same 400ms. */}
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <span className={clsx('rounded-md border px-2.5 py-1 text-right min-w-[84px]', stale ? 'border-border-primary bg-bg-tertiary' : 'border-sell/25 bg-sell/10', flashClass(bFlash))}>
-                    <span className={clsx('block text-xxs font-bold tracking-[0.14em]', stale ? 'text-warning' : 'text-sell/80')}>{stale ? 'STALE' : 'SELL'}</span>
-                    <span className={clsx('block text-sm font-mono font-bold tabular-nums', stale ? 'text-text-tertiary' : bFlash === 'up' ? 'text-buy' : 'text-sell')}>
-                      {tick ? tick.bid.toFixed(digits) : '—'}
-                    </span>
-                  </span>
-                  <span className={clsx('rounded-md border px-2.5 py-1 text-right min-w-[84px]', stale ? 'border-border-primary bg-bg-tertiary' : 'border-buy/25 bg-buy/10', flashClass(aFlash))}>
-                    <span className={clsx('block text-xxs font-bold tracking-[0.14em]', stale ? 'text-warning' : 'text-buy/80')}>{stale ? 'STALE' : 'BUY'}</span>
-                    <span className={clsx('block text-sm font-mono font-bold tabular-nums', stale ? 'text-text-tertiary' : aFlash === 'down' ? 'text-sell' : 'text-buy')}>
-                      {tick ? tick.ask.toFixed(digits) : '—'}
-                    </span>
-                  </span>
+                {/* Ask */}
+                <div
+                  className={clsx(
+                    'text-right text-[13px] font-mono font-semibold tabular-nums tracking-tight',
+                    aFlash === 'up' ? 'text-buy' : aFlash === 'down' ? 'text-sell' : 'text-text-primary',
+                  )}
+                >
+                  <AnimatedPrice value={tick?.ask} digits={digits} />
                 </div>
-              </div>
+
+                {/* Spread */}
+                <div className="text-right text-[12px] font-mono text-text-secondary tabular-nums">
+                  {spread != null ? spread.toFixed(1) : '—'}
+                </div>
+
+                {/* Leverage */}
+                <div className="text-right text-[12px] font-mono text-text-secondary tabular-nums">
+                  {leverage}
+                </div>
+
+                {/* Day High */}
+                <div className="text-right text-[12px] font-mono text-text-secondary tabular-nums">
+                  {dayHigh != null ? dayHigh.toFixed(digits) : '—'}
+                </div>
+
+                {/* Day Low */}
+                <div className="text-right text-[12px] font-mono text-text-secondary tabular-nums">
+                  {dayLow != null ? dayLow.toFixed(digits) : '—'}
+                </div>
+
+                {/* Description */}
+                <div className="text-[12px] text-text-secondary truncate">{desc}</div>
+              </button>
             );
           })
         )}
-        </div>
+      </div>
+      </div>
       </div>
     </div>
   );

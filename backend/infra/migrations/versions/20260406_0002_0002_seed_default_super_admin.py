@@ -20,8 +20,8 @@ depends_on = None
 # the app with them set, and the migration also refuses to seed them.
 _KNOWN_WEAK_PASSWORDS = {
     "",
-    "PowerTradeFXAdmin2026!",  # current .env.example default
-    "PowerTradeFXAdmin2025!",  # earlier PowerTradeFX-era default
+    "SwissCrestaAdmin2026!",  # current .env.example default
+    "SwissCrestaAdmin2025!",  # earlier SwissCresta-era default
     "NovaFxAdmin2026!",       # NovaFX-era default
     "NovaFXAdmin2025!",       # earlier NovaFX-era default
     "FXArthaAdmin2025!",      # pre-rebrand default

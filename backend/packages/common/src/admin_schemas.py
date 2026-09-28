@@ -9,12 +9,6 @@ from pydantic import BaseModel, EmailStr, Field
 class AdminLoginRequest(BaseModel):
     email: str
     password: str
-    # Second factor for accounts with two_factor_enabled: either the
-    # 6-digit authenticator TOTP or a one-time backup code (XXXXX-XXXXX).
-    # Spaces / dashes are tolerated and stripped server-side. Omitted on
-    # the first request; the server answers 403 {"code": "mfa_required"}
-    # once the password is right, and the client re-posts with this set.
-    totp_code: Optional[str] = None
 
 
 class AdminLoginResponse(BaseModel):
@@ -27,10 +21,7 @@ class AdminLoginResponse(BaseModel):
 
 
 class AdminRefreshRequest(BaseModel):
-    # Optional: the cookie-only SPA sends no body and the server reads
-    # the fx_admin cookie instead. Legacy script clients may still post
-    # the token explicitly.
-    access_token: Optional[str] = None
+    access_token: str
 
 
 class DashboardStats(BaseModel):
@@ -64,6 +55,17 @@ class UserOut(BaseModel):
     date_of_birth: Optional[date] = None
     country: Optional[str] = None
     address: Optional[str] = None
+    # The users table has carried these since the profile form was built, but
+    # they were never put on the admin payload, so support saw a street line
+    # with no city, state or postcode next to it.
+    city: Optional[str] = None
+    state: Optional[str] = None
+    postal_code: Optional[str] = None
+    # KYC identifiers. Aadhaar is exposed ONLY as the masked form
+    # ("XXXX XXXX 1234") — the full number is not stored, so there is nothing
+    # else to expose. PAN is a tax identifier and is shown in full.
+    pan_number: Optional[str] = None
+    aadhaar_masked: Optional[str] = None
     role: str
     status: str
     kyc_status: str
@@ -178,6 +180,9 @@ class PositionOut(BaseModel):
     is_admin_modified: bool = False
     created_at: Optional[datetime] = None
     user_email: Optional[str] = None
+    # Owner id — lets the trades view flip the owner's book type (routing is
+    # per-user, not per-position) without a second lookup.
+    user_id: Optional[str] = None
     account_number: Optional[str] = None
     book_type: Optional[str] = None       # 'A' (forwarded to LP) or 'B'
     is_demo: bool = False
@@ -188,6 +193,17 @@ class PositionOut(BaseModel):
     # per-symbol hardcoded fallback that produced 100× mismatches on
     # silver (XAGUSD: hardcoded 50 vs DB 5000).
     contract_size: Optional[float] = None
+    # Instrument pip_size + digits. Surfaced so the admin trades page shows
+    # the spread in POINTS and the price at the right precision using the SAME
+    # convention as the trader terminal, instead of a hardcoded ×100000 /
+    # toFixed(5) that inflated gold's spread 1000× (XAUUSD: 150 pts shown as
+    # 150000) and over-padded its price.
+    pip_size: Optional[float] = None
+    digits: Optional[int] = None
+    # Temporary per-trade spread override (NULL = none). Surfaced so the admin
+    # Edit modal shows the current override and the trader UI could badge it.
+    spread_override: Optional[float] = None
+    spread_override_type: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -235,6 +251,10 @@ class TradeHistoryOut(BaseModel):
     commission: float = 0
     profit: float
     close_reason: Optional[str] = "manual"
+    # True when the position was opened by an AI strategy instance
+    # (ai_strategy_trades link table). Without it the admin history view
+    # had no way to tell a strategy's trade from a hand-placed one.
+    is_ai: bool = False
     opened_at: Optional[datetime] = None
     closed_at: Optional[datetime] = None
     user_email: Optional[str] = None
@@ -258,6 +278,29 @@ class ModifyPositionRequest(BaseModel):
     # P&L is computed from side + current price each time.
     side: Optional[str] = None  # "buy" or "sell"
     open_time: Optional[datetime] = None
+    # Temporary per-trade spread override. Present + a number sets it (applies to
+    # THIS running trade's live quote + close while open); present + null clears
+    # it (revert to config spread). Omitted = leave unchanged.
+    spread_override: Optional[float] = None
+    spread_override_type: Optional[str] = None  # "pips" (default) | "percentage"
+    reason: Optional[str] = None
+
+
+class ModifyHistoryRequest(BaseModel):
+    """Edit a CLOSED trade (TradeHistory row).
+
+    Any P&L change is applied to the account balance as a delta, mirroring how
+    the original close credited it — no wallet Transaction row, exactly like a
+    normal close, so the edit is invisible in the trader's transaction list.
+    """
+    open_price: Optional[float] = None
+    close_price: Optional[float] = None
+    lots: Optional[float] = None
+    commission: Optional[float] = None
+    swap: Optional[float] = None
+    side: Optional[str] = None  # "buy" or "sell"
+    opened_at: Optional[datetime] = None
+    closed_at: Optional[datetime] = None
     reason: Optional[str] = None
 
 

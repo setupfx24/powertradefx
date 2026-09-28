@@ -5,7 +5,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -23,9 +23,14 @@ from packages.common.src.models import (
     User,
 )
 from packages.common.src.schemas import AccountSummary, MessageResponse, OpenLiveAccountRequest
+from packages.common.src.row_locks import lock_user
 from packages.common.src.redis_client import redis_client, PriceChannel
 from packages.common.src.price_cache import price_cache
 from packages.common.src.trading_service import calc_position_pnl, cross_rate_for
+
+# Practice accounts a user may open themselves (admin can provision more).
+MAX_SELF_SERVICE_DEMO_ACCOUNTS = 5
+
 
 
 # ─── Per-user leverage cap (Trading_Mechanism.docx risk control) ──────
@@ -116,8 +121,10 @@ async def open_live_account(
 ) -> dict:
     from .auth_service import generate_account_number
 
-    u = await db.execute(select(User).where(User.id == user_id))
-    user = u.scalar_one_or_none()
+    # C-TRADE-4 / H-TRADE-1: lock the user row (canonical: user before account)
+    # so funding a new account can't race a concurrent transfer/withdrawal that
+    # also spends main_wallet_balance.
+    user = await lock_user(db, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     # Demo users are locked to demo accounts. Real users can also open
@@ -147,82 +154,59 @@ async def open_live_account(
 
     new_balance = Decimal("0")
     if user_is_demo:
-        # One demo account per user (self-service). Deactivated ("deleted")
-        # demo accounts don't count, so a user who removed theirs can open a
-        # fresh one; the admin back office can still provision extras.
+        # Self-service demo accounts are capped per user (practice accounts
+        # carry no funding risk, but an unbounded list clutters the picker).
+        # Deactivated ("deleted") demo accounts don't count, so a user who
+        # removed one can open a fresh one; admin back office can provision
+        # extras beyond the cap.
         existing_demo = await db.execute(
-            select(TradingAccount.id)
-            .where(
+            select(TradingAccount.id).where(
                 TradingAccount.user_id == user_id,
                 TradingAccount.is_demo == True,  # noqa: E712
                 TradingAccount.is_active.isnot(False),
             )
-            .limit(1)
         )
-        if existing_demo.scalars().first() is not None:
+        demo_count = len(existing_demo.scalars().all())
+        # Demo-login (practice) users get exactly ONE practice account — the
+        # shared demo identity must not accumulate cards. Real users may keep
+        # several demo accounts beside their live ones.
+        cap = 1 if bool(user.is_demo) else MAX_SELF_SERVICE_DEMO_ACCOUNTS
+        if demo_count >= cap:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "You already have a demo account — switch to it from the "
-                    "account picker. Contact support if you need another one."
+                    "Your demo login includes one practice account. Sign up for a live "
+                    "account to open more." if bool(user.is_demo) else
+                    f"You already have {demo_count} demo accounts (limit {cap}). Close one "
+                    "from the Accounts page to open another, or contact support."
                 ),
             )
         # Demo users get a starter virtual balance; use min_deposit if set, else $10,000.
         new_balance = min_d if min_d > 0 else Decimal("10000")
     else:
-        live_q = await db.execute(
-            select(TradingAccount).where(
-                TradingAccount.user_id == user_id,
-                TradingAccount.is_demo == False,
-            )
-        )
-        existing_live = list(live_q.scalars().all())
         wallet_bal = user.main_wallet_balance or Decimal("0")
-        live_total = sum((a.balance or Decimal("0")) for a in existing_live)
-        available = wallet_bal + live_total
-        # If the admin has set a minimum-deposit on this group, enforce it
-        # *always*. The earlier "first-time user with no money opens at $0"
-        # loophole let brand-new accounts get created with no funding — the
-        # accounts page then rendered empty equity rows that looked broken.
-        # Users now have to deposit first; refusal message tells them where
-        # to go.
+        # H-MONEY-4: a new live account is funded ONLY by an explicit transfer
+        # from the main wallet — never by silently sweeping the user's other
+        # trading accounts (a hidden cross-account move that surprised users and
+        # drained live positions' collateral). If the wallet is short, refuse and
+        # tell the user to deposit / transfer to the main wallet first.
         if min_d > 0:
-            if available < min_d:
+            if wallet_bal < min_d:
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        f"You need at least ${float(min_d):.2f} available across your main wallet "
-                        "and existing live accounts to open this account type. Deposit or add funds first."
+                        f"You need at least ${float(min_d):.2f} in your main wallet to open this "
+                        "account type. Deposit, or transfer funds to your main wallet first."
                     ),
                 )
-            # Prefer the main wallet first (the natural place users expect
-            # funding to come from after deposits / account closures).
-            remaining = min_d
-            take_from_wallet = min(wallet_bal, remaining)
-            if take_from_wallet > 0:
-                user.main_wallet_balance = wallet_bal - take_from_wallet
-                remaining -= take_from_wallet
-                db.add(Transaction(
-                    user_id=user.id,
-                    type="transfer",
-                    amount=-take_from_wallet,
-                    balance_after=user.main_wallet_balance,
-                    description="Main wallet → new trading account funding",
-                ))
-            # If wallet alone wasn't enough, top up by sweeping the existing
-            # live accounts (largest-first) — preserves the prior fallback
-            # behaviour for users who never used the main wallet flow.
-            if remaining > 0:
-                for acc in sorted(existing_live, key=lambda x: x.balance or Decimal("0"), reverse=True):
-                    if remaining <= 0:
-                        break
-                    bal = acc.balance or Decimal("0")
-                    take = min(bal, remaining)
-                    if take > 0:
-                        acc.balance = bal - take
-                        acc.equity = acc.balance
-                        acc.free_margin = acc.balance
-                        remaining -= take
+            user.main_wallet_balance = wallet_bal - min_d
+            db.add(Transaction(
+                user_id=user.id,
+                type="transfer",
+                amount=-min_d,
+                balance_after=user.main_wallet_balance,
+                description="Main wallet → new trading account funding",
+            ))
             new_balance = min_d
 
     num = generate_account_number()
@@ -674,7 +658,39 @@ async def delete_trading_account(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # 1. Close any open/partial positions on this account at open_price (flat pnl).
+    # SECURITY: refuse deletion while open positions exist. Auto-closing them
+    # at open_price (zero P&L) erased a trader's floating LOSS — a user could
+    # open a losing position, delete the account, and walk away flat, pushing
+    # the loss onto the broker. Force a real close (which realises P&L) first.
+    existing_open = (await db.execute(
+        select(Position.id).where(
+            Position.account_id == account_id,
+            Position.status.in_((PositionStatus.OPEN.value, PositionStatus.PARTIALLY_CLOSED.value)),
+        ).limit(1)
+    )).first()
+    if existing_open:
+        raise HTTPException(
+            status_code=400,
+            detail="Close all open positions before deleting this account.",
+        )
+
+    # C-MONEY-1 (DECISION default): also refuse while pending orders exist rather
+    # than silently cancelling them — a pending order is a standing instruction
+    # the user should knowingly cancel before closing the account.
+    pending_orders = (await db.execute(
+        select(func.count()).select_from(Order).where(
+            Order.account_id == account_id,
+            Order.status.in_((OrderStatus.PENDING.value, OrderStatus.PARTIALLY_FILLED.value)),
+        )
+    )).scalar() or 0
+    if pending_orders:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cancel {pending_orders} pending order(s) before deleting this account.",
+        )
+
+    # 1. (No open positions remain here — guarded above.) Kept as a defensive
+    #    no-op sweep in case a partial slips through a race; still flat-closes.
     open_pos_q = await db.execute(
         select(Position).where(
             Position.account_id == account_id,
@@ -779,8 +795,10 @@ async def delete_trading_account(
     for alloc in follower_alloc_q.scalars().all():
         alloc.status = "closed"
 
-    # 5. Sweep own balance + credit to owner's main wallet.
-    sweep = (account.balance or Decimal("0")) + (account.credit or Decimal("0"))
+    # 5. Sweep only the WITHDRAWABLE balance to the owner's main wallet. Bonus
+    #    `credit` is non-withdrawable and must NOT become withdrawable via
+    #    account deletion (that was a free cash-out of bonus funds).
+    sweep = (account.balance or Decimal("0"))
     if sweep > 0:
         user.main_wallet_balance = (user.main_wallet_balance or Decimal("0")) + sweep
         db.add(Transaction(
@@ -790,6 +808,21 @@ async def delete_trading_account(
             amount=sweep,
             balance_after=user.main_wallet_balance,
             description="Trading account closed — balance returned to main wallet",
+        ))
+
+    # C-MONEY-1: bonus `credit` is voided on closure (it is non-withdrawable and
+    # must not be swept to the main wallet). Previously it was zeroed silently,
+    # leaving no ledger trace of funds leaving the account. Record the removal so
+    # the transaction history reconciles.
+    removed_credit = account.credit or Decimal("0")
+    if removed_credit > 0:
+        db.add(Transaction(
+            user_id=user.id,
+            account_id=account.id,
+            type="credit_removed",
+            amount=-removed_credit,
+            balance_after=Decimal("0"),
+            description="Trading account closed — non-withdrawable bonus credit removed",
         ))
 
     account.balance = Decimal("0")

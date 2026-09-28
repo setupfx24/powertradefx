@@ -56,7 +56,5 @@ function pushIfTick(row: unknown, out: TickData[]) {
     spread: Number.isFinite(spread) ? spread : ask - bid,
     ts_ms: tsMs,
     stale: r.stale === true || r.stale === 'true',
-    last_live_ms:
-      r.last_live_ms != null && Number.isFinite(Number(r.last_live_ms)) ? Number(r.last_live_ms) : undefined,
   });
 }

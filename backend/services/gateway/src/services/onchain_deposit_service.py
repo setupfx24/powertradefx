@@ -21,6 +21,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.models import AdminDepositWallet, Deposit
@@ -35,6 +36,19 @@ INVOICE_TTL_MINUTES = 30
 MIN_USD_AMOUNT = Decimal("5")
 
 
+def normalize_tx_hash(network: str, raw: str) -> str:
+    """C-MONEY-2: single canonical form for a tx hash so the (network,
+    lower(crypto_tx_hash)) unique index dedupes reliably and chain lookups
+    resolve. EVM (eth/bsc) → 0x-prefixed lowercase; Tron → bare lowercase hex
+    (TronGrid strips 0x anyway)."""
+    h = (raw or "").strip().lower()
+    net = (network or "").strip().lower()
+    if net == "tron":
+        return h[2:] if h.startswith("0x") else h
+    # eth / bsc (and any other EVM): keep the 0x prefix Etherscan/BscScan need.
+    return h if h.startswith("0x") else ("0x" + h)
+
+
 def _is_placeholder(address: str) -> bool:
     a = (address or "").strip().lower()
     if a.startswith("0x") and set(a[2:]) <= {"0"}:
@@ -45,12 +59,18 @@ def _is_placeholder(address: str) -> bool:
 
 
 async def _get_active_wallet(db: AsyncSession, network: str) -> AdminDepositWallet:
+    # is_testnet=False is load-bearing: since migration 0044 relaxed the
+    # unique index, a mainnet AND a testnet row can both be active for the
+    # same (network, asset). Without the filter (and with no ORDER BY) this
+    # LIMIT-1 could hand a real user the testnet address. ORDER BY makes the
+    # pick deterministic even if data drifts.
     row = (await db.execute(
         select(AdminDepositWallet).where(
             AdminDepositWallet.network == network,
             AdminDepositWallet.asset == "USDT",
             AdminDepositWallet.is_active == True,  # noqa: E712
-        ).limit(1)
+            AdminDepositWallet.is_testnet == False,  # noqa: E712
+        ).order_by(AdminDepositWallet.created_at.desc()).limit(1)
     )).scalar_one_or_none()
     if not row:
         raise HTTPException(
@@ -157,8 +177,6 @@ async def confirm_tx_hash(
     th = (tx_hash or "").strip()
     if not th or len(th) < 10 or len(th) > 200:
         raise HTTPException(status_code=400, detail="Invalid tx hash")
-    th = th if th.startswith("0x") or len(th) == 64 else th  # leave as-is
-    th_norm = th.lower().lstrip("0x")
 
     deposit = (await db.execute(
         select(Deposit).where(Deposit.id == deposit_id)
@@ -181,17 +199,31 @@ async def confirm_tx_hash(
             detail=f"Deposit was rejected: {deposit.rejection_reason or 'unknown reason'}",
         )
 
-    existing = (deposit.crypto_tx_hash or "").lower().lstrip("0x")
-    if existing and existing != th_norm:
+    # Canonicalise against THIS deposit's network so comparison + storage +
+    # the unique index all agree.
+    th_canon = normalize_tx_hash(deposit.network, th)
+    existing = normalize_tx_hash(deposit.network, deposit.crypto_tx_hash or "") if deposit.crypto_tx_hash else ""
+    if existing and existing != th_canon:
         raise HTTPException(
             status_code=409,
             detail="A different tx hash is already on this deposit",
         )
 
-    deposit.crypto_tx_hash = th
+    # Store the canonical form so the (network, lower(crypto_tx_hash)) unique
+    # index catches case-variant / racing re-use of the same tx across deposits.
+    deposit.crypto_tx_hash = th_canon
     if deposit.status == "initiated":
         deposit.status = "submitted"
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # C-MONEY-2: the DB unique index rejected a hash already recorded on
+        # another deposit (race or deliberate re-use). Fail closed.
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This transaction hash has already been submitted.",
+        )
 
     logger.info(
         "onchain tx hash recorded deposit=%s network=%s tx=%s",

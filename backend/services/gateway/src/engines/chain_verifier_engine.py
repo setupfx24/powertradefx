@@ -46,6 +46,7 @@ from packages.common.src.chain_clients import (
 )
 
 from packages.common.src import notify
+from packages.common.src.email_branding import apply_email_brand
 
 logger = logging.getLogger("chain-verifier")
 
@@ -112,8 +113,14 @@ async def _verify_one(deposit_id) -> None:
     """Each deposit gets its own DB session so a failure on one doesn't
     poison the rest of the batch."""
     async with AsyncSessionLocal() as db:
+        # FOR UPDATE is the AUTHORITATIVE double-credit guard. The Redis
+        # SETNX lock above is best-effort only: Redis runs with an LRU
+        # eviction policy and a lock key can be evicted under memory
+        # pressure, letting both workers reach this point. With the row
+        # lock, the loser blocks here until the winner commits, then the
+        # status recheck sees 'auto_approved' and bails.
         deposit = (await db.execute(
-            select(Deposit).where(Deposit.id == deposit_id)
+            select(Deposit).where(Deposit.id == deposit_id).with_for_update()
         )).scalar_one_or_none()
         if not deposit or deposit.status != "submitted":
             return  # something else moved it already
@@ -125,17 +132,35 @@ async def _verify_one(deposit_id) -> None:
             logger.warning("no verifier for network=%s deposit=%s", net, deposit.id)
             return
 
-        wallet = (await db.execute(
-            select(AdminDepositWallet).where(
-                AdminDepositWallet.network == net,
-                AdminDepositWallet.asset == "USDT",
-                AdminDepositWallet.is_active == True,  # noqa: E712
-            ).limit(1)
-        )).scalar_one_or_none()
+        # Verify against the wallet the user was actually told to pay:
+        # the deposit row stored crypto_address at creation time. Matching
+        # by address (not a LIMIT-1 re-derive) means a later wallet
+        # rotation — or a testnet row activated alongside the mainnet one
+        # (possible since migration 0044) — can't redirect verification to
+        # the wrong address.
+        wallet = None
+        if deposit.crypto_address:
+            wallet = (await db.execute(
+                select(AdminDepositWallet).where(
+                    AdminDepositWallet.network == net,
+                    AdminDepositWallet.asset == "USDT",
+                    AdminDepositWallet.address == deposit.crypto_address,
+                ).order_by(AdminDepositWallet.created_at.desc()).limit(1)
+            )).scalar_one_or_none()
+        if not wallet:
+            # Legacy deposits without a stored address: mainnet rows only.
+            wallet = (await db.execute(
+                select(AdminDepositWallet).where(
+                    AdminDepositWallet.network == net,
+                    AdminDepositWallet.asset == "USDT",
+                    AdminDepositWallet.is_active == True,  # noqa: E712
+                    AdminDepositWallet.is_testnet == False,  # noqa: E712
+                ).order_by(AdminDepositWallet.created_at.desc()).limit(1)
+            )).scalar_one_or_none()
         if not wallet:
             logger.warning(
-                "no active admin wallet for network=%s deposit=%s — flagging",
-                net, deposit.id,
+                "no admin wallet matching network=%s addr=%s deposit=%s — flagging",
+                net, deposit.crypto_address, deposit.id,
             )
             return
 
@@ -151,12 +176,28 @@ async def _verify_one(deposit_id) -> None:
                 deposit, wallet, expected_value, decimals,
             )
         else:
+            # SECURITY: bind plain-transfer verification to the depositing
+            # user's own wallet. Without this, any user could submit someone
+            # else's USDT transfer to the public admin address and be credited.
+            # The vault path already enforces this; mirror it here. Unlinked
+            # wallet → manual_review (admin decides) rather than a silent
+            # auto-credit or a hard reject.
+            u = (await db.execute(
+                select(User).where(User.id == deposit.user_id)
+            )).scalar_one_or_none()
+            user_wallet = (u.wallet_address or "").strip() if u else ""
+            if not user_wallet:
+                deposit.status = "manual_review"
+                deposit.rejection_reason = "user_wallet_not_linked — cannot verify sender"
+                await db.commit()
+                return
             result = await verifier(
                 deposit.crypto_tx_hash,
                 wallet.address,
                 expected_value,
                 int(wallet.min_confirmations),
                 contract_address=USDT_CONTRACTS.get(net, ""),
+                expected_from=user_wallet,
             )
 
         logger.info(
@@ -255,8 +296,10 @@ async def _credit_deposit(db: AsyncSession, deposit: Deposit) -> None:
     """Mirror the credit logic used by the existing oxapay/razorpay
     webhook handlers so balances, transactions, bonuses, and emails all
     behave the same way regardless of which deposit method was used."""
+    # Row-lock the user so concurrent credits (another deposit, an oxapay
+    # webhook) can't lost-update main_wallet_balance.
     user = (await db.execute(
-        select(User).where(User.id == deposit.user_id)
+        select(User).where(User.id == deposit.user_id).with_for_update()
     )).scalar_one_or_none()
     if not user:
         logger.error("user not found for deposit %s", deposit.id)
@@ -277,42 +320,12 @@ async def _credit_deposit(db: AsyncSession, deposit: Deposit) -> None:
         description=f"Deposit to main wallet - USDT {(deposit.network or '').upper()} (auto)",
     ))
 
-    # Bonus offer application — same shape as oxapay path.
-    bonus_msg = ""
-    applied_bonuses: list[tuple[str, Decimal]] = []
-    now = datetime.utcnow()
-    offers_q = await db.execute(
-        select(BonusOffer).where(
-            BonusOffer.is_active == True,  # noqa: E712
-            BonusOffer.bonus_type.in_(["deposit", "welcome"]),
-            BonusOffer.min_deposit <= deposit.amount,
-        )
+    # H-MONEY-2: single, dedup-guarded bonus application (was an inline copy).
+    from packages.common.src.bonus_service import apply_deposit_bonus
+    applied_bonuses = await apply_deposit_bonus(db, user, deposit)
+    bonus_msg = "".join(
+        f" + ${float(a):.2f} bonus ({n})" for n, a in applied_bonuses
     )
-    for offer in offers_q.scalars().all():
-        if offer.starts_at and offer.starts_at > now:
-            continue
-        if offer.expires_at and offer.expires_at < now:
-            continue
-        if offer.percentage and offer.percentage > 0:
-            bonus_amount = deposit.amount * offer.percentage / Decimal("100")
-        elif offer.fixed_amount and offer.fixed_amount > 0:
-            bonus_amount = offer.fixed_amount
-        else:
-            continue
-        if offer.max_bonus and bonus_amount > offer.max_bonus:
-            bonus_amount = offer.max_bonus
-
-        user.main_wallet_balance = (user.main_wallet_balance or Decimal("0")) + bonus_amount
-        db.add(Transaction(
-            user_id=deposit.user_id,
-            account_id=None,
-            type="bonus",
-            amount=bonus_amount,
-            balance_after=user.main_wallet_balance,
-            description=f"Bonus: {offer.name} ({offer.percentage or 0}%)",
-        ))
-        bonus_msg = f" + ${float(bonus_amount):.2f} bonus ({offer.name})"
-        applied_bonuses.append((offer.name, bonus_amount))
 
     try:
         await notify.create_notification(
@@ -334,8 +347,9 @@ async def _credit_deposit(db: AsyncSession, deposit: Deposit) -> None:
         )
         from packages.common.src.email_templates import render_deposit_confirmed
         from packages.common.src.config import get_settings
+        await apply_email_brand(db, user)
         if smtp_configured() and user.email and not user.email.lower().endswith(
-            "@wallet.powertradefx.local"
+            "@wallet.swisscresta.local"
         ):
             subject, html, text = render_deposit_confirmed(
                 first_name=user.first_name,
@@ -344,7 +358,7 @@ async def _credit_deposit(db: AsyncSession, deposit: Deposit) -> None:
                 method=f"USDT-{(deposit.network or '').upper()}",
                 reference=str(deposit.id),
                 new_balance=user.main_wallet_balance,
-                trader_app_url=(get_settings().TRADER_APP_URL or "https://trade.powertradefx.com"),
+                trader_app_url=(get_settings().TRADER_APP_URL or "https://trade.swisscresta.com"),
             )
             fire_and_forget(send_email(user.email, subject, html, text=text))
     except Exception as e:
@@ -371,7 +385,9 @@ async def _send_rejected_email(deposit: Deposit) -> None:
             user = (await db2.execute(
                 select(User).where(User.id == deposit.user_id)
             )).scalar_one_or_none()
-        if not user or not user.email or user.email.lower().endswith("@wallet.powertradefx.local"):
+        async with AsyncSessionLocal() as db3:
+            await apply_email_brand(db3, user)
+        if not user or not user.email or user.email.lower().endswith("@wallet.swisscresta.local"):
             return
         subject, html, text = render_deposit_failed(
             first_name=user.first_name,
@@ -380,7 +396,7 @@ async def _send_rejected_email(deposit: Deposit) -> None:
             method=f"USDT-{(deposit.network or '').upper()}",
             reason_code=deposit.rejection_reason or "verification failed",
             reference=str(deposit.id),
-            trader_app_url=(get_settings().TRADER_APP_URL or "https://trade.powertradefx.com"),
+            trader_app_url=(get_settings().TRADER_APP_URL or "https://trade.swisscresta.com"),
         )
         fire_and_forget(send_email(user.email, subject, html, text=text))
     except Exception as e:

@@ -36,9 +36,27 @@ from packages.common.src.admin_schemas import (
     UserOut, UserDetailOut, TradingAccountOut,
     FundRequest, CreditRequest,
 )
-from dependencies import write_audit_log
+from packages.common.src.kyc_identifiers import mask_aadhaar
+from dependencies import write_audit_log, assert_broker_scope
 
 settings = get_settings()
+
+# H-ADMIN-2: destructive / funding actions must never target privileged accounts
+# unless the actor is a super_admin, and never target the actor themselves.
+_PRIVILEGED_ROLES = {"super_admin", "admin", "broker"}
+
+
+async def _assert_can_target(db: AsyncSession, admin_id: uuid.UUID, target_user) -> None:
+    if target_user is None:
+        return
+    if str(getattr(target_user, "id", "")) == str(admin_id):
+        raise HTTPException(status_code=403, detail="You cannot perform this action on your own account.")
+    actor = (await db.execute(select(User).where(User.id == admin_id))).scalar_one_or_none()
+    if getattr(target_user, "role", None) in _PRIVILEGED_ROLES and getattr(actor, "role", None) != "super_admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only a super admin may perform this action on an admin, broker, or super-admin account.",
+        )
 
 
 def _user_to_out(u: User) -> dict:
@@ -51,6 +69,11 @@ def _user_to_out(u: User) -> dict:
         "date_of_birth": u.date_of_birth,
         "country": u.country,
         "address": u.address,
+        "city": u.city,
+        "state": u.state,
+        "postal_code": u.postal_code,
+        "pan_number": u.pan_number,
+        "aadhaar_masked": mask_aadhaar(u.aadhaar_last4),
         "role": u.role,
         "status": u.status,
         "kyc_status": u.kyc_status,
@@ -87,16 +110,24 @@ async def list_users(
     page: int, per_page: int, search: str | None,
     status_filter: str | None, kyc_filter: str | None,
     group_id: str | None, db: AsyncSession,
+    user_ids: list | None = None,
 ) -> dict:
     # Hide users who have not verified their email yet. An email/password
     # signup sits at email_verified=False until they complete the post-signup
     # OTP, so half-finished registrations never clutter the admin list.
     # Google/OAuth signups are stamped email_verified=True at sign-in, so
     # legitimate users are unaffected.
+    # White-label broker rows are admin-tier accounts, not trading users —
+    # they're managed on the Brokers page, so hide them here like admins.
     query = select(User).where(
-        User.role.notin_(["admin", "super_admin"]),
+        User.role.notin_(["admin", "super_admin", "broker"]),
         User.email_verified.is_(True),
     )
+
+    # White-label pool scoping: a broker actor passes the explicit id list
+    # of their own pool; None = platform admin, unscoped.
+    if user_ids is not None:
+        query = query.where(User.id.in_(user_ids))
 
     if search:
         term = f"%{search}%"
@@ -209,8 +240,7 @@ async def get_user_detail(user_id: uuid.UUID, db: AsyncSession):
     wd_q = await db.execute(
         select(func.coalesce(func.sum(Withdrawal.amount), 0)).where(
             Withdrawal.user_id == user_id,
-            # "paid" is the terminal state mark_withdrawal_paid writes.
-            Withdrawal.status.in_(["approved", "completed", "paid"]),
+            Withdrawal.status.in_(["approved", "completed"]),
         )
     )
     total_withdrawal = float(wd_q.scalar() or 0)
@@ -257,6 +287,7 @@ async def add_fund(
     user_row = user_result.scalar_one_or_none()
     if not user_row:
         raise HTTPException(status_code=404, detail="User not found")
+    await _assert_can_target(db, admin_id, user_row)  # H-ADMIN-2
 
     old_balance = user_row.main_wallet_balance or Decimal("0")
     user_row.main_wallet_balance = old_balance + amt
@@ -271,6 +302,29 @@ async def add_fund(
         created_by=admin_id,
     )
     db.add(txn)
+
+    # Record it as a deposit too. Every deposit figure in the platform reads
+    # the deposits table — the dashboard's Deposits Today and revenue chart,
+    # the analytics totals, the user's total_deposit on their detail page, and
+    # the trader's own deposit total. Admin-credited funds wrote ONLY a
+    # Transaction, so money that had genuinely entered the platform was
+    # missing from all five, and a day of nothing but admin credits reported
+    # Deposits Today: 0.
+    #
+    # method='admin' keeps it distinguishable from money a client actually
+    # sent, so reporting can separate the two whenever it needs to. Approved
+    # on the spot because the balance has already moved — there is nothing
+    # left to review.
+    now = datetime.utcnow()
+    db.add(Deposit(
+        user_id=user_id,
+        account_id=None,
+        amount=amt,
+        method="admin",
+        status="approved",
+        approved_by=admin_id,
+        approved_at=now,
+    ))
 
     await write_audit_log(
         db, admin_id, "add_fund", "user", user_id,
@@ -315,6 +369,7 @@ async def deduct_fund(
     user_row = user_result.scalar_one_or_none()
     if not user_row:
         raise HTTPException(status_code=404, detail="User not found")
+    await _assert_can_target(db, admin_id, user_row)  # H-ADMIN-2
 
     main_bal = user_row.main_wallet_balance or Decimal("0")
 
@@ -348,6 +403,19 @@ async def deduct_fund(
             created_by=admin_id,
         )
         db.add(txn)
+        # Mirror of add_fund: an admin debit is money leaving, so it belongs in
+        # withdrawals. Recording only the credit side would inflate every net
+        # figure on the platform — deposits would rise on admin action while
+        # admin debits stayed invisible.
+        db.add(Withdrawal(
+            user_id=user_id,
+            account_id=None,
+            amount=amt,
+            method="admin",
+            status="completed",
+            approved_by=admin_id,
+            approved_at=datetime.utcnow(),
+        ))
         await write_audit_log(
             db, admin_id, "deduct_fund", "user", user_id,
             old_values={"main_wallet_balance": float(main_bal)},
@@ -403,6 +471,19 @@ async def deduct_fund(
         created_by=admin_id,
     )
     db.add(txn)
+    # Mirror of add_fund: an admin debit is money leaving, so it belongs in
+    # withdrawals. Recording only the credit side would inflate every net
+    # figure on the platform — deposits would rise on admin action while
+    # admin debits stayed invisible.
+    db.add(Withdrawal(
+        user_id=user_id,
+        account_id=account.id,
+        amount=amt,
+        method="admin",
+        status="completed",
+        approved_by=admin_id,
+        approved_at=datetime.utcnow(),
+    ))
     await write_audit_log(
         db, admin_id, "deduct_fund", "trading_account", account.id,
         old_values={"balance": float(old_balance)},
@@ -430,6 +511,8 @@ async def give_credit(
     account = account_result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Trading account not found")
+    target = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    await _assert_can_target(db, admin_id, target)  # H-ADMIN-2
 
     old_credit = float(account.credit or 0)
     account.credit = Decimal(str(old_credit)) + Decimal(str(body.amount))
@@ -472,6 +555,8 @@ async def take_credit(
     account = account_result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="Trading account not found")
+    target = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    await _assert_can_target(db, admin_id, target)  # H-ADMIN-2
 
     old_credit = float(account.credit or 0)
     if old_credit < body.amount:
@@ -508,6 +593,7 @@ async def ban_user(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    await _assert_can_target(db, admin_id, user)  # H-ADMIN-2
 
     old_status = user.status
     user.status = "banned"
@@ -529,6 +615,7 @@ async def unban_user(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    await _assert_can_target(db, admin_id, user)  # H-ADMIN-2
 
     old_status = user.status
     user.status = "active"
@@ -550,6 +637,7 @@ async def block_trading(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    await _assert_can_target(db, admin_id, user)  # H-ADMIN-2
 
     far_future = datetime.utcnow() + timedelta(days=36500)
     user.trading_blocked_until = far_future
@@ -570,13 +658,13 @@ async def kill_switch(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    await _assert_can_target(db, admin_id, user)  # H-ADMIN-2
 
     accounts_q = await db.execute(
         select(TradingAccount).where(TradingAccount.user_id == user_id)
     )
     accounts = accounts_q.scalars().all()
     account_ids = [a.id for a in accounts]
-    account_by_id = {a.id: a for a in accounts}
 
     closed_count = 0
     if account_ids:
@@ -588,48 +676,11 @@ async def kill_switch(
         )
         positions = positions_q.scalars().all()
         for pos in positions:
-            closed_at = datetime.utcnow()
             pos.status = PositionStatus.CLOSED.value
             pos.close_price = pos.open_price
-            pos.closed_at = closed_at
+            pos.closed_at = datetime.utcnow()
             pos.profit = Decimal("0")
             pos.is_admin_modified = True
-
-            # Release the margin the position was holding — the old code
-            # closed positions without touching margin_used, leaving the
-            # account permanently encumbered by phantom margin.
-            account = account_by_id.get(pos.account_id)
-            if account is not None:
-                contract_size = (
-                    pos.instrument.contract_size if pos.instrument else Decimal("100000")
-                )
-                margin_release = (
-                    pos.lots * contract_size * pos.open_price
-                ) / Decimal(str(account.leverage or 1))
-                account.margin_used = max(
-                    Decimal("0"), (account.margin_used or Decimal("0")) - margin_release
-                )
-                account.equity = (account.balance or Decimal("0")) + (account.credit or Decimal("0"))
-                account.free_margin = account.equity - account.margin_used
-
-            # Ledger row — the kill switch deliberately books P/L = 0
-            # (close at open price), but the close itself must still be
-            # visible in trade history like every other close path.
-            db.add(TradeHistory(
-                position_id=pos.id,
-                account_id=pos.account_id,
-                instrument_id=pos.instrument_id,
-                side=pos.side,
-                lots=pos.lots,
-                open_price=pos.open_price,
-                close_price=pos.open_price,
-                swap=pos.swap or Decimal("0"),
-                commission=pos.commission or Decimal("0"),
-                profit=Decimal("0"),
-                close_reason="admin",
-                opened_at=pos.created_at,
-                closed_at=closed_at,
-            ))
             closed_count += 1
 
     far_future = datetime.utcnow() + timedelta(days=36500)
@@ -672,6 +723,14 @@ async def login_as_user(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    await _assert_can_target(db, admin_id, user)  # H-ADMIN-2
+
+    # Phase 3 (impersonation scope): a broker actor may only impersonate a user
+    # in their own pool. Platform admins pass through. Load the actor row and
+    # enforce broker scope before minting an impersonation token.
+    actor = (await db.execute(select(User).where(User.id == admin_id))).scalar_one_or_none()
+    if actor is not None:
+        await assert_broker_scope(actor, user_id, db)
 
     # Privilege guard (audit H5). Even if a non-super-admin somehow holds
     # the `users.impersonate` permission (via Employee.extra_permissions
@@ -740,6 +799,7 @@ async def delete_user(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    await _assert_can_target(db, admin_id, user)  # H-ADMIN-2
 
     if user.role in ("super_admin",):
         raise HTTPException(status_code=403, detail="Cannot delete super_admin user")

@@ -32,6 +32,8 @@ def create_access_token(
     user_id: str,
     role: str,
     expires_delta: Optional[timedelta] = None,
+    sid: Optional[str] = None,
+    amr: Optional[str] = None,
 ) -> tuple[str, datetime]:
     # Timezone-aware UTC: avoids asyncpg/timestamptz issues and PyJWT edge cases with naive datetimes.
     now = datetime.now(timezone.utc)
@@ -42,6 +44,13 @@ def create_access_token(
         "exp": expires,
         "iat": now,
     }
+    # H-AUTH-3: sid binds the token to a user_sessions row so it can be revoked
+    # server-side (logout / password reset / ban) and rejected on the next
+    # request; amr records HOW the session was established (login vs bootstrap).
+    if sid is not None:
+        payload["sid"] = sid
+    if amr is not None:
+        payload["amr"] = amr
     token = jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
     return token, expires
 
@@ -111,6 +120,56 @@ async def _get_user_status(user_id: UUID) -> Optional[str]:
     return status_val
 
 
+_SESSION_CACHE_TTL_S = 15
+
+
+async def _session_is_active(sid: str) -> bool:
+    """H-AUTH-3: is the user_sessions row for this token's sid still active?
+    Redis-cached briefly (like the status cache) so revocation — logout, password
+    reset, ban — takes effect within a few seconds instead of the token lifetime.
+    Redis errors fall through to Postgres so enforcement never silently disables.
+    A missing session row counts as revoked."""
+    cache_key = f"session_active:{sid}"
+    redis = None
+    try:
+        from .redis_client import redis_client as redis
+        cached = await redis.get(cache_key)
+        if cached is not None:
+            v = cached.decode() if isinstance(cached, bytes) else str(cached)
+            return v == "1"
+    except Exception:
+        pass
+
+    from sqlalchemy import select
+    from .database import AsyncSessionLocal
+    from .models import UserSession
+
+    try:
+        sid_uuid = UUID(str(sid))
+    except (ValueError, TypeError):
+        return False
+    async with AsyncSessionLocal() as db:
+        is_active = (
+            await db.execute(select(UserSession.is_active).where(UserSession.id == sid_uuid))
+        ).scalar_one_or_none()
+    active = bool(is_active)
+    if redis is not None:
+        try:
+            await redis.set(cache_key, "1" if active else "0", ex=_SESSION_CACHE_TTL_S)
+        except Exception:
+            pass
+    return active
+
+
+async def invalidate_session_cache(sid) -> None:
+    """Best-effort bust of the session-active cache so a revoke is instant."""
+    try:
+        from .redis_client import redis_client as redis
+        await redis.delete(f"session_active:{sid}")
+    except Exception:
+        pass
+
+
 async def get_current_user(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
@@ -125,6 +184,17 @@ async def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account not found")
     if user_status in _BLOCKED_USER_STATUSES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled")
+    # H-AUTH-3: reject a token whose session was revoked. Tokens minted before
+    # this change carry no sid and are grandfathered (they expire within the
+    # access-token lifetime); every new token carries a sid.
+    sid = payload.get("sid")
+    if sid and not await _session_is_active(sid):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session ended. Please sign in again.")
+    # The raw admin-impersonation token (impersonated_by, no sid) is only valid as
+    # input to /auth/impersonate/redeem → bootstrap. Used directly as a Bearer it
+    # would be a 2h, un-revocable, un-flagged session — refuse it.
+    if payload.get("impersonated_by") and not sid:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     # Mark the user as online for ~5 minutes after this request. The admin
     # users list reads these keys to render an online/offline indicator.
     # 5 minutes is generous enough that brief idle stretches (reading a
@@ -141,7 +211,30 @@ async def get_current_user(
     return {
         "user_id": user_id,
         "role": payload["role"],
+        # How this session was established: "login", "derived" (refresh),
+        # "impersonation" (admin support), or None (legacy token).
+        "amr": payload.get("amr"),
+        # This request's session id (None for legacy tokens) — lets "sign out
+        # other devices" style actions keep the caller's own session.
+        "sid": sid,
     }
+
+
+# Sessions that must NOT perform money-out / account-security actions. An admin
+# impersonating a user for support can view and trade-support, but must never
+# withdraw, change the payout wallet, touch 2FA/password, or mint API keys.
+_RESTRICTED_AMR = {"impersonation"}
+
+
+async def require_full_session(current_user: dict = Depends(get_current_user)) -> dict:
+    """Like get_current_user, but refuses restricted (impersonation) sessions.
+    Use on withdrawal / wallet-link / 2FA / password / API-key endpoints."""
+    if current_user.get("amr") in _RESTRICTED_AMR:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This action is not allowed in an impersonation session.",
+        )
+    return current_user
 
 
 async def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -188,7 +281,7 @@ async def require_onboarded(
     if bool(getattr(user, "is_demo", False)):
         return current_user
 
-    is_placeholder = (user.email or "").lower().endswith("@wallet.powertradefx.local")
+    is_placeholder = (user.email or "").lower().endswith("@wallet.swisscresta.local")
     profile_complete = bool(
         (user.first_name or "").strip()
         and (user.last_name or "").strip()

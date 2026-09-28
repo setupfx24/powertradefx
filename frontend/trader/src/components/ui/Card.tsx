@@ -1,76 +1,55 @@
-import { HTMLAttributes, ReactNode, forwardRef } from 'react';
-import { cn } from '@/lib/utils';
+'use client';
 
-type Padding = 'none' | 'sm' | 'md' | 'lg';
+import { clsx } from 'clsx';
 
-const PADDING: Record<Padding, string> = {
-  none: '',
-  sm: 'p-3',
-  md: 'p-4 md:p-5',
-  lg: 'p-5 md:p-6',
+interface CardProps {
+  children: React.ReactNode;
+  className?: string;
+  variant?: 'glass' | 'skeu' | 'flat';
+  padding?: 'none' | 'sm' | 'md' | 'lg';
+}
+
+const cardVariants = {
+  glass: 'glass-card rounded-xl',
+  skeu: 'skeu-surface rounded-xl',
+  flat: 'bg-bg-secondary border border-border-primary rounded-xl',
 };
 
-export interface CardProps extends HTMLAttributes<HTMLDivElement> {
-  padding?: Padding;
-  /** Hover lift + pointer for clickable cards. */
-  interactive?: boolean;
-  /** Nested surface (one step darker), for cards inside cards. */
-  nested?: boolean;
-}
+const paddings = { none: '', sm: 'p-3', md: 'p-4', lg: 'p-5' };
 
-/** The one surface for content blocks: card background, hairline border, 10px radius. */
-export const Card = forwardRef<HTMLDivElement, CardProps>(
-  ({ padding = 'md', interactive, nested, className, ...props }, ref) => (
-    <div
-      ref={ref}
-      className={cn(
-        'rounded-lg border border-border-primary',
-        nested ? 'bg-card-nested' : 'bg-card',
-        interactive && 'cursor-pointer transition-[border-color,transform,box-shadow] duration-150 hover:border-border-strong hover:shadow-md',
-        PADDING[padding],
-        className,
-      )}
-      {...props}
-    />
-  ),
-);
-Card.displayName = 'Card';
-
-export interface CardHeaderProps extends Omit<HTMLAttributes<HTMLDivElement>, 'title'> {
-  title?: ReactNode;
-  description?: ReactNode;
-  /** Small uppercase label above the title. */
-  eyebrow?: ReactNode;
-  actions?: ReactNode;
-}
-
-export function CardHeader({ title, description, eyebrow, actions, className, children, ...props }: CardHeaderProps) {
+export function Card({ children, className, variant = 'glass', padding = 'md' }: CardProps) {
   return (
-    <div className={cn('flex items-start justify-between gap-3 mb-4', className)} {...props}>
-      <div className="min-w-0">
-        {eyebrow && (
-          <p className="text-xxs font-bold uppercase tracking-[0.12em] text-text-tertiary mb-1">{eyebrow}</p>
-        )}
-        {title && <h3 className="text-md font-semibold text-text-primary leading-tight truncate">{title}</h3>}
-        {description && <p className="text-sm text-text-secondary mt-1">{description}</p>}
-        {children}
-      </div>
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+    <div className={clsx(cardVariants[variant], paddings[padding], 'relative', className)}>
+      {children}
     </div>
   );
 }
 
-export function CardBody({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('min-w-0', className)} {...props} />;
+interface StatCardProps {
+  label: string;
+  value: string;
+  subValue?: string;
+  trend?: 'up' | 'down' | 'neutral';
+  className?: string;
 }
 
-export function CardFooter({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+export function StatCard({ label, value, subValue, trend, className }: StatCardProps) {
   return (
-    <div
-      className={cn('mt-4 pt-4 border-t border-border-secondary flex items-center justify-end gap-2', className)}
-      {...props}
-    />
+    <Card variant="glass" padding="none" className={clsx('noise-texture overflow-hidden p-2.5 sm:p-3 md:p-4', className)}>
+      <div className="relative z-10 min-w-0">
+        <div className="text-[10px] sm:text-xs text-text-secondary mb-1 leading-tight line-clamp-2">{label}</div>
+        <div className={clsx(
+          'text-base sm:text-lg md:text-xl font-bold tabular-nums font-mono leading-tight break-words',
+          trend === 'up' ? 'text-buy' : trend === 'down' ? 'text-sell' : 'text-text-primary'
+        )}>
+          {value}
+        </div>
+        {subValue && (
+          <div className="text-[9px] sm:text-xxs text-text-tertiary mt-1 leading-snug line-clamp-2 break-words">
+            {subValue}
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
-
-export default Card;

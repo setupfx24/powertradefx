@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# PowerTradeFX — restore Postgres (and optionally uploads + timescaledb) from
+# SwissCresta — restore Postgres (and optionally uploads + timescaledb) from
 # backup files produced by scripts/backup.sh.
 #
 # Usage:
@@ -22,7 +22,7 @@ set -euo pipefail
 DUMP="${1:?postgres dump path required (e.g. backups/postgres-...sql.gz or .sql.gz.gpg)}"
 UPLOADS="${2:-}"
 TS_DUMP="${3:-}"
-COMPOSE_DIR="${POWERTRADEFX_DIR:-/opt/powertradefx}"
+COMPOSE_DIR="${SWISSCRESTA_DIR:-/opt/swisscresta}"
 GPG_PASSPHRASE="${BACKUP_GPG_PASSPHRASE:-}"
 
 [[ -f "$DUMP" ]] || { echo "[restore] $DUMP not found"; exit 1; }
@@ -61,15 +61,16 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d postgres
 # pg_isready loop — wait up to 30s for the container's healthcheck
 for i in $(seq 1 30); do
   if docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T postgres \
-       pg_isready -U "${POSTGRES_USER:-powertradefx}" >/dev/null 2>&1; then
+       pg_isready -U "${POSTGRES_USER:-swisscresta}" >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
 
-# Pre-initialise so the EXIT trap never hits an unbound variable under
-# `set -u` — otherwise the trap dies and the decrypted dumps (PII,
-# password hashes) are left behind in /tmp.
+# H-INF: initialise ALL temp paths before the trap. Previously the EXIT trap
+# referenced $TMP_TS / $TMP_UP which are only assigned later (and conditionally),
+# so under `set -u` the trap itself failed with "unbound variable" whenever the
+# script exited before the timescale/uploads sections.
 TMP_TS=""
 TMP_UP=""
 TMP_PG=$(mktemp --suffix=.sql.gz)
@@ -77,7 +78,7 @@ trap 'rm -f "$TMP_PG" "$TMP_TS" "$TMP_UP"' EXIT
 decrypt_to "$DUMP" "$TMP_PG"
 echo "[restore] piping (decrypted) $DUMP → psql"
 gunzip -c "$TMP_PG" | docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-  exec -T postgres psql -U "${POSTGRES_USER:-powertradefx}" -d postgres -v ON_ERROR_STOP=1
+  exec -T postgres psql -U "${POSTGRES_USER:-swisscresta}" -d postgres -v ON_ERROR_STOP=1
 
 # ─── TimescaleDB (optional) ───────────────────────────────────────────
 if [[ -n "$TS_DUMP" ]]; then
@@ -85,7 +86,7 @@ if [[ -n "$TS_DUMP" ]]; then
   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d timescaledb
   for i in $(seq 1 30); do
     if docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T timescaledb \
-         pg_isready -U "${TIMESCALE_USER:-powertradefx}" >/dev/null 2>&1; then
+         pg_isready -U "${TIMESCALE_USER:-swisscresta}" >/dev/null 2>&1; then
       break
     fi
     sleep 1
@@ -94,18 +95,15 @@ if [[ -n "$TS_DUMP" ]]; then
   decrypt_to "$TS_DUMP" "$TMP_TS"
   echo "[restore] piping (decrypted) $TS_DUMP → timescale psql"
   gunzip -c "$TMP_TS" | docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-    exec -T timescaledb psql -U "${TIMESCALE_USER:-powertradefx}" -d postgres -v ON_ERROR_STOP=1
+    exec -T timescaledb psql -U "${TIMESCALE_USER:-swisscresta}" -d postgres -v ON_ERROR_STOP=1
 fi
 
 # ─── Uploads (optional) ───────────────────────────────────────────────
 if [[ -n "$UPLOADS" ]]; then
   TMP_UP=$(mktemp --suffix=.tar.gz)
   decrypt_to "$UPLOADS" "$TMP_UP"
-  # Archives contain a top-level uploads/ dir; the live location is
-  # backend/uploads (the compose bind mount), so extract under backend/.
-  echo "[restore] extracting (decrypted) $UPLOADS → $COMPOSE_DIR/backend"
-  mkdir -p "$COMPOSE_DIR/backend"
-  tar xzf "$TMP_UP" -C "$COMPOSE_DIR/backend"
+  echo "[restore] extracting (decrypted) $UPLOADS → $COMPOSE_DIR"
+  tar xzf "$TMP_UP" -C "$COMPOSE_DIR"
 fi
 
 echo

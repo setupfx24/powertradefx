@@ -277,39 +277,44 @@ async def trade_history(
             raise HTTPException(status_code=404, detail="Account not found")
         account_ids = [account_id]
 
-    # Lazy backfill: relabel every still-'manual' history row where the
-    # close_price crossed the position's SL/TP. Idempotent + cheap because it
-    # only touches rows that are still 'manual' AND have an SL/TP set — once
-    # a row is flipped to 'sl'/'tp' it's no longer matched. Runs without
-    # requiring a backend restart so the UI corrects instantly.
+    # H-TRADE-6: relabel still-'manual' history rows whose close_price crossed
+    # the position's SL/TP. This MUST be scoped to the requesting user's accounts
+    # — the previous statement had no account filter, so every history page load
+    # issued a table-wide UPDATE across ALL users' rows (lock contention + a huge
+    # write on a read path). Scoped + idempotent, it self-extinguishes to 0 rows
+    # after the first load per account. (A global one-off relabel belongs in a
+    # migration / nightly job, not the request path.)
     from sqlalchemy import text
-    try:
-        await db.execute(
-            text(
-                """
-                UPDATE trade_history th
-                SET close_reason = CASE
-                    WHEN p.stop_loss IS NOT NULL AND (
-                        (LOWER(CAST(p.side AS TEXT)) = 'buy'  AND th.close_price <= p.stop_loss)
-                     OR (LOWER(CAST(p.side AS TEXT)) = 'sell' AND th.close_price >= p.stop_loss)
-                    ) THEN 'sl'
-                    WHEN p.take_profit IS NOT NULL AND (
-                        (LOWER(CAST(p.side AS TEXT)) = 'buy'  AND th.close_price >= p.take_profit)
-                     OR (LOWER(CAST(p.side AS TEXT)) = 'sell' AND th.close_price <= p.take_profit)
-                    ) THEN 'tp'
-                    ELSE th.close_reason
-                END
-                FROM positions p
-                WHERE th.position_id = p.id
-                  AND COALESCE(th.close_reason, 'manual') IN ('manual', 'copy_close', 'copy')
-                  AND (p.stop_loss IS NOT NULL OR p.take_profit IS NOT NULL)
-                """
+    if account_ids:
+        try:
+            await db.execute(
+                text(
+                    """
+                    UPDATE trade_history th
+                    SET close_reason = CASE
+                        WHEN p.stop_loss IS NOT NULL AND (
+                            (LOWER(CAST(p.side AS TEXT)) = 'buy'  AND th.close_price <= p.stop_loss)
+                         OR (LOWER(CAST(p.side AS TEXT)) = 'sell' AND th.close_price >= p.stop_loss)
+                        ) THEN 'sl'
+                        WHEN p.take_profit IS NOT NULL AND (
+                            (LOWER(CAST(p.side AS TEXT)) = 'buy'  AND th.close_price >= p.take_profit)
+                         OR (LOWER(CAST(p.side AS TEXT)) = 'sell' AND th.close_price <= p.take_profit)
+                        ) THEN 'tp'
+                        ELSE th.close_reason
+                    END
+                    FROM positions p
+                    WHERE th.position_id = p.id
+                      AND th.account_id = ANY(:account_ids)
+                      AND COALESCE(th.close_reason, 'manual') IN ('manual', 'copy_close', 'copy')
+                      AND (p.stop_loss IS NOT NULL OR p.take_profit IS NOT NULL)
+                    """
+                ),
+                {"account_ids": account_ids},
             )
-        )
-        await db.commit()
-    except Exception:
-        # Never break trade_history if the backfill fails — just serve what's there.
-        await db.rollback()
+            await db.commit()
+        except Exception:
+            # Never break trade_history if the backfill fails — just serve what's there.
+            await db.rollback()
 
     base_filter = [TradeHistory.account_id.in_(account_ids)]
     if symbol:
@@ -353,6 +358,17 @@ async def trade_history(
                 float(tp) if tp is not None else None,
             )
 
+    # Which of these trades came from an AI strategy. Open positions already
+    # carry an "AI" tag (via /ai-strategies/position-ids) but history rows had
+    # no way to show it, so a strategy's own trade became indistinguishable
+    # from a hand-placed one the moment it closed. One batched lookup.
+    ai_pos_ids: set = set()
+    if pos_ids:
+        from packages.common.src.models import AIStrategyTrade as _AITrade
+        ai_pos_ids = set((await db.execute(
+            select(_AITrade.position_id).where(_AITrade.position_id.in_(pos_ids))
+        )).scalars().all())
+
     items = []
     for t in trades:
         side_val = t.side.value if hasattr(t.side, 'value') else str(t.side)
@@ -360,7 +376,8 @@ async def trade_history(
             select(CopyTrade).where(CopyTrade.investor_position_id == t.position_id)
         )
         copy_trade = copy_trade_q.scalar_one_or_none()
-        trade_type = "copy_trade" if copy_trade else "self_trade"
+        is_ai = t.position_id in ai_pos_ids
+        trade_type = "copy_trade" if copy_trade else ("ai_strategy" if is_ai else "self_trade")
         sl_val, tp_val = pos_sltp.get(t.position_id, (None, None))
         items.append({
             "id": str(t.id), "symbol": t.instrument.symbol if t.instrument else None,
@@ -382,6 +399,7 @@ async def trade_history(
             # clicked Close themselves.
             "close_reason": _public_close_reason(t.close_reason),
             "trade_type": trade_type,
+            "is_ai": is_ai,
             "opened_at": t.opened_at.isoformat() if t.opened_at else None,
             "close_time": t.closed_at.isoformat() if t.closed_at else None,
         })
@@ -416,6 +434,13 @@ async def export_trades(
     )
     trades = result.scalars().all()
 
+    def _txt(v) -> str:
+        # CSV/formula-injection guard for text cells (defense in depth — the
+        # symbol is admin-controlled today, but never let a spreadsheet run
+        # a cell starting with = + - @ / tab / CR as a formula).
+        s = "" if v is None else str(v)
+        return ("'" + s) if s[:1] in ("=", "+", "-", "@", "\t", "\r") else s
+
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
@@ -424,7 +449,7 @@ async def export_trades(
     ])
     for t in trades:
         writer.writerow([
-            str(t.id), t.instrument.symbol if t.instrument else "",
+            str(t.id), _txt(t.instrument.symbol if t.instrument else ""),
             t.side.value, float(t.lots), float(t.open_price), float(t.close_price),
             float(t.swap), float(t.commission), float(t.profit),
             t.opened_at.isoformat() if t.opened_at else "",

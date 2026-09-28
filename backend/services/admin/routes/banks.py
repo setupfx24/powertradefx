@@ -7,7 +7,6 @@ from packages.common.src.database import get_db
 from dependencies import require_permission
 from packages.common.src.models import User
 from packages.common.src.admin_schemas import BankAccountIn
-from packages.common.src.rate_limit import client_ip_for_inet
 from services import bank_service
 
 router = APIRouter(prefix="/banks", tags=["Banks"])
@@ -30,7 +29,7 @@ async def create_bank_account(
 ):
     return await bank_service.create_bank_account(
         body=body, admin_id=admin.id,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
 
 
@@ -44,7 +43,7 @@ async def update_bank_account(
 ):
     return await bank_service.update_bank_account(
         bank_id=bank_id, body=body, admin_id=admin.id,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
 
 
@@ -70,5 +69,5 @@ async def delete_bank_account(
 ):
     return await bank_service.delete_bank_account(
         bank_id=bank_id, admin_id=admin.id,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )

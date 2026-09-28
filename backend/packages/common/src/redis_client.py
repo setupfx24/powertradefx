@@ -14,12 +14,6 @@ redis_pool = aioredis.ConnectionPool.from_url(
 redis_client = aioredis.Redis(connection_pool=redis_pool)
 
 
-# Written by market-data every 30 s (TTL 120 s); read by the gateway /health
-# endpoint and the admin UI so a dead upstream feed is visible to operators
-# instead of silently freezing every non-crypto quote.
-FEED_STATUS_KEY = "feed:status"
-
-
 class PriceChannel:
     TICK_PREFIX = "tick:"
     # Durable last-known price (no TTL) — read as a fallback when the live
@@ -52,10 +46,9 @@ async def publish_price(
     timestamp: str,
     stale: bool = False,
     spread_mult: float = 1.0,
-    last_live_ms: int | None = None,
 ):
     import json
-    payload = {
+    data = json.dumps({
         "symbol": symbol,
         "bid": bid,
         "ask": ask,
@@ -76,13 +69,7 @@ async def publish_price(
         # SL/TP / stop-out / liquidation MUST NOT act on a stale quote —
         # a dead feed must never trigger phantom closes.
         "stale": bool(stale),
-    }
-    if last_live_ms:
-        # Epoch ms of the last REAL feed tick for this symbol. Only set on
-        # stale republishes, so the UI can say "last update 7 Sep 03:41"
-        # instead of showing a frozen number as if it were live.
-        payload["last_live_ms"] = int(last_live_ms)
-    data = json.dumps(payload)
+    })
     # 120 s TTL: if market-data dies, stale prices clear themselves
     # within 2 min instead of persisting forever. Live feed refreshes
     # the key on every tick (sub-second cadence), so the TTL never

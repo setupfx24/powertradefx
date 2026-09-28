@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.database import get_db
-from packages.common.src.auth import get_current_user
+from packages.common.src.auth import get_current_user, require_full_session
 from packages.common.src.models import (
     TradingAccount,
     Transaction,
@@ -22,7 +22,7 @@ from packages.common.src.schemas import (
     WalletNonceRequest, WalletNonceResponse, WalletVerifyRequest,
     UpdateProfileRequest, ChangePasswordRequest,
 )
-from ..services import profile_service, auth_service, wallet_auth_service
+from ..services import profile_service, auth_service, wallet_auth_service, sensitive_action_service
 from ..services.auth_service import client_ip_for_inet
 
 router = APIRouter()
@@ -112,7 +112,7 @@ async def update_profile(
 @router.put("/password")
 async def change_password(
     req: ChangePasswordRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_full_session),
     db: AsyncSession = Depends(get_db),
 ):
     return await profile_service.change_password(
@@ -120,6 +120,7 @@ async def change_password(
         current_password=req.current_password,
         new_password=req.new_password,
         db=db,
+        keep_sid=current_user.get("sid"),
     )
 
 
@@ -159,6 +160,8 @@ async def submit_kyc(
     city: str | None = Form(None),
     postal_code: str | None = Form(None),
     country_of_residence: str | None = Form(None),
+    pan_number: str | None = Form(None),
+    aadhaar_number: str | None = Form(None),
 ):
     """Upload one or two KYC documents (multipart). Optional address fields update the user profile.
 
@@ -179,6 +182,8 @@ async def submit_kyc(
         city=city,
         postal_code=postal_code,
         country_of_residence=country_of_residence,
+        pan_number=pan_number,
+        aadhaar_number=aadhaar_number,
         db=db,
     )
 
@@ -221,7 +226,7 @@ async def link_wallet_nonce(
 @router.post("/wallet/link")
 async def link_wallet(
     req: WalletVerifyRequest, request: Request,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_full_session),
     db: AsyncSession = Depends(get_db),
 ):
     """Verify a SIWE signature for the authenticated user and persist the
@@ -326,10 +331,16 @@ async def link_wallet(
 @router.delete("/wallet/link")
 async def unlink_wallet(
     request: Request,
-    current_user: dict = Depends(get_current_user),
+    challenge_id: str,
+    current_user: dict = Depends(require_full_session),
     db: AsyncSession = Depends(get_db),
 ):
     """Remove the linked wallet from the authenticated user's account.
+
+    H-AUTH-2: disconnecting the wallet is the only way to change the account's
+    withdrawal address (one wallet per account), so it requires a step-up
+    verification. The client first completes /auth/step-up/start + verify for
+    action='wallet_disconnect' and passes the challenge_id here.
 
     Refused when the wallet is the user's only sign-in method — they'd
     lock themselves out. After disconnect the onboarding gate kicks in
@@ -347,6 +358,15 @@ async def unlink_wallet(
             status_code=400,
             detail="Cannot disconnect your only sign-in method. Set a password or link Google first.",
         )
+
+    # H-AUTH-2: require a fresh, verified step-up challenge for this action.
+    try:
+        _cid = UUID(challenge_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="A verification is required to disconnect your wallet.")
+    await sensitive_action_service.consume_verified_challenge(
+        user.id, _cid, "wallet_disconnect", db,
+    )
 
     prior_address = user.wallet_address
     user.wallet_address = None

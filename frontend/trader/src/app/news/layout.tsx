@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 export const metadata = {
-  title: 'Market News — PowerTradeFX',
+  title: 'Market News — SwissCresta',
   description: 'Live market news, economic events, and trading commentary.',
 }
 

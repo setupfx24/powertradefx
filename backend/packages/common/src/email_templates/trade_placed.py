@@ -28,7 +28,7 @@ def render_trade_placed(
     stop_loss: Decimal | float | None,
     take_profit: Decimal | float | None,
     when_utc: str,
-    trader_app_url: str = "https://trade.powertradefx.com",
+    trader_app_url: str = "https://trade.swisscresta.com",
 ) -> tuple[str, str, str]:
     name = (first_name or "trader").strip() or "trader"
     side_u = (side or "").upper()
@@ -83,7 +83,7 @@ def render_trade_placed(
         cta_url=f"{trader_app_url.rstrip('/')}/trading",
         footer_note=(
             "Wasn't you? Change your password right away and email "
-            "support@powertradefx.com so we can lock the account."
+            "support@swisscresta.com so we can lock the account."
         ),
     )
 
@@ -108,6 +108,6 @@ def render_trade_placed(
         "",
         f"Open the dashboard: {trader_app_url.rstrip('/')}/trading",
         "",
-        "Didn't place this order? Email support@powertradefx.com immediately.",
+        "Didn't place this order? Email support@swisscresta.com immediately.",
     ]
     return subject, html, "\n".join(text_lines)

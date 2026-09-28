@@ -13,6 +13,7 @@ from packages.common.src.models import (
 )
 from dependencies import write_audit_log
 from packages.common.src.admin_fees import credit_admin_fee
+from packages.common.src.row_locks import lock_account
 
 
 def _generate_pool_account_number(prefix: str = "PM") -> str:
@@ -109,22 +110,135 @@ async def distribute_pamm_profit(
     ip_address: str | None,
     db: AsyncSession,
 ) -> dict:
-    """DEPRECATED — PAMM now settles via NAV units.
-
-    Investors buy units at the live NAV when they invest and realise P&L
-    automatically on withdrawal (units x pool NAV, performance fee applied
-    there). This manual distribution predates the NAV model: it credited
-    investor sub-accounts PAMM investors do not have, never debited the
-    pool (minting money), and double-paid anyone who later withdrew.
-    """
-    raise HTTPException(
-        status_code=400,
-        detail=(
-            "Deprecated: PAMM profit settles automatically via NAV when an "
-            "investor withdraws. Manual distribution is disabled because it "
-            "double-pays and does not debit the pool."
-        ),
+    master_result = await db.execute(
+        select(MasterAccount).where(
+            MasterAccount.id == master_id,
+            MasterAccount.master_type == "pamm",
+            MasterAccount.status == "approved",
+        )
     )
+    master = master_result.scalar_one_or_none()
+    if not master:
+        raise HTTPException(status_code=404, detail="PAMM pool not found or not approved")
+
+    master_pnl_result = await db.execute(
+        select(func.coalesce(func.sum(TradeHistory.profit), 0)).where(
+            TradeHistory.account_id == master.account_id
+        )
+    )
+    master_total_pnl = float(master_pnl_result.scalar() or 0)
+    if master_total_pnl <= 0:
+        raise HTTPException(status_code=400, detail="No profit to distribute")
+
+    alloc_result = await db.execute(
+        select(InvestorAllocation, TradingAccount)
+        .join(TradingAccount, InvestorAllocation.investor_account_id == TradingAccount.id)
+        .where(InvestorAllocation.master_id == master_id, InvestorAllocation.status == "active")
+    )
+    allocations = alloc_result.all()
+    if not allocations:
+        raise HTTPException(status_code=400, detail="No active investors in this pool")
+
+    total_pool = sum(float(alloc.allocation_amount or 0) for alloc, _ in allocations)
+    if total_pool <= 0:
+        raise HTTPException(status_code=400, detail="No capital in pool")
+
+    perf_fee_pct = float(master.performance_fee_pct or 0)
+    admin_commission_pct = float(master.admin_commission_pct or 0)
+
+    distributions = []
+    total_perf_fee = 0.0
+    total_admin_fee = 0.0
+
+    for alloc, investor_account in allocations:
+        share_pct = float(alloc.allocation_amount or 0) / total_pool
+        gross_due = master_total_pnl * share_pct
+        already_paid = float(alloc.total_profit or 0)
+        new_gross = gross_due - already_paid
+
+        if new_gross <= 0:
+            continue
+
+        perf_fee = new_gross * perf_fee_pct / 100
+        admin_fee = perf_fee * admin_commission_pct / 100
+        net_profit = new_gross - perf_fee
+
+        # C-TRADE-4 (Medium): lock the investor account before crediting the
+        # settlement so it can't race a concurrent close / transfer / withdrawal.
+        investor_account = await lock_account(db, alloc.investor_account_id)
+        if investor_account is None:
+            continue
+        investor_account.balance = (investor_account.balance or Decimal("0")) + Decimal(str(round(net_profit, 8)))
+        investor_account.equity = investor_account.balance + (investor_account.credit or Decimal("0"))
+        alloc.total_profit = (alloc.total_profit or Decimal("0")) + Decimal(str(round(net_profit, 8)))
+
+        db.add(Transaction(
+            user_id=alloc.investor_user_id,
+            account_id=alloc.investor_account_id,
+            type="performance_fee",
+            amount=Decimal(str(round(net_profit, 8))),
+            description=f"PAMM profit distribution — {share_pct * 100:.2f}% share",
+            created_by=admin_id,
+        ))
+
+        total_perf_fee += perf_fee
+        total_admin_fee += admin_fee
+        distributions.append({
+            "allocation_id": str(alloc.id),
+            "investor_user_id": str(alloc.investor_user_id),
+            "share_pct": round(share_pct * 100, 2),
+            "gross_profit": round(new_gross, 2),
+            "performance_fee": round(perf_fee, 2),
+            "net_profit": round(net_profit, 2),
+        })
+
+    master_cut = total_perf_fee - total_admin_fee
+    if master_cut > 0:
+        # C-TRADE-4 (Medium): lock the master pool before crediting its cut.
+        master_acct = await lock_account(db, master.account_id)
+        if master_acct:
+            master_acct.balance = (master_acct.balance or Decimal("0")) + Decimal(str(round(master_cut, 8)))
+            master_acct.equity = master_acct.balance + (master_acct.credit or Decimal("0"))
+            master_acct.free_margin = master_acct.equity - (master_acct.margin_used or Decimal("0"))
+            db.add(Transaction(
+                user_id=master.user_id,
+                account_id=master.account_id,
+                type="ib_commission",
+                amount=Decimal(str(round(master_cut, 8))),
+                balance_after=master_acct.balance,
+                description="PAMM manager performance fee earnings",
+                created_by=admin_id,
+            ))
+
+        # Track master's total fee earned
+        master.total_fee_earned = (master.total_fee_earned or Decimal("0")) + Decimal(str(round(master_cut, 8)))
+
+    # Credit admin platform fee
+    if total_admin_fee > 0:
+        await credit_admin_fee(
+            db, Decimal(str(round(total_admin_fee, 8))),
+            description=f"Platform commission from PAMM profit distribution (master {master_id})",
+        )
+
+    total_net = sum(d["net_profit"] for d in distributions)
+    await write_audit_log(
+        db, admin_id, "distribute_pamm_profit", "master_account", master_id,
+        new_values={
+            "distributions_count": len(distributions),
+            "total_distributed": round(total_net, 2),
+            "total_performance_fees": round(total_perf_fee, 2),
+        },
+        ip_address=ip_address,
+    )
+    await db.commit()
+
+    return {
+        "message": f"Distributed profit to {len(distributions)} investor(s)",
+        "total_distributed": round(total_net, 2),
+        "total_performance_fees": round(total_perf_fee, 2),
+        "total_admin_fees": round(total_admin_fee, 2),
+        "distributions": distributions,
+    }
 
 
 async def list_master_requests(page: int, per_page: int, db: AsyncSession) -> dict:
@@ -450,8 +564,6 @@ async def master_transactions(
     page: int = 1,
     per_page: int = 20,
     filter_type: str = "all",
-    date_from: str | None = None,
-    date_to: str | None = None,
 ) -> dict:
     """Paginated transaction history on a specific master pool account.
 
@@ -493,31 +605,10 @@ async def master_transactions(
     }
     allowed_types = type_filters.get(filter_type, type_filters["all"])
 
-    # Inclusive date window (YYYY-MM-DD); bad input is a 400, not a
-    # silent no-filter — an audit view must never show MORE than asked.
-    from datetime import datetime, timedelta, timezone
-    date_conds = []
-    try:
-        if date_from:
-            start = datetime.fromisoformat(date_from)
-            if start.tzinfo is None:
-                start = start.replace(tzinfo=timezone.utc)
-            date_conds.append(Transaction.created_at >= start)
-        if date_to:
-            end = datetime.fromisoformat(date_to)
-            if end.tzinfo is None:
-                end = end.replace(tzinfo=timezone.utc)
-            if len(date_to) <= 10:
-                end = end + timedelta(days=1)
-            date_conds.append(Transaction.created_at < end)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date filter — use YYYY-MM-DD")
-
     count_q = await db.execute(
         select(func.count()).select_from(Transaction).where(
             Transaction.account_id == master.account_id,
             Transaction.type.in_(allowed_types),
-            *date_conds,
         )
     )
     total = int(count_q.scalar() or 0)
@@ -526,7 +617,6 @@ async def master_transactions(
         select(Transaction).where(
             Transaction.account_id == master.account_id,
             Transaction.type.in_(allowed_types),
-            *date_conds,
         ).order_by(Transaction.created_at.desc())
         .limit(per_page).offset((page - 1) * per_page)
     )
@@ -545,7 +635,7 @@ async def master_transactions(
         for ct, alloc, follower in copy_q.all():
             follower_by_ref[ct.investor_position_id] = {
                 "user_id": str(follower.id),
-                "name": (f"{follower.first_name or ''} {follower.last_name or ''}".strip() or follower.email),
+                "name": f"{follower.first_name or ''} {follower.last_name or ''}".strip() or follower.email,
                 "email": follower.email,
             }
         pos_q = await db.execute(
@@ -597,7 +687,7 @@ async def master_transactions(
 
     summary_q = await db.execute(
         select(Transaction.type, func.coalesce(func.sum(Transaction.amount), 0))
-        .where(Transaction.account_id == master.account_id, *date_conds)
+        .where(Transaction.account_id == master.account_id)
         .group_by(Transaction.type)
     )
     raw = {row[0]: float(row[1] or 0) for row in summary_q.all()}
@@ -618,7 +708,7 @@ async def master_transactions(
         "master": {
             "id": str(master.id),
             "user_id": str(master.user_id),
-            "name": (master_user.full_name or master_user.email) if master_user else None,
+            "name": (f"{master_user.first_name or ''} {master_user.last_name or ''}".strip() or master_user.email) if master_user else None,
             "email": master_user.email if master_user else None,
             "performance_fee_pct": perf_pct,
             "admin_commission_pct": admin_pct,

@@ -30,6 +30,10 @@ function ResetPasswordForm() {
   // Email now sends a 6-digit code (no magic link). Pre-fill from a legacy
   // ?token= link if present, otherwise the user types the code.
   const [code, setCode] = useState(searchParams.get('token') || '');
+  // C-AUTH-1: the reset code is now bound to the account, so the e-mail is
+  // required. Pre-fill it from the forgot-password redirect (?email=) when
+  // present; otherwise the user types the address they requested the code for.
+  const [email, setEmail] = useState(searchParams.get('email') || '');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [showPw, setShowPw] = useState(false);
@@ -39,6 +43,10 @@ function ResetPasswordForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) {
+      toast.error('Enter the email you requested the code for');
+      return;
+    }
     if (code.trim().length < 6) {
       toast.error('Enter the 6-digit code from your email');
       return;
@@ -54,6 +62,7 @@ function ResetPasswordForm() {
     setLoading(true);
     try {
       const res = await api.post<{ message: string }>('/auth/reset-password', {
+        email: email.trim(),
         token: code.trim(),
         new_password: password,
       });
@@ -70,22 +79,31 @@ function ResetPasswordForm() {
     <div className="auth-page min-h-screen relative overflow-hidden bg-bg-primary flex flex-col items-center justify-center px-6 py-10">
       <div className="w-full max-w-[400px]">
         <div className="mb-8 flex flex-col items-center gap-3">
-          {/* Inline brand monogram — no PNG dependency. Same A-peak mark
-              as the footer so the user knows they haven't been redirected
-              to a different brand mid-reset. */}
+          {/* Inline Swiss-flag brand mark — no PNG dependency.
+              Same mark as the navbar / hero so the user knows they
+              haven't been redirected to a different brand mid-reset. */}
           <svg viewBox="0 0 32 32" aria-hidden="true" className="w-14 h-14">
-            <rect width="32" height="32" rx="7" className="fill-accent" />
-            <path fillRule="evenodd" d="M11 6.5 H19.2 C23.3 6.5 26.2 9.3 26.2 13.2 C26.2 17.1 23.3 19.9 19.2 19.9 H15.2 V25.5 H11 Z M15.2 10.2 V16.2 H18.9 C20.9 16.2 22 15 22 13.2 C22 11.4 20.9 10.2 18.9 10.2 Z" fill="#ffffff" />
+            <rect width="32" height="32" rx="4" fill="#DC2626" />
+            <rect x="13" y="6" width="6" height="20" fill="#ffffff" />
+            <rect x="6" y="13" width="20" height="6" fill="#ffffff" />
           </svg>
           <span className="inline-flex items-baseline font-bold italic tracking-tight text-lg select-none">
-            <span className="text-text-primary">PowerTrade</span>
-            <span className="text-accent">FX</span>
+            <span className="text-text-primary">Swiss</span>
+            <span className="text-[#E94E1B]">Cresta</span>
           </span>
         </div>
         <div className="glass-panel rounded-3xl p-8 noise-texture overflow-hidden">
           <h1 className="text-xl font-bold text-text-primary mb-2">Reset password</h1>
           <p className="text-xs text-text-tertiary mb-6">Enter the 6-digit code we emailed you, then choose a new password.</p>
           <form onSubmit={handleSubmit} className="space-y-4">
+            <Input
+              label="Email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              placeholder="you@example.com"
+            />
             <Input
               label="Reset code"
               type="text"

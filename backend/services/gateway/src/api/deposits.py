@@ -19,7 +19,7 @@ from packages.common.src.schemas import (
     TxHashSaveRequest,
     WithdrawalRequest,
 )
-from packages.common.src.auth import get_current_user
+from packages.common.src.auth import get_current_user, require_full_session
 from ..services import wallet_service, onchain_deposit_service, onchain_withdraw_service
 
 router = APIRouter()
@@ -102,11 +102,12 @@ async def create_manual_withdrawal(
     upi_id: str = Form(""),
     payout_notes: str = Form(""),
     file: UploadFile | None = File(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_full_session),
     db: AsyncSession = Depends(get_db),
 ):
     """Manual UPI / QR-payout withdrawal: user submits UPI ID and/or a QR
-    image; goes to admin queue for manual payout. Multipart body."""
+    image; goes to admin queue for manual payout. Multipart body.
+    403s with KYC_REQUIRED unless the user's KYC is approved."""
     rate_limit_http(request, "wallet-withdraw-manual", 10, 60.0)
     return await wallet_service.create_manual_withdrawal(
         user_id=current_user["user_id"],
@@ -118,7 +119,7 @@ async def create_manual_withdrawal(
     )
 
 
-# ─── Local Banking request (admin-mediated, KYC-gated) ────────────────────
+# ─── Local Banking request (admin-mediated) ───────────────────────────────
 
 
 @router.post("/deposit/local-banking", status_code=201)
@@ -129,9 +130,9 @@ async def create_local_banking_request(
     db: AsyncSession = Depends(get_db),
 ):
     """Stage 1 of the local banking flow — user submits a request, admin
-    reviews KYC and shares a payment link out of band (or attaches it via
-    the admin panel). KYC must be approved or the call 403s with
-    KYC_REQUIRED so the trader UI can route to /kyc."""
+    shares a payment link out of band (or attaches it via the admin
+    panel). No KYC gate: deposits are open to everyone; identity is
+    verified at withdrawal time instead."""
     rate_limit_http(request, "wallet-deposit-lb", 20, 60.0)
     return await wallet_service.create_local_banking_request(
         amount=amount,
@@ -356,7 +357,7 @@ async def get_onchain_deposit_status(
 async def create_withdrawal(
     req: WithdrawalRequest,
     request: Request,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_full_session),
     db: AsyncSession = Depends(get_db),
 ):
     # 10/min cap on withdrawals — even legitimate users don't withdraw
@@ -375,7 +376,7 @@ async def create_withdrawal(
 async def create_onchain_withdrawal(
     req: OnchainWithdrawRequest,
     request: Request,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_full_session),
     db: AsyncSession = Depends(get_db),
 ):
     """User initiates a wallet-connect withdrawal: pick chain + paste their

@@ -73,9 +73,7 @@ async def get_dashboard_stats(db: AsyncSession) -> DashboardStats:
     # Withdrawals Today.
     withdrawals_today_q = await db.execute(
         select(func.coalesce(func.sum(Withdrawal.amount), 0)).where(
-            # "paid" is the terminal state mark_withdrawal_paid writes —
-            # without it, paid-out withdrawals vanished from this stat.
-            Withdrawal.status.in_(["approved", "completed", "paid"]),
+            Withdrawal.status.in_(["approved", "completed"]),
             Withdrawal.created_at >= today_start,
         )
     )
@@ -157,7 +155,7 @@ async def dashboard_revenue_series(days: int, db: AsyncSession) -> DashboardReve
         await db.execute(
             select(w_bucket, func.coalesce(func.sum(Withdrawal.amount), 0))
             .where(
-                Withdrawal.status.in_(["approved", "completed", "paid"]),
+                Withdrawal.status.in_(["approved", "completed"]),
                 Withdrawal.created_at >= cutoff,
             )
             .group_by(w_bucket)

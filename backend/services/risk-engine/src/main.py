@@ -5,10 +5,12 @@ Continuously monitors all open positions and accounts for:
 - Stop-out execution (close positions if margin level drops below threshold)
 - Exposure monitoring (admin's B-book risk per instrument)
 
-Swap/rollover charging deliberately does NOT live here — the gateway's
-overnight_fee_engine is the single swap authority (idempotent via
-positions.last_swap_at). A duplicate 21:00 UTC swap loop used to run here
-with no idempotency marker, double-charging every open position.
+Rollover/swap charging does NOT live here. The gateway's overnight_fee_engine
+is the single authority: it resolves the same SwapConfig chain via
+resolve_swap_rate, is idempotent (positions.last_swap_at), leader-locked, and
+writes Transaction audit rows. A second SwapConfig-based calculator used to run
+in this service at 21:00 UTC with none of those guards — the same position
+could be charged by both engines in one night — so it was removed.
 """
 import asyncio
 import json
@@ -17,7 +19,7 @@ from decimal import Decimal
 from datetime import datetime, timezone
 from collections import defaultdict
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.database import AsyncSessionLocal
@@ -26,6 +28,7 @@ from packages.common.src.models import (
     OrderSide, Notification, Transaction, TradeHistory, User,
 )
 from packages.common.src.redis_client import redis_client, PriceChannel, is_tick_stale
+from packages.common.src.row_locks import lock_account
 from packages.common.src.kafka_client import produce_event, KafkaTopics
 from packages.common.src.config import get_settings
 from packages.common.src import corecen_trade_client
@@ -41,6 +44,11 @@ except Exception:
 
 settings = get_settings()
 
+# Demo accounts are practice money — they auto-refill back to the standard
+# balance once they're flat and below the floor (see the NBP sweep).
+DEMO_REFILL_BALANCE = Decimal("10000")
+DEMO_REFILL_FLOOR = Decimal("100")
+
 
 class RiskEngine:
     def __init__(self):
@@ -51,11 +59,10 @@ class RiskEngine:
         self._running = True
         logger.info("Risk Engine started")
 
-        # NOTE: no swap loop here — see module docstring. The gateway's
-        # overnight_fee_engine owns all swap/rollover charging.
         await asyncio.gather(
             self._margin_monitor(),
             self._exposure_monitor(),
+            self._negative_balance_protection(),
         )
 
     async def stop(self):
@@ -99,7 +106,17 @@ class RiskEngine:
                             # dead-feed prices.
                             if is_tick_stale(tick):
                                 continue
-                            current_price = Decimal(str(tick["bid"])) if pos.side == OrderSide.BUY else Decimal(str(tick["ask"]))
+                            # Value the float on the MID, not the spread-adjusted
+                            # bid/ask. bid/ask move with the platform spread, so a
+                            # spread change — including an admin widening it while
+                            # the market never moved — would drop the float and
+                            # margin level and could force a stop-out the real
+                            # market never warranted. The mid ties the stop-out
+                            # decision to genuine price movement only. (An actual
+                            # stop-out still books at the real bid/ask in
+                            # _execute_stop_out — the user pays the spread on a
+                            # forced close; it just cannot be TRIGGERED by spread.)
+                            current_price = (Decimal(str(tick["bid"])) + Decimal(str(tick["ask"]))) / Decimal("2")
 
                             if pos.side == OrderSide.BUY:
                                 pnl = (current_price - pos.open_price) * pos.lots * pos.instrument.contract_size
@@ -172,19 +189,23 @@ class RiskEngine:
         """Close positions until margin level is restored above stop-out."""
         logger.warning(f"Stop-out triggered for account {account.account_number}")
 
+        # Lock the account row FOR UPDATE before mutating balance — otherwise a
+        # concurrent close (manual, SL/TP) on the same account can lose-update the
+        # balance. Same session, so this locks the row the loaded object maps to.
+        locked_account = await lock_account(db, account.id)
+        if locked_account is not None:
+            account = locked_account
+
         closed_count = 0
         realized_pnl = Decimal("0")
 
-        # Price every candidate once (same stale-tick guard as the margin
-        # monitor) and sort by LIVE P&L. The old code sorted on the stored
-        # positions.profit column, which nothing on the hot path refreshes —
-        # "worst-loss-first" was effectively random ordering.
-        from packages.common.src.trading_service import quote_to_account_pnl, cross_rate_for
-        candidates: list[tuple[Position, Decimal, Decimal]] = []
-        for pos in positions:
+        sorted_positions = sorted(positions, key=lambda p: p.profit)
+
+        for pos in sorted_positions:
             tick_data = await redis_client.get(PriceChannel.tick_key(pos.instrument.symbol))
             if not tick_data:
                 continue
+
             tick = json.loads(tick_data)
             # Stale-price guard: never close a position at a frozen/refresher
             # price during a stop-out. Leaving it open is safer than booking a
@@ -197,6 +218,7 @@ class RiskEngine:
                 profit = (close_price - pos.open_price) * pos.lots * pos.instrument.contract_size
             else:
                 profit = (pos.open_price - close_price) * pos.lots * pos.instrument.contract_size
+            from packages.common.src.trading_service import quote_to_account_pnl, cross_rate_for
             profit = quote_to_account_pnl(
                 profit,
                 getattr(pos.instrument, "base_currency", None),
@@ -205,36 +227,24 @@ class RiskEngine:
                 symbol=getattr(pos.instrument, "symbol", None),
                 cross_rate=await cross_rate_for(pos.instrument),
             )
-            candidates.append((pos, close_price, profit))
 
-        candidates.sort(key=lambda c: c[2])  # worst live loss first
-
-        # Floating P&L of the not-yet-closed candidates, so the margin-level
-        # recheck after each close sees true equity instead of balance+credit.
-        # Positions skipped for staleness count as 0 float — same fail-safe
-        # direction as the margin monitor.
-        remaining_float = sum((c[2] for c in candidates), Decimal("0"))
-
-        for pos, close_price, profit in candidates:
-            closed_at = datetime.now(timezone.utc)
             pos.status = PositionStatus.CLOSED
             pos.close_price = close_price
             pos.profit = profit
-            pos.closed_at = closed_at
-            pos.comment = "Closed by stop-out"
+            pos.closed_at = datetime.now(timezone.utc)
+            pos.comment = "Auto-closed by STOP OUT"
 
             account.balance += profit
             margin_release = (pos.lots * pos.instrument.contract_size * pos.open_price) / Decimal(str(account.leverage))
             account.margin_used = max(Decimal("0"), account.margin_used - margin_release)
-            remaining_float -= profit
-            account.equity = account.balance + account.credit + remaining_float
+            account.equity = account.balance + account.credit
             account.free_margin = account.equity - account.margin_used
 
-            # Ledger rows — same shape as the gateway close paths (sltp_engine,
-            # trading_service.close_position). Without these, stop-out closes
-            # were invisible to trade history/statements until the gateway's
-            # trade-history healer back-filled them, and the balance change
-            # never appeared in the transactions ledger at all.
+            # Durable audit trail — every close path MUST write TradeHistory +
+            # Transaction in the same session as the balance mutation. This
+            # path used to write neither, which is exactly the hole the
+            # gateway's _heal_missing_trade_history() loop was papering over
+            # (it fabricated rows minutes later with a WARNING).
             db.add(TradeHistory(
                 position_id=pos.id,
                 account_id=pos.account_id,
@@ -248,17 +258,33 @@ class RiskEngine:
                 profit=profit,
                 close_reason="stop_out",
                 opened_at=pos.created_at,
-                closed_at=closed_at,
+                closed_at=pos.closed_at,
             ))
             db.add(Transaction(
                 user_id=account.user_id,
-                account_id=account.id,
+                account_id=pos.account_id,
                 type="profit" if profit >= 0 else "loss",
                 amount=profit,
                 balance_after=account.balance,
                 reference_id=pos.id,
-                description=f"Stop-out: {pos.instrument.symbol} {pos.side.value} {pos.lots} lots @ {close_price}",
+                description=(
+                    f"Stop-out: {pos.instrument.symbol} "
+                    f"{pos.side.value if hasattr(pos.side, 'value') else pos.side} "
+                    f"{pos.lots} lots @ {close_price}"
+                ),
             ))
+            db.add(Notification(
+                user_id=account.user_id,
+                title=f"Stop Out — {pos.instrument.symbol}",
+                message=(
+                    f"Position closed by stop-out at {close_price} | "
+                    f"P&L: {'+' if profit >= 0 else ''}{float(profit):.2f}"
+                ),
+                type="margin_call",
+            ))
+            # NOTE: bonus wagering release (wallet_service.release_bonuses_after_trade)
+            # lives in the gateway package and is not importable from this service;
+            # stop-out lots therefore don't feed the bonus FIFO. Known gap.
 
             closed_count += 1
             realized_pnl += profit
@@ -305,21 +331,6 @@ class RiskEngine:
             if margin_level > Decimal(str(_so)):
                 break
 
-        # In-app notification — the margin-call path already writes one; the
-        # stop-out (the event that actually cost the user money) previously
-        # published only a transient WS message.
-        if closed_count > 0:
-            db.add(Notification(
-                user_id=account.user_id,
-                title="Stop Out Executed",
-                message=(
-                    f"{closed_count} position(s) on account {account.account_number} "
-                    f"were closed automatically (realized P/L {realized_pnl:.2f}) "
-                    "because the margin level fell below the stop-out threshold."
-                ),
-                type="margin_call",
-            ))
-
         # After the stop-out loop ends — email the user a summary. Skipped on
         # demo accounts, and on the no-op case where nothing was actually
         # closed (defensive — shouldn't happen but cheap to guard).
@@ -362,7 +373,7 @@ class RiskEngine:
                 used_margin=used_margin,
                 free_margin=free_margin,
                 currency=account.currency or "USD",
-                trader_app_url=getattr(st, "TRADER_APP_URL", None) or "https://trade.powertradefx.com",
+                trader_app_url=getattr(st, "TRADER_APP_URL", None) or "https://trade.swisscresta.com",
             )
             fire_and_forget(send_email(user.email, subject, html, text=text))
         except Exception as e:
@@ -396,11 +407,127 @@ class RiskEngine:
                 realized_pnl=realized_pnl,
                 new_equity=new_equity,
                 currency=account.currency or "USD",
-                trader_app_url=getattr(st, "TRADER_APP_URL", None) or "https://trade.powertradefx.com",
+                trader_app_url=getattr(st, "TRADER_APP_URL", None) or "https://trade.swisscresta.com",
             )
             fire_and_forget(send_email(user.email, subject, html, text=text))
         except Exception as e:
             logger.debug("stop-out email failed acct=%s: %s", account.account_number, e)
+
+    async def _negative_balance_protection(self):
+        """Zero out negative balances once an account is flat (standard
+        retail-broker NBP). A stop-out at the 50% margin level can still
+        overshoot below zero — price gaps, fast moves, or (historically) a
+        feed-stale window where the guard rightly refused to close at dead
+        prices. Once every position is closed and the balance is negative,
+        the deficit is written off with a proper `adjustment` Transaction so
+        the ledger explains the correction instead of the balance silently
+        changing. Runs for demo and live alike; the B-book house absorbs
+        the live-side deficit (that's what NBP means)."""
+        logger.info("Negative balance protection started")
+        while self._running:
+            try:
+                async with AsyncSessionLocal() as db:
+                    rows = (await db.execute(
+                        select(TradingAccount).where(
+                            TradingAccount.balance < 0,
+                            TradingAccount.is_active == True,  # noqa: E712
+                        ).with_for_update(skip_locked=True)
+                    )).scalars().all()
+                    for account in rows:
+                        open_count = (await db.execute(
+                            select(func.count(Position.id)).where(
+                                Position.account_id == account.id,
+                                Position.status == PositionStatus.OPEN,
+                            )
+                        )).scalar() or 0
+                        if open_count:
+                            continue  # still has exposure — wait until flat
+                        deficit = -account.balance
+                        account.balance = Decimal("0")
+                        account.equity = account.credit or Decimal("0")
+                        account.margin_used = Decimal("0")
+                        account.free_margin = account.equity
+                        account.margin_level = Decimal("0")
+                        db.add(Transaction(
+                            user_id=account.user_id,
+                            account_id=account.id,
+                            type="adjustment",
+                            amount=deficit,
+                            balance_after=Decimal("0"),
+                            description="Negative balance protection: deficit written off",
+                        ))
+                        db.add(Notification(
+                            user_id=account.user_id,
+                            title="Negative balance corrected",
+                            message=(
+                                f"Account {account.account_number}: a negative "
+                                f"balance of {float(-deficit):.2f} was reset to "
+                                f"0.00 under negative balance protection."
+                            ),
+                            type="margin_call",
+                        ))
+                        logger.warning(
+                            "NBP: account %s deficit %.2f written off",
+                            account.account_number, float(deficit),
+                        )
+                    await db.commit()
+
+                # ── Demo auto-refill ──────────────────────────────────
+                # A practice account should never stay broke: once a demo
+                # account is flat and its balance has fallen below the
+                # refill floor, top it back up to the standard demo
+                # balance — with a ledger row, like every balance change.
+                async with AsyncSessionLocal() as db:
+                    demo_rows = (await db.execute(
+                        select(TradingAccount).where(
+                            TradingAccount.is_demo == True,  # noqa: E712
+                            TradingAccount.is_active == True,  # noqa: E712
+                            TradingAccount.balance < DEMO_REFILL_FLOOR,
+                        ).with_for_update(skip_locked=True)
+                    )).scalars().all()
+                    for account in demo_rows:
+                        open_count = (await db.execute(
+                            select(func.count(Position.id)).where(
+                                Position.account_id == account.id,
+                                Position.status == PositionStatus.OPEN,
+                            )
+                        )).scalar() or 0
+                        if open_count:
+                            continue
+                        top_up = DEMO_REFILL_BALANCE - account.balance
+                        if top_up <= 0:
+                            continue
+                        account.balance = DEMO_REFILL_BALANCE
+                        account.equity = DEMO_REFILL_BALANCE + (account.credit or Decimal("0"))
+                        account.margin_used = Decimal("0")
+                        account.free_margin = account.equity
+                        db.add(Transaction(
+                            user_id=account.user_id,
+                            account_id=account.id,
+                            type="adjustment",
+                            amount=top_up,
+                            balance_after=account.balance,
+                            description="Demo auto-refill: practice balance restored",
+                        ))
+                        db.add(Notification(
+                            user_id=account.user_id,
+                            title="Demo balance refilled",
+                            message=(
+                                f"Demo account {account.account_number} was "
+                                f"topped back up to "
+                                f"${float(DEMO_REFILL_BALANCE):,.0f} so you "
+                                f"can keep practicing."
+                            ),
+                            type="margin_call",
+                        ))
+                        logger.info(
+                            "Demo refill: account %s topped up by %.2f",
+                            account.account_number, float(top_up),
+                        )
+                    await db.commit()
+            except Exception as e:
+                logger.error(f"NBP sweep error: {e}")
+            await asyncio.sleep(60)
 
     async def _exposure_monitor(self):
         """Track the admin's net exposure per instrument (B-book risk)."""

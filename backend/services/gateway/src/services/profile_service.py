@@ -7,6 +7,8 @@ from uuid import UUID
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy import select
+
+from packages.common.src.kyc_identifiers import normalise_pan, prepare_aadhaar
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +17,7 @@ from packages.common.src.auth import hash_password, verify_password
 from packages.common.src.config import get_settings
 from packages.common.src.path_safety import PathTraversalError, safe_join_under_base
 from packages.common.src.notify import create_notification
+from packages.common.src.email_branding import apply_email_brand
 
 logger = logging.getLogger("profile_service")
 
@@ -101,7 +104,7 @@ async def get_profile(user_id: UUID, db: AsyncSession) -> dict:
         "id": str(user.id),
         "email": user.email,
         "email_verified": bool(getattr(user, "email_verified", False)),
-        "is_wallet_placeholder": (user.email or "").lower().endswith("@wallet.powertradefx.local"),
+        "is_wallet_placeholder": (user.email or "").lower().endswith("@wallet.swisscresta.local"),
         "first_name": user.first_name,
         "last_name": user.last_name,
         "phone": user.phone,
@@ -174,6 +177,7 @@ async def update_profile(
     if profile_complete and not getattr(user, "welcome_email_sent", False):
         try:
             from .auth_service import _send_welcome_email
+            await apply_email_brand(db, user)
             _send_welcome_email(user, via_google=False)
             user.welcome_email_sent = True
             await db.commit()
@@ -201,6 +205,7 @@ async def update_profile(
 
 async def change_password(
     user_id: UUID, current_password: str, new_password: str, db: AsyncSession,
+    keep_sid=None,
 ) -> dict:
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -214,9 +219,16 @@ async def change_password(
         raise HTTPException(status_code=400, detail="New password must be different")
 
     user.password_hash = hash_password(new_password)
+    # Sign out every OTHER device + revoke refresh tokens and algo keys (same
+    # rule as /auth/password/change) so a changed password evicts an attacker.
+    from .auth_service import revoke_user_credentials
+    from packages.common.src.auth import invalidate_session_cache
+    revoked_sids = await revoke_user_credentials(db, user.id, keep_sid=keep_sid)
     await db.commit()
+    for _sid in revoked_sids:
+        await invalidate_session_cache(_sid)
 
-    return {"message": "Password changed successfully"}
+    return {"message": "Password changed successfully. Other devices have been signed out."}
 
 
 # ─── Sessions ─────────────────────────────────────────────────────────────
@@ -277,6 +289,8 @@ async def submit_kyc(
     city: str | None,
     postal_code: str | None,
     country_of_residence: str | None,
+    pan_number: str | None,
+    aadhaar_number: str | None,
     db: AsyncSession,
 ) -> dict:
     result = await db.execute(select(User).where(User.id == user_id))
@@ -362,18 +376,49 @@ async def submit_kyc(
             db.add(doc)
             saved_docs.append(doc)
 
-        addr_parts: list[str] = []
+        # City and postcode go in THEIR OWN columns. They used to be folded
+        # into user.address as a text blob, which left users.city and
+        # users.postal_code empty forever and gave admin one unstructured line
+        # it could neither search nor break apart.
         if residential_address and residential_address.strip():
-            addr_parts.append(residential_address.strip())
-        line2 = ", ".join(
-            p for p in [(city or "").strip(), (postal_code or "").strip()] if p
-        )
-        if line2:
-            addr_parts.append(line2)
-        if addr_parts:
-            user.address = "\n".join(addr_parts)
+            user.address = residential_address.strip()
+        if city and city.strip():
+            user.city = city.strip()
+        if postal_code and postal_code.strip():
+            user.postal_code = postal_code.strip()
         if country_of_residence and country_of_residence.strip():
             user.country = country_of_residence.strip()
+
+        # Document numbers. A malformed PAN or Aadhaar is rejected at
+        # submission rather than swallowed, so the user fixes it now instead
+        # of an admin finding it days later.
+        try:
+            pan = normalise_pan(pan_number)
+            aadhaar_last4, aadhaar_hash = prepare_aadhaar(aadhaar_number)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        if pan:
+            dupe = (await db.execute(
+                select(User).where(User.pan_number == pan, User.id != user_id)
+            )).scalar_one_or_none()
+            if dupe is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="This PAN is already registered to another account.",
+                )
+            user.pan_number = pan
+        if aadhaar_hash:
+            dupe = (await db.execute(
+                select(User).where(User.aadhaar_hash == aadhaar_hash, User.id != user_id)
+            )).scalar_one_or_none()
+            if dupe is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="This Aadhaar is already registered to another account.",
+                )
+            user.aadhaar_last4 = aadhaar_last4
+            user.aadhaar_hash = aadhaar_hash
 
         user.kyc_status = "submitted"
 

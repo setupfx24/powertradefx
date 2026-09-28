@@ -1,15 +1,15 @@
-# PowerTradeFX stack (project name → container/volume prefix).
-name: powertradefx
+# SwissCresta stack (project name → container/volume prefix).
+name: swisscresta
 
 services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-powertradefx}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-powertradefx_dev}
-      POSTGRES_DB: ${POSTGRES_DB:-powertradefx}
+      POSTGRES_USER: ${POSTGRES_USER:-swisscresta}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-swisscresta_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-swisscresta}
     # No host port binding — all services connect via Docker network (postgres:5432)
-    # For local dev access: docker compose exec postgres psql -U powertradefx
+    # For local dev access: docker compose exec postgres psql -U swisscresta
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./backend/infra/docker/init-db.sql:/docker-entrypoint-initdb.d/init.sql
@@ -28,8 +28,8 @@ services:
     # breaking SQL changes during a routine docker pull.
     image: timescale/timescaledb:2.17.2-pg16
     environment:
-      POSTGRES_USER: ${TIMESCALE_USER:-powertradefx}
-      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD:-powertradefx_dev}
+      POSTGRES_USER: ${TIMESCALE_USER:-swisscresta}
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD:-swisscresta_dev}
       POSTGRES_DB: ${TIMESCALE_DB:-marketdata}
     # No host port binding — all services connect via Docker network (timescaledb:5432)
     volumes:
@@ -37,7 +37,7 @@ services:
       - ./backend/infra/docker/init-timescale.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       # Probe the DB this container actually serves. `pg_isready -U x` defaults
-      # dbname to the username, so the old check hit db "powertradefx" — which
+      # dbname to the username, so the old check hit db "swisscresta" — which
       # doesn't exist here (this is "marketdata") — and every 5s probe logged a
       # server-side FATAL (~12 lines/min of noise that buried real errors).
       # $$VAR reaches the container's own env, so it follows POSTGRES_* above.
@@ -49,7 +49,11 @@ services:
   redis:
     image: redis:7-alpine
     # No host port binding — all services connect via Docker network (redis:6379)
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    # volatile-lru (NOT allkeys-lru): critical non-TTL keys (last_price:*) are
+    # never evicted; keys with TTLs (ticks, locks, rate-limit windows) remain
+    # evictable under pressure, and the deposit-credit path now also holds a
+    # DB row lock (being added separately) as the authoritative guard.
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy volatile-lru
     volumes:
       - redis_data:/data
     healthcheck:
@@ -72,7 +76,7 @@ services:
       context: .
       dockerfile: backend/services/admin/Dockerfile
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     env_file:
       - path: ./.env
         required: false
@@ -84,27 +88,26 @@ services:
     environment:
       # Override: shared backend/.env uses REDIS_URL for gateway (db 0); admin service must use db 1
       REDIS_URL: redis://redis:6379/1
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-powertradefx}:${POSTGRES_PASSWORD:-powertradefx_dev}@postgres:5432/${POSTGRES_DB:-powertradefx}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-swisscresta}:${POSTGRES_PASSWORD:-swisscresta_dev}@postgres:5432/${POSTGRES_DB:-swisscresta}
       ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:?Set ADMIN_JWT_SECRET in .env}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       BANNERS_UPLOAD_DIR: /app/uploads/banners
       WALLET_UPLOAD_ROOT: /app/uploads/wallet
       BANK_QR_UPLOAD_DIR: /app/uploads/qr
       KYC_UPLOAD_ROOT: /app/uploads/kyc
-    # Source-code bind mounts live in docker-compose.override.yml (dev
-    # only). Prod runs the code baked into the image — otherwise
-    # deploy.sh's `git reset --hard` hot-swaps code under running
-    # processes before migrations/rebuilds. Only uploads/ stays mounted
-    # (persistent user files).
+      BRANDING_UPLOAD_DIR: /app/uploads/branding
     volumes:
+      - ./backend/services/admin:/app
+      - ./backend/packages/common:/app/packages/common
       - ./backend/uploads:/app/uploads
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
 
   gateway:
     build:
       context: .
       dockerfile: backend/services/gateway/Dockerfile
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file:
       - path: ./.env
         required: false
@@ -117,7 +120,10 @@ services:
       BANNERS_UPLOAD_DIR: /app/uploads/banners
       WALLET_UPLOAD_ROOT: /app/uploads/wallet
       KYC_UPLOAD_ROOT: /app/uploads/kyc
+      BRANDING_UPLOAD_DIR: /app/uploads/branding
     volumes:
+      - ./backend/services/gateway:/app/services/gateway
+      - ./backend/packages:/app/packages
       - ./backend/uploads:/app/uploads
 
   market-data:
@@ -136,6 +142,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - ./backend/services/market-data:/app/services/market_data
+      - ./backend/packages:/app/packages
+
   b-book-engine:
     build:
       context: .
@@ -148,6 +158,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - ./backend/services/b-book-engine:/app/services/b_book_engine
+      - ./backend/packages:/app/packages
+
   risk-engine:
     build:
       context: .
@@ -160,6 +174,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - ./backend/services/risk-engine:/app/services/risk_engine
+      - ./backend/packages:/app/packages
+
   # Trader frontend (port 3000) — RESTART ALONE IS NOT ENOUGH. Rebuild the image or the browser keeps old JS:
   #   PowerShell:  $env:APP_VERSION=(Get-Date -Format 'yyyyMMdd-HHmmss'); docker compose build --no-cache trader-frontend; docker compose up -d trader-frontend
   #   Bash:        APP_VERSION=$(date +%Y%m%d-%H%M%S) docker compose build --no-cache trader-frontend && docker compose up -d trader-frontend
@@ -184,7 +202,7 @@ services:
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
     ports:
       # Host 3010 if 3000 is already taken (local Next/other apps)
-      - "3010:3000"
+      - "127.0.0.1:3010:3000"
     environment:
       # Do NOT set NEXT_PUBLIC_* http/ws here — browsers on https:// will hit mixed-content blocks.
       # App route src/app/api/v1/[...path]/route.ts proxies using INTERNAL_API_URL or TRADER_API_PROXY_TARGET.
@@ -199,7 +217,7 @@ services:
       context: ./frontend/admin
       dockerfile: Dockerfile
     ports:
-      - "3011:3001"
+      - "127.0.0.1:3011:3001"
     environment:
       # Server-side proxy /admin-api → admin-api (browser must not use docker hostname admin-api)
       ADMIN_API_PROXY_TARGET: http://admin-api:8001
@@ -223,7 +241,7 @@ services:
       - path: ./.env
         required: false
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://powertradefx:powertradefx_dev@postgres:5432/powertradefx}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://swisscresta:swisscresta_dev@postgres:5432/swisscresta}
     volumes:
       - ./backend:/app
     profiles:

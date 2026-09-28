@@ -89,6 +89,10 @@ async def create_onchain_withdrawal(
     if not await get_bool_setting("allow_withdrawals", True):
         raise HTTPException(status_code=403, detail="Withdrawals are currently disabled")
 
+    # Withdrawal-time KYC gate — the platform's only hard KYC block.
+    from .wallet_service import assert_kyc_approved_for_withdrawal
+    await assert_kyc_approved_for_withdrawal(db, user_id)
+
     net = (network or "").lower().strip()
     if net not in ALLOWED_NETWORKS:
         raise HTTPException(
@@ -112,11 +116,24 @@ async def create_onchain_withdrawal(
     # Resolve debit source — honor explicit user choice if provided,
     # else auto-route (wallet-bound when present, else main_wallet).
     from .wallet_service import _resolve_debit_source
+    from packages.common.src.withdrawal_limits import available_to_withdraw
     source_kind, source_row = await _resolve_debit_source(db, user_id, preference=source)
     if source_kind == "trading":
-        available = source_row.balance or Decimal("0")
+        # C-MONEY-3 / H-MONEY-1: only funds NOT backing open positions are
+        # withdrawable — via the shared helper so every withdrawal path agrees.
+        available = available_to_withdraw(
+            "trading",
+            balance=source_row.balance,
+            margin_used=source_row.margin_used,
+            free_margin=source_row.free_margin,
+        )
     else:
-        available = user.main_wallet_balance or Decimal("0")
+        from packages.common.src.bonus_service import outstanding_bonus
+        available = available_to_withdraw(
+            "main",
+            main_wallet_balance=user.main_wallet_balance,
+            outstanding_bonus=await outstanding_bonus(db, user_id),  # H-MONEY-2
+        )
     if available < amount:
         if source_kind == "trading":
             raise HTTPException(
@@ -134,7 +151,9 @@ async def create_onchain_withdrawal(
     # Debit immediately (frozen). Admin re-credits on reject.
     amt = Decimal(amount)
     if source_kind == "trading":
-        source_row.balance = available - amt
+        # Debit the real balance by the withdrawn amount (NOT `available`,
+        # which is now the free-margin-capped withdrawable figure).
+        source_row.balance = (source_row.balance or Decimal("0")) - amt
         source_row.equity = (source_row.equity or Decimal("0")) - amt
         source_row.free_margin = (source_row.free_margin or Decimal("0")) - amt
     else:

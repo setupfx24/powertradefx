@@ -7,7 +7,6 @@ from packages.common.src.database import get_db
 from dependencies import require_permission
 from packages.common.src.models import User
 from packages.common.src.admin_schemas import TicketReplyRequest, TicketStatusUpdate, TicketAssignRequest
-from packages.common.src.rate_limit import client_ip_for_inet
 from services import support_service
 
 router = APIRouter(prefix="/support", tags=["Support"])
@@ -47,7 +46,7 @@ async def reply_to_ticket(
 ):
     return await support_service.reply_to_ticket(
         ticket_id=ticket_id, body=body, admin_id=admin.id,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
 
 
@@ -61,7 +60,7 @@ async def assign_ticket(
 ):
     return await support_service.assign_ticket(
         ticket_id=ticket_id, body=body, admin_id=admin.id,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
 
 
@@ -75,5 +74,5 @@ async def update_ticket_status(
 ):
     return await support_service.update_ticket_status(
         ticket_id=ticket_id, body=body, admin_id=admin.id,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )

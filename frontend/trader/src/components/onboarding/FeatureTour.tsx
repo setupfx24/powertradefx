@@ -26,7 +26,7 @@ import { createPortal } from 'react-dom';
 import { usePathname } from 'next/navigation';
 import { ArrowLeft, ArrowRight, X } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
-import { Button } from '@/components/ui';
+import { useWarmTheme } from '@/stores/warmThemeStore';
 
 const STORAGE_PREFIX = 'sc-feature-tour:v1:';
 
@@ -41,7 +41,7 @@ type Step = {
 const STEPS: readonly Step[] = [
   {
     key: 'welcome',
-    title: 'Welcome to PowerTradeFX 👋',
+    title: 'Welcome 👋',
     body: "Here's a 30-second tour of the main features. You can skip anytime.",
   },
   {
@@ -114,6 +114,8 @@ type Rect = { top: number; left: number; width: number; height: number };
 export default function FeatureTour() {
   const pathname = usePathname();
   const user = useAuthStore((s) => s.user);
+  // Drives the warm-dark token set inside the portal (see the render root).
+  const warmDark = useWarmTheme((st) => st.dark);
   const userId = user?.id ?? null;
 
   const [mounted, setMounted] = useState(false);
@@ -125,19 +127,18 @@ export default function FeatureTour() {
 
   const storageKey = userId ? `${STORAGE_PREFIX}${userId}` : null;
 
-  // ProfileCompleteGate owns the screen until the profile is filled in —
-  // starting the tour then stacks two modals on top of each other (worst on
-  // phones). Wait for the flag to flip; refreshUser() re-runs this effect.
-  const profileGateOpen =
-    !!user &&
-    !user.is_demo &&
-    user.email_verified !== false &&
-    user.profile_complete === false;
+  // OnboardingGate owns the screen while the email is unverified — starting
+  // the tour then stacks two modals on top of each other (worst on phones).
+  // Wait for the flag to flip; refreshUser() re-runs this effect.
+  // (ProfileCompleteGate no longer renders globally — it lives on /kyc —
+  // so profile_complete is deliberately NOT part of this check.)
+  const onboardingGateOpen =
+    !!user && !user.is_demo && user.email_verified === false;
 
   // Auto-start once, on the dashboard, for a user who hasn't seen it.
   useEffect(() => {
     if (!mounted || !storageKey) return;
-    if (profileGateOpen) return;
+    if (onboardingGateOpen) return;
     // Only kick off on the dashboard so the primary nav is on screen to
     // point at. First login redirects here, so this is the natural spot.
     if (pathname !== '/dashboard') return;
@@ -154,7 +155,7 @@ export default function FeatureTour() {
       setActive(true);
     }, 700);
     return () => clearTimeout(t);
-  }, [mounted, storageKey, pathname, profileGateOpen]);
+  }, [mounted, storageKey, pathname, onboardingGateOpen]);
 
   const finish = useCallback(() => {
     setActive(false);
@@ -255,43 +256,52 @@ export default function FeatureTour() {
   const HIGHLIGHT_PAD = 6;
 
   return createPortal(
-    <div className="fixed inset-0 z-[9998]" role="dialog" aria-modal="true" aria-label="Feature tour">
+    // The portal escapes the DashboardShell wrapper that carries the warm
+    // theme tokens, so re-apply them here — same as Modal. Without this the
+    // `--crx-*` variables are undefined and `--text-*` falls back to the
+    // LIGHT palette from <html>: near-black text and a transparent card over
+    // the dark app, i.e. an unreadable box with invisible dots and buttons.
+    <div
+      data-theme="warm"
+      className={`theme-warm font-crextio fixed inset-0 z-[9998]${warmDark ? ' theme-warm-dark' : ''}`}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Feature tour"
+    >
       {/* Full-screen click blocker. When there's no target it also provides
           the dim; with a target the spotlight box below supplies the dim. */}
-      <div className={rect ? 'absolute inset-0' : 'absolute inset-0 bg-bg-overlay'} onClick={(e) => e.stopPropagation()} />
+      <div className={rect ? 'absolute inset-0' : 'absolute inset-0 bg-black/60'} onClick={(e) => e.stopPropagation()} />
 
       {/* Spotlight hole + ring around the live target (box-shadow dims the
           rest of the screen through the "hole"). */}
       {rect && (
         <div
-          className="pointer-events-none absolute rounded-lg ring-2 ring-accent transition-all duration-200"
+          className="pointer-events-none absolute rounded-xl ring-2 ring-crx-yellow transition-all duration-200"
           style={{
             top: rect.top - HIGHLIGHT_PAD,
             left: rect.left - HIGHLIGHT_PAD,
             width: rect.width + HIGHLIGHT_PAD * 2,
             height: rect.height + HIGHLIGHT_PAD * 2,
-            boxShadow: '0 0 0 9999px var(--bg-overlay)',
+            boxShadow: '0 0 0 9999px rgba(0,0,0,0.6)',
           }}
         />
       )}
 
       {/* Instruction card */}
       <div
-        className="absolute z-[10000] rounded-lg border border-border-primary bg-card p-5 shadow-lg animate-fade-in"
+        className="absolute z-[10000] rounded-2xl border border-border-primary bg-bg-tertiary p-5 shadow-2xl"
         style={cardStyle}
       >
-        <Button
-          variant="ghost"
-          size="xs"
-          iconOnly
+        <button
+          type="button"
           onClick={finish}
           aria-label="Skip tour"
-          className="absolute right-3 top-3 rounded-full"
+          className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-full text-text-tertiary hover:bg-bg-hover hover:text-text-primary transition-colors"
         >
-          <X size={16} aria-hidden />
-        </Button>
+          <X size={16} />
+        </button>
 
-        <h3 className="pr-6 text-md font-semibold text-text-primary">{step.title}</h3>
+        <h3 className="pr-6 text-base font-bold text-text-primary">{step.title}</h3>
         <p className="mt-1.5 text-sm leading-relaxed text-text-secondary">{step.body}</p>
 
         {/* Progress dots */}
@@ -301,31 +311,40 @@ export default function FeatureTour() {
               key={s.key}
               className={
                 i === index
-                  ? 'h-1.5 w-4 rounded-full bg-accent transition-all'
-                  : 'h-1.5 w-1.5 rounded-full bg-border-strong transition-all'
+                  ? 'h-1.5 w-4 rounded-full bg-crx-yellow transition-all'
+                  : 'h-1.5 w-1.5 rounded-full bg-border-secondary transition-all'
               }
             />
           ))}
         </div>
 
         <div className="mt-4 flex items-center justify-between">
-          <Button variant="ghost" size="xs" onClick={finish} className="-ml-2.5">
+          <button
+            type="button"
+            onClick={finish}
+            className="text-xs font-medium text-text-tertiary hover:text-text-primary transition-colors"
+          >
             Skip
-          </Button>
+          </button>
           <div className="flex items-center gap-2">
             {index > 0 && (
-              <Button variant="outline" size="sm" onClick={back} leftIcon={<ArrowLeft size={14} aria-hidden />}>
+              <button
+                type="button"
+                onClick={back}
+                className="inline-flex items-center gap-1 rounded-full border border-border-primary px-4 py-1.5 text-sm font-medium text-text-primary hover:bg-bg-hover transition-colors"
+              >
+                <ArrowLeft size={14} />
                 Back
-              </Button>
+              </button>
             )}
-            <Button
-              variant="primary"
-              size="sm"
+            <button
+              type="button"
               onClick={next}
-              rightIcon={!isLast ? <ArrowRight size={14} aria-hidden /> : undefined}
+              className="inline-flex items-center gap-1 rounded-full bg-crx-charcoal px-4 py-1.5 text-sm font-semibold text-crx-charcoal-ink hover:bg-crx-charcoal-hover transition-colors"
             >
               {isLast ? 'Got it' : 'Next'}
-            </Button>
+              {!isLast && <ArrowRight size={14} />}
+            </button>
           </div>
         </div>
       </div>

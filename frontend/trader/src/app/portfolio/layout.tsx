@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 export const metadata = {
-  title: 'Portfolio — PowerTradeFX',
+  title: 'Portfolio — SwissCresta',
   description: 'Open positions, P&L breakdown, and historical performance.',
 }
 

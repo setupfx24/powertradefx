@@ -9,19 +9,13 @@
 #   ./deploy.sh
 set -euo pipefail
 
-REPO_DIR="${REPO_DIR:-/opt/powertradefx}"
+REPO_DIR="${REPO_DIR:-/opt/swisscresta}"
 COMPOSE="docker compose -f $REPO_DIR/docker-compose.yml -f $REPO_DIR/docker-compose.prod.yml"
 
 cd "$REPO_DIR"
 
-# The published main is a clean-history branch that gets force-pushed
-# (single squashed commit, rewritten every release) — a plain
-# `pull --ff-only` can never fast-forward across it. fetch + hard reset
-# is the correct update primitive here; `git diff OLD NEW` below still
-# reports changed files correctly across rewritten history.
 BEFORE=$(git rev-parse HEAD)
-git fetch origin main
-git reset --hard origin/main
+git pull --ff-only origin main
 AFTER=$(git rev-parse HEAD)
 
 if [ "$BEFORE" = "$AFTER" ]; then
@@ -55,10 +49,7 @@ fi
 
 if [ $NEEDS_MIGRATE -eq 1 ]; then
   echo "▶ Running migrations…"
-  # Use the explicit prod file pair — bare `docker compose` auto-loads
-  # docker-compose.override.yml (the dev overlay: insecure cookies,
-  # localhost CORS, republished ports).
-  $COMPOSE --profile migrate run --rm migrate
+  docker compose --profile migrate run --rm migrate
 fi
 
 TO_BUILD=()
@@ -81,21 +72,7 @@ fi
 
 if [ $NEEDS_NGINX -eq 1 ]; then
   echo "▶ Reloading nginx…"
-  # Debian-style hosts use sites-available; RHEL-style hosts (the current
-  # server) only have conf.d. Detect, or override with NGINX_CONF_DIR.
-  NGINX_CONF_DIR="${NGINX_CONF_DIR:-}"
-  if [ -z "$NGINX_CONF_DIR" ]; then
-    if [ -d /etc/nginx/sites-available ]; then
-      NGINX_CONF_DIR=/etc/nginx/sites-available
-    elif [ -d /etc/nginx/conf.d ]; then
-      NGINX_CONF_DIR=/etc/nginx/conf.d
-    else
-      echo "⚠️  Cannot find an nginx config directory; set NGINX_CONF_DIR." >&2
-      exit 1
-    fi
-  fi
-  echo "  → $NGINX_CONF_DIR/powertradefx.conf"
-  sudo cp deploy/nginx/powertradefx.conf "$NGINX_CONF_DIR/powertradefx.conf"
+  sudo cp deploy/nginx/swisscresta.conf /etc/nginx/sites-available/swisscresta.conf
   # cloudflare-real-ip.conf is dropped into conf.d once at install time;
   # we re-copy it on each deploy so edits to the file flow through.
   if [ -f deploy/nginx/cloudflare-real-ip.conf ]; then
@@ -107,10 +84,10 @@ fi
 
 echo "▶ Healthcheck…"
 sleep 4
-CODE_API=$(curl -sk -o /dev/null -w "%{http_code}" https://api.powertradefx.com/health   || echo "000")
-CODE_TRD=$(curl -sk -o /dev/null -w "%{http_code}" https://trade.powertradefx.com/       || echo "000")
-echo "  api.powertradefx.com/health  → HTTP $CODE_API"
-echo "  trade.powertradefx.com       → HTTP $CODE_TRD"
+CODE_API=$(curl -sk -o /dev/null -w "%{http_code}" https://api.swisscresta.com/health   || echo "000")
+CODE_TRD=$(curl -sk -o /dev/null -w "%{http_code}" https://trade.swisscresta.com/       || echo "000")
+echo "  api.swisscresta.com/health  → HTTP $CODE_API"
+echo "  trade.swisscresta.com       → HTTP $CODE_TRD"
 
 # 5xx or a flat 000 (no connection) is a real failure. 4xx still means the
 # stack is up — caller can decide whether the route should exist.

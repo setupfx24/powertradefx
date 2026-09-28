@@ -1,170 +1,157 @@
-import { AlertTriangle } from 'lucide-react'
+import Link from 'next/link';
+import { Section, PageHero, CtaBanner } from '@/marketing/components';
+import {
+  LegalDoc, LegalSection, LegalP, LegalCallout, legalAnchor,
+} from '../_legal/LegalDoc';
+import { BRAND_NAME, BRAND_SUPPORT_EMAIL } from '@/lib/brand';
 
-export const metadata = { title: 'Risk Disclosure — PowerTradeFX' }
+/**
+ * Risk Disclaimer — public legal page.
+ * Linked from footer. Boilerplate adapted to the platform's product mix
+ * (forex, CFDs, crypto). Restyled onto the shared marketing design
+ * system; every clause is carried over verbatim.
+ */
+
+const SECTIONS = [
+  {
+    h: '1. Technology Vendor, Not a Broker',
+    p: `${BRAND_NAME} is a software development company. We build and license trading technology to
+    licensed brokers and proprietary trading firms. ${BRAND_NAME} is not a broker, exchange, or
+    financial institution, and does not provide brokerage, investment, financial, tax, or advisory
+    services.`,
+  },
+  {
+    h: '2. No Offer or Solicitation',
+    p: `Nothing on this website, in our marketing materials, or within any demonstration environment
+    constitutes an offer, solicitation, recommendation, or inducement to buy or sell any financial
+    product or to engage in any trading activity. ${BRAND_NAME} does not solicit or accept
+    investments.`,
+  },
+  {
+    h: '3. Client-Operated Platforms',
+    p: `Trading platforms built with ${BRAND_NAME} software and placed into production are operated by
+    our clients under their own brand, licence, and regulatory authority. ${BRAND_NAME} does not
+    execute, route, or manage trades for any end user, and is not a party to any relationship between
+    a licensed operator and its clients.`,
+  },
+  {
+    h: '4. Leveraged Trading Is Risky',
+    p: `Leveraged products such as forex, contracts-for-difference (CFDs), and crypto-assets carry a
+    high level of risk and can result in losses that exceed the amount originally committed. Where our
+    software supports such products, the decision to offer them, and the terms on which they are
+    offered to end users, rests entirely with the licensed operator of the platform.`,
+  },
+  {
+    h: '5. No Investment or Financial Advice',
+    p: `Information published by ${BRAND_NAME} is general in nature, is directed at businesses evaluating
+    our technology, and does not constitute investment, financial, tax, or legal advice. ${BRAND_NAME}
+    does not consider the individual circumstances of any trader and is not responsible for trading
+    decisions made on platforms built with its software.`,
+  },
+  {
+    h: '6. Software Provided Under Agreement',
+    p: `${BRAND_NAME} software is delivered and supported under a separate written agreement. Features
+    described on this website illustrate the capabilities of the platform; their availability,
+    configuration, and operation in production depend on the choices and obligations of the licensed
+    operator. Past performance of any strategy, tool, or market is not indicative of future results.`,
+  },
+  {
+    h: '7. AI & Algorithmic Trading Tools',
+    p: `Where ${BRAND_NAME} builds AI-driven or algorithmic trading tools into a platform, those tools
+    analyse historical and live market data but cannot anticipate every market condition. Back-tested
+    or historical performance is not indicative of future results. Responsibility for enabling,
+    monitoring, and setting risk limits on such tools lies with the operator and its users.`,
+  },
+  {
+    h: '8. Technical & Operational Risk',
+    p: `No software is free from the risk of interruption. Internet connectivity, hosting, third-party
+    integrations, and force-majeure events may affect the availability or performance of any platform.
+    ${BRAND_NAME} provides its software and support on the terms set out in the applicable agreement
+    and does not guarantee uninterrupted or error-free operation.`,
+  },
+  {
+    h: '9. Tax & Legal Responsibility',
+    p: `The tax and legal treatment of trading activity varies by jurisdiction and is the
+    responsibility of the operator and its clients. ${BRAND_NAME} does not provide tax or legal
+    advice — consult a qualified adviser for your situation.`,
+  },
+  {
+    h: '10. Third-Party Content & Market Data',
+    p: `Market data, charts, news, and other third-party content that may appear within our software or
+    on this website are provided for general information only. ${BRAND_NAME} does not warrant the
+    accuracy, completeness, or timeliness of such content and accepts no liability for reliance placed
+    on it.`,
+  },
+  {
+    h: '11. Lawful Use & Availability',
+    p: `${BRAND_NAME} evaluates each client engagement individually and complies with applicable
+    export-control and sanctions laws. It is the responsibility of each operator to ensure that any
+    platform it runs, and the markets it offers, are lawful in the jurisdictions in which it and its
+    clients operate.`,
+  },
+  {
+    h: '12. Acknowledgement',
+    p: `By using this website you confirm that you have read and understood this Disclaimer, that you
+    understand ${BRAND_NAME} is a technology vendor and not a broker, and that nothing here constitutes
+    an offer, solicitation, or advice.`,
+  },
+];
+
+const TOC = SECTIONS.map((s) => ({ id: legalAnchor(s.h), label: s.h }));
 
 export default function RiskPage() {
   return (
-    <div className="bg-white text-gray-900">
-      <section className="bg-white pt-16 pb-12">
-        <div className="w-full px-3 sm:px-6 lg:px-8">
-          <h1 className="text-4xl font-extrabold text-gray-900 mb-2">Risk Disclosure</h1>
-          <p className="text-gray-500">Last updated: March 2026</p>
-        </div>
-      </section>
+    <main>
+      <PageHero
+        kicker="Legal"
+        title="Disclaimer"
+        lead={`How ${BRAND_NAME} works as a software vendor — and why nothing here is an offer, solicitation, or advice.`}
+      />
 
-      <section className="py-12 bg-white">
-        <div className="w-full px-3 sm:px-6 lg:px-8 space-y-10">
+      <Section raised>
+        <LegalDoc toc={TOC}>
+          <LegalCallout tone="warn">
+            <span style={{ color: 'var(--mk-text)', fontWeight: 700 }}>Important:</span> We build and
+            license trading software; we are not a broker and do not provide investment advice. Nothing
+            on this page is an offer or solicitation. Trading leveraged products is high-risk, and any
+            platform built with our software is operated by a licensed third party responsible for its
+            own client disclosures.
+          </LegalCallout>
 
-          {/* Warning banner */}
-          <div className="bg-red-50 border border-red-200 rounded-xl p-5 flex items-start gap-4">
-            <AlertTriangle className="w-6 h-6 text-red-500 shrink-0 mt-0.5" />
-            <div>
-              <h3 className="font-semibold text-red-900 mb-1">Important Risk Warning</h3>
-              <p className="text-red-800 text-sm leading-relaxed">
-                Trading foreign exchange, cryptocurrencies, and other leveraged instruments carries a high level of risk and may not be suitable for all investors. You may lose some or all of your invested capital. Past performance is not indicative of future results.
-              </p>
-            </div>
-          </div>
+          {SECTIONS.map(({ h, p }) => (
+            <LegalSection key={h} id={legalAnchor(h)} heading={h}>
+              <LegalP>{p}</LegalP>
+            </LegalSection>
+          ))}
 
-          <Section title="1. Leverage Risk">
-            PowerTradeFX offers leverage up to 1:500 on certain instruments. Leverage amplifies both gains and losses. A small adverse price movement can result in substantial losses or even the complete loss of your deposit.
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mt-4 text-sm text-gray-500">
-              <strong className="text-gray-800">Example:</strong> With 1:100 leverage, a 1% adverse price movement results in a 100% loss of your margin.
-            </div>
-          </Section>
+          <LegalP>
+            Cross-read with our{' '}
+            <Link href="/terms" className="hover:underline" style={{ color: 'var(--mk-accent)' }}>
+              Terms of Service
+            </Link>{' '}
+            and{' '}
+            <Link href="/privacy" className="hover:underline" style={{ color: 'var(--mk-accent)' }}>
+              Privacy Policy
+            </Link>
+            . Questions about this Disclaimer can be sent to{' '}
+            <a
+              href={`mailto:${BRAND_SUPPORT_EMAIL}`}
+              className="hover:underline"
+              style={{ color: 'var(--mk-accent)' }}
+            >
+              {BRAND_SUPPORT_EMAIL}
+            </a>
+            .
+          </LegalP>
+        </LegalDoc>
+      </Section>
 
-          <Section title="2. Market Risk">
-            Financial markets are volatile and unpredictable. Prices can move rapidly due to:
-            <List items={[
-              'Economic data releases and central bank announcements',
-              'Geopolitical events and political instability',
-              'Market sentiment shifts and investor behavior',
-              'Supply and demand imbalances',
-              'Regulatory changes and policy decisions',
-              'Cryptocurrency volatility and technological changes',
-            ]} />
-          </Section>
-
-          <Section title="3. Liquidity Risk">
-            While major currency pairs are highly liquid, some instruments may have limited liquidity. During periods of low liquidity, you may experience:
-            <List items={[
-              'Wider bid-ask spreads',
-              'Slippage on order execution',
-              'Difficulty closing positions at desired prices',
-              'Increased trading costs',
-            ]} />
-          </Section>
-
-          <Section title="4. Counterparty Risk">
-            Your trades are executed through PowerTradeFX&apos;s liquidity providers. If a liquidity provider defaults or experiences financial difficulties, your funds may be at risk despite our segregated account structure.
-          </Section>
-
-          <Section title="5. Technology Risk">
-            Trading platforms are subject to technical failures, including:
-            <List items={[
-              'Server outages and connectivity issues',
-              'Platform bugs and software errors',
-              'Cyber attacks and security breaches',
-              'Internet connection failures on your end',
-              'Mobile app crashes and malfunctions',
-            ]} />
-            <p className="mt-4">While we maintain redundant systems and backups, we cannot guarantee 100% uptime. Trading during periods of technical difficulty may result in losses.</p>
-          </Section>
-
-          <Section title="6. Cryptocurrency Risk">
-            Cryptocurrency trading carries additional risks:
-            <List items={[
-              'Extreme price volatility (50%+ daily moves are possible)',
-              'Regulatory uncertainty and potential bans',
-              'Wallet and exchange security risks',
-              'Blockchain network congestion and delays',
-              'Limited historical data and price discovery',
-              'Potential for total loss of investment',
-            ]} />
-          </Section>
-
-          <Section title="7. Operational Risk">
-            Risks related to our operations include:
-            <List items={[
-              'Human error in order processing',
-              'System failures and data loss',
-              'Fraud and unauthorized access',
-              'Regulatory enforcement actions',
-              'Changes in business operations',
-            ]} />
-          </Section>
-
-          <Section title="8. Regulatory Risk">
-            Financial regulations are subject to change. Changes in regulations could:
-            <List items={[
-              'Restrict trading in certain instruments',
-              'Reduce maximum leverage available',
-              'Increase trading costs through new fees',
-              'Require account closure for certain jurisdictions',
-              'Affect platform availability in your country',
-            ]} />
-          </Section>
-
-          <Section title="9. Negative Balance Protection">
-            While PowerTradeFX offers negative balance protection, meaning your account cannot go below zero, this protection may not apply in all circumstances, including:
-            <List items={[
-              'Extreme market gaps and flash crashes',
-              'System failures during market volatility',
-              'Violations of our terms of service',
-            ]} />
-          </Section>
-
-          <Section title="10. Risk Management Best Practices">
-            To manage trading risks:
-            <List items={[
-              'Only trade with capital you can afford to lose',
-              'Use stop-loss orders to limit potential losses',
-              'Diversify your portfolio across multiple instruments',
-              'Avoid over-leveraging your account',
-              'Keep up with economic news and market developments',
-              'Develop and follow a trading plan',
-              'Avoid emotional decision-making',
-              'Start with a demo account to practice',
-              'Educate yourself about markets and trading',
-            ]} />
-          </Section>
-
-          <Section title="11. Acknowledgment">
-            By opening an account with PowerTradeFX, you acknowledge that you have read and understood this Risk Disclosure, and you accept all risks associated with trading on our platform. You confirm that you are trading at your own risk and that PowerTradeFX is not responsible for any losses incurred.
-          </Section>
-
-          <Section title="12. Contact Information">
-            For questions about risk management or this disclosure, please contact:
-            <ContactBox team="Risk Management Team" email="risk@powertradefx.com" />
-          </Section>
-        </div>
-      </section>
-    </div>
-  )
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <h2 className="text-2xl font-bold text-gray-900 mb-4">{title}</h2>
-      <div className="text-gray-500 leading-relaxed space-y-3">{children}</div>
-    </div>
-  )
-}
-
-function List({ items }: { items: string[] }) {
-  return (
-    <ul className="list-disc list-inside space-y-1.5 mt-2 text-gray-500">
-      {items.map((item) => <li key={item}>{item}</li>)}
-    </ul>
-  )
-}
-
-function ContactBox({ team, email }: { team: string; email: string }) {
-  return (
-    <div className="bg-gray-50 border border-gray-200 rounded-xl p-6 mt-4 text-sm space-y-1">
-      <p className="font-semibold text-gray-900">PowerTradeFX {team}</p>
-      <p className="text-gray-500">Email: {email}</p>
-    </div>
-  )
+      <CtaBanner
+        title="See the platform"
+        lead="Book a walkthrough and see how the platform runs under your own brand and licence."
+        primary={{ label: 'Book a demo', href: '/company/contact' }}
+        secondary={{ label: 'Read the Risk Warning', href: '/risk-warning' }}
+      />
+    </main>
+  );
 }

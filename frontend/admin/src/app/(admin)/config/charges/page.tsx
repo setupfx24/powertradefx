@@ -199,7 +199,7 @@ export default function ChargesPage() {
             <Plus size={11} /> Add
           </button>
         </div>
-        <div className="overflow-visible max-md:overflow-x-auto">
+        <div className="overflow-visible">
           <table className="w-full">
             <thead>
               <tr className="border-b border-border-primary bg-bg-tertiary/40">

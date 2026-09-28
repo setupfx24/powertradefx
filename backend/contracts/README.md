@@ -1,14 +1,14 @@
-# PowerTradeFX Contracts — Phase 1 Vault
+# SwissCresta Contracts — Phase 1 Vault
 
-Foundry workspace for the **PowerTradeFXVaultV1** custody vault.
+Foundry workspace for the **SwissCrestaVaultV1** custody vault.
 Spec lives at [`docs/vault-phase1-spec.md`](../../docs/vault-phase1-spec.md).
 
 ## Layout
 
 ```
 backend/contracts/
-├── src/PowerTradeFXVaultV1.sol       # the contract
-├── test/PowerTradeFXVaultV1.t.sol    # Foundry unit + fuzz + invariant tests
+├── src/SwissCrestaVaultV1.sol       # the contract
+├── test/SwissCrestaVaultV1.t.sol    # Foundry unit + fuzz + invariant tests
 ├── script/Deploy.s.sol          # forge script Deploy.s.sol --broadcast
 ├── foundry.toml                 # solc 0.8.24, optimizer on, fuzz=1024
 ├── remappings.txt               # @openzeppelin + forge-std paths
@@ -82,7 +82,7 @@ Output ends with:
 
 ```
 === DEPLOYED ===
-PowerTradeFXVaultV1: 0x….
+SwissCrestaVaultV1: 0x….
 ```
 
 Save that address — it goes into `VAULT_CONTRACT_ADDRESS` in the
@@ -93,7 +93,7 @@ new `admin_deposit_wallets` row.
 
 ```bash
 forge verify-contract <DEPLOYED_ADDRESS> \
-  src/PowerTradeFXVaultV1.sol:PowerTradeFXVaultV1 \
+  src/SwissCrestaVaultV1.sol:SwissCrestaVaultV1 \
   --chain-id 97 \
   --watch \
   --constructor-args $(cast abi-encode 'constructor(address,address)' $USDT_ADDRESS $ADMIN_ADDRESS)

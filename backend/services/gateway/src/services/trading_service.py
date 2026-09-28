@@ -16,21 +16,19 @@ from packages.common.src.models import (
     TradingAccount, Instrument, InstrumentConfig,
     TradeHistory, Transaction, CopyTrade, UserAuditLog, User,
 )
-from packages.common.src.instrument_pricing import resolve_commission, resolve_user_quote
+from packages.common.src.instrument_pricing import resolve_commission, resolve_user_quote, symmetric_quote_from_mid
+from packages.common.src.row_locks import lock_account
 from packages.common.src.config import get_settings as _get_settings
 from . import wallet_service
 from packages.common.src.database import AsyncSessionLocal
-from packages.common.src.redis_client import redis_client, PriceChannel, is_tick_stale
-from packages.common.src.pending_orders import (
-    PendingOrderError,
-    validate_pending_price,
-)
+from packages.common.src.redis_client import redis_client, PriceChannel, is_tick_stale, publish_instrument_config_reload
 from packages.common.src.price_cache import price_cache
 from packages.common.src.kafka_client import produce_event, KafkaTopics
 from packages.common.src.notify import create_notification
 from packages.common.src.market_hours import is_market_open
 from packages.common.src import corecen_trade_client
 
+from packages.common.src.email_branding import apply_email_brand
 logger = logging.getLogger("trading_service")
 
 
@@ -76,7 +74,7 @@ async def get_current_price(symbol: str) -> tuple[Decimal, Decimal]:
     if is_tick_stale(tick):
         raise HTTPException(
             status_code=400,
-            detail=f"No live price for {symbol} — the price feed is offline, so trading on it is paused until it recovers.",
+            detail=f"No live price for {symbol} right now — market data is reconnecting. Please try again in a few seconds.",
         )
     return Decimal(str(tick["bid"])), Decimal(str(tick["ask"]))
 
@@ -227,16 +225,12 @@ async def place_order(
         # access) triggers an async lazy-load and raises MissingGreenlet.
         account = locked
 
-    if not account.is_demo and account.account_group:
-        min_bal = account.account_group.minimum_deposit or Decimal("0")
-        if min_bal > 0 and (account.balance or Decimal("0")) < min_bal:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Account balance must be at least ${float(min_bal):.2f} for this account type "
-                    "before you can trade. Please deposit funds."
-                ),
-            )
+    # NOTE: the account-group minimum_deposit is an ACCOUNT-OPENING
+    # requirement only. It is deliberately NOT re-checked here — once the
+    # account exists, the user may trade with whatever balance remains
+    # (margin checks below are the only funding gate). A previous version
+    # blocked trading when balance dipped under the tier minimum, which
+    # locked users out of their own funded accounts.
 
     instrument = await get_instrument(req.symbol, db)
 
@@ -350,6 +344,11 @@ async def place_order(
         required_margin = calc_margin(req.lots, fill_price, contract_size, account.leverage)
 
         unrealized_pnl = Decimal("0")
+        # Margin actually in use = sum of OPEN positions' margin, RECOMPUTED here
+        # (never trust the stored account.margin_used — a close that didn't
+        # release correctly leaves it stuck/inflated, which wrongly rejected new
+        # orders with "Insufficient margin" even on a nearly-empty account).
+        open_margin = Decimal("0")
         open_pos_result = await db.execute(
             select(Position).where(
                 Position.account_id == account.id,
@@ -378,23 +377,36 @@ async def place_order(
                         pass
 
             for pos in open_positions:
+                cs = pos.instrument.contract_size if pos.instrument else Decimal("100000")
+                # Count this open position's margin toward the (recomputed) total.
+                open_margin += (pos.lots * cs * pos.open_price) / Decimal(str(account.leverage))
                 sym = pos.instrument.symbol if pos.instrument else None
                 if not sym or sym not in price_map:
                     continue
                 p_bid, p_ask = price_map[sym]
                 pos_side = pos.side.value if hasattr(pos.side, 'value') else str(pos.side)
                 cp = p_bid if pos_side == "buy" else p_ask
-                cs = pos.instrument.contract_size if pos.instrument else Decimal("100000")
-                # calc_pnl_live converts quote-currency P&L to the account
-                # currency (JPY/cross pairs) — the raw price-diff formula the
-                # margin check used before left free margin off by the cross
-                # rate, unlike every other P&L path.
-                unrealized_pnl += await calc_pnl_live(
-                    pos.side, pos.open_price, cp, pos.lots, cs,
-                    instrument=pos.instrument,
+                if pos_side == "buy":
+                    pos_pnl = (cp - pos.open_price) * pos.lots * cs
+                else:
+                    pos_pnl = (pos.open_price - cp) * pos.lots * cs
+                # Convert quote-currency P&L into the account currency like every
+                # other P&L site (risk engine, close path, SL/TP). Without this,
+                # a JPY-quoted position inflated/deflated equity ~150× in the
+                # margin-sufficiency check below.
+                unrealized_pnl += quote_to_account_pnl(
+                    pos_pnl,
+                    getattr(pos.instrument, "base_currency", None),
+                    getattr(pos.instrument, "quote_currency", None),
+                    cp,
+                    symbol=sym,
+                    cross_rate=await cross_rate_for(pos.instrument),
                 )
         real_equity = (account.balance or Decimal("0")) + (account.credit or Decimal("0")) + unrealized_pnl
-        real_free_margin = real_equity - (account.margin_used or Decimal("0"))
+        # Use the RECOMPUTED open-position margin, not the (possibly stuck) stored
+        # account.margin_used — this both fixes the check AND self-heals the
+        # stored value on the next order.
+        real_free_margin = real_equity - open_margin
 
         account.equity = real_equity
         account.free_margin = real_free_margin
@@ -421,25 +433,67 @@ async def place_order(
         )
         db.add(position)
 
-        account.margin_used = (account.margin_used or Decimal("0")) + required_margin
+        # Recomputed total = existing open-position margin + this new one (never
+        # increment the stored value, which can drift/stick over many trades).
+        account.margin_used = open_margin + required_margin
         account.balance -= commission
         account.equity = (account.balance or Decimal("0")) + (account.credit or Decimal("0")) + unrealized_pnl
         account.free_margin = account.equity - account.margin_used
 
     else:
-        px = Decimal(str(req.price)) if req.price is not None else None
-        slp_raw = getattr(req, "stop_limit_price", None)
-        slp = Decimal(str(slp_raw)) if slp_raw is not None else None
-        try:
-            validate_pending_price(req.order_type, req.side, px, slp, bid, ask)
-        except PendingOrderError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        # SL/TP must make sense against the price the order will FILL at (the
-        # limit for limit / stop-limit, the stop for stop). Without this a buy
-        # limit far below the market could carry an SL above its own entry and
-        # be closed by the SL engine the instant it filled.
-        entry_ref = slp if (str(req.order_type) == "stop_limit" and slp is not None) else px
-        check_sltp_levels(str(req.side).lower() == "buy", req.stop_loss, req.take_profit, entry_ref, "order price")
+        if not req.price:
+            raise HTTPException(status_code=400, detail="Price required for pending orders")
+        px = Decimal(str(req.price))
+        side_s = str(req.side).lower()
+
+        if req.order_type == "limit":
+            if side_s == "buy" and px >= ask:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Buy limit must be below the current ask ({ask}). To buy at market, use a market order.",
+                )
+            if side_s == "sell" and px <= bid:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Sell limit must be above the current bid ({bid}). To sell at market, use a market order.",
+                )
+        elif req.order_type == "stop":
+            if side_s == "buy" and px <= ask:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Buy stop must be above the current ask ({ask}).",
+                )
+            if side_s == "sell" and px >= bid:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Sell stop must be below the current bid ({bid}).",
+                )
+        elif req.order_type == "stop_limit":
+            if not req.stop_limit_price:
+                raise HTTPException(status_code=400, detail="stop_limit_price required for stop-limit orders")
+            slp = Decimal(str(req.stop_limit_price))
+            if side_s == "buy":
+                if px <= ask:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Buy stop price must be above the current ask ({ask}).",
+                    )
+                if slp >= px:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Buy stop-limit: limit price must be below the stop price.",
+                    )
+            else:
+                if px >= bid:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Sell stop price must be below the current bid ({bid}).",
+                    )
+                if slp <= px:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Sell stop-limit: limit price must be above the stop price.",
+                    )
 
         order.status = "pending"
 
@@ -488,9 +542,10 @@ async def place_order(
                 u = (await bg_db.execute(
                     select(User).where(User.id == _email_payload["user_id"])
                 )).scalar_one_or_none()
+                await apply_email_brand(bg_db, u)
             if not u or not u.email:
                 return
-            if u.email.lower().endswith("@wallet.powertradefx.local"):
+            if u.email.lower().endswith("@wallet.swisscresta.local"):
                 return
             st = get_settings()
             subject, html, text = render_trade_placed(
@@ -505,7 +560,7 @@ async def place_order(
                 stop_loss=_email_payload["stop_loss"],
                 take_profit=_email_payload["take_profit"],
                 when_utc=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                trader_app_url=st.TRADER_APP_URL or "https://trade.powertradefx.com",
+                trader_app_url=st.TRADER_APP_URL or "https://trade.swisscresta.com",
             )
             await send_email(u.email, subject, html, text=text)
         except Exception as e:
@@ -679,49 +734,14 @@ async def modify_order(order_id: UUID, req, user_id: UUID, db: AsyncSession) -> 
     if status_val != "pending":
         raise HTTPException(status_code=400, detail="Can only modify pending orders")
 
-    # Modify is validated EXACTLY like placement. QA 2026-09-28: without this
-    # a resting buy limit could be edited to a price above the ask and the
-    # engine filled it at market within 150 ms — a back door around the
-    # "use a market order" rule and the market-order checks.
-    instrument = await db.get(Instrument, order.instrument_id)
-    if not instrument:
-        raise HTTPException(status_code=400, detail="Instrument not found")
-    bid, ask = await get_current_price(instrument.symbol)
-
-    new_price = Decimal(str(req.price)) if req.price is not None else (
-        Decimal(str(order.price)) if order.price is not None else None
-    )
-    slp = Decimal(str(order.stop_limit_price)) if order.stop_limit_price is not None else None
-    try:
-        validate_pending_price(order.order_type, order.side, new_price, slp, bid, ask)
-    except PendingOrderError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    if req.lots is not None:
-        lots = Decimal(str(req.lots))
-        ic_row = await db.execute(
-            select(InstrumentConfig).where(InstrumentConfig.instrument_id == instrument.id)
-        )
-        ic = ic_row.scalar_one_or_none()
-        min_lot = ic.min_lot_size if ic and ic.min_lot_size is not None else instrument.min_lot
-        max_lot = ic.max_lot_size if ic and ic.max_lot_size is not None else instrument.max_lot
-        if lots <= 0 or lots < min_lot or lots > max_lot:
-            raise HTTPException(status_code=400, detail=f"Lot size must be between {min_lot} and {max_lot}")
-        order.lots = lots
-
-    new_sl = req.stop_loss if req.stop_loss is not None else order.stop_loss
-    new_tp = req.take_profit if req.take_profit is not None else order.take_profit
-    otype = order.order_type.value if hasattr(order.order_type, 'value') else str(order.order_type)
-    entry_ref = slp if (otype == "stop_limit" and slp is not None) else new_price
-    is_buy = (order.side.value if hasattr(order.side, 'value') else str(order.side)).lower() == "buy"
-    check_sltp_levels(is_buy, new_sl, new_tp, entry_ref, "order price")
-
     if req.stop_loss is not None:
         order.stop_loss = req.stop_loss
     if req.take_profit is not None:
         order.take_profit = req.take_profit
     if req.price is not None:
-        order.price = new_price
+        order.price = req.price
+    if req.lots is not None:
+        order.lots = req.lots
 
     await db.commit()
     return {"message": "Order modified"}
@@ -805,6 +825,10 @@ async def list_positions(account_id: UUID, user_id: UUID, status: str, db: Async
             "status": pos_status_val,
             "contract_size": float(contract_size),
             "trade_type": trade_type,
+            # Whatever opened the position wrote this. A bot reconciling its
+            # own book needs it to tell its positions from the ones the trader
+            # opened by hand on the same account.
+            "comment": pos.comment or "",
             "created_at": pos.created_at.isoformat() if pos.created_at else None,
             "closed_at": pos.closed_at.isoformat() if getattr(pos, 'closed_at', None) else None,
         })
@@ -870,12 +894,20 @@ async def modify_position(position_id: UUID, req, user_id: UUID, db: AsyncSessio
 
     check_sltp_levels(is_buy, req.stop_loss, req.take_profit, Decimal(str(ref)), ref_label)
 
+    # Distinguish "field omitted" from "field explicitly null". Pydantic's
+    # model_fields_set holds only the keys the client actually sent, so:
+    #   - chart drag sends ONE key   → only that bracket changes
+    #   - positions-panel Save sends BOTH keys → each is set, or REMOVED when
+    #     the client sends null (an empty SL/TP field = "clear this bracket")
+    # A plain `is not None` check made removal impossible — clearing a field
+    # left the old level in place, so the chart line never disappeared.
+    fields_set = req.model_fields_set
     updated = False
-    if req.stop_loss is not None:
-        pos.stop_loss = req.stop_loss
+    if "stop_loss" in fields_set:
+        pos.stop_loss = req.stop_loss  # None clears it
         updated = True
-    if req.take_profit is not None:
-        pos.take_profit = req.take_profit
+    if "take_profit" in fields_set:
+        pos.take_profit = req.take_profit  # None clears it
         updated = True
 
     if updated:
@@ -926,7 +958,10 @@ async def modify_position(position_id: UUID, req, user_id: UUID, db: AsyncSessio
     }
 
 
-async def close_position(position_id: UUID, req, user_id: UUID, db: AsyncSession) -> dict:
+async def close_position(
+    position_id: UUID, req, user_id: UUID, db: AsyncSession,
+    close_reason_override: str | None = None,
+) -> dict:
     result = await db.execute(select(Position).where(Position.id == position_id))
     pos = result.scalar_one_or_none()
     if not pos:
@@ -965,6 +1000,17 @@ async def close_position(position_id: UUID, req, user_id: UUID, db: AsyncSession
     if locked_status != "open":
         raise HTTPException(status_code=409, detail="Position is already being closed")
 
+    # Lock the ACCOUNT row before any balance read/mutate below. place_order
+    # locks the account FOR UPDATE, but close_position previously only locked the
+    # Position row — so two concurrent closes on the SAME account both read the
+    # pre-close balance under MVCC and the last commit overwrote the first (lost
+    # update). A trader could close a winning + losing hedge at once and have the
+    # loss erased, manufacturing funds. Lock position→account (matches the SL/TP
+    # and stop-out engines; place_order locks only the account, so no deadlock).
+    account = await lock_account(db, pos.account_id, user_id=user_id)
+    if account is None:
+        raise HTTPException(status_code=403, detail="Not your position")
+
     # MAM gives followers independent control of their own allocated account:
     # a follower CAN close their mirrored position (it lives on the follower's
     # account). If the master later closes the original, the copy engine looks
@@ -976,21 +1022,32 @@ async def close_position(position_id: UUID, req, user_id: UUID, db: AsyncSession
         raise HTTPException(status_code=400, detail="No price available")
 
     tick = json.loads(tick_data)
-    # Same stale-quote guard as the open path (get_current_price), the SL/TP
-    # engine, the b-book matcher and the risk engine — a manual close during
-    # a feed outage must not book P&L at a price the market left minutes ago.
+    # C-TRADE-5: refuse to settle a close against a stale quote (market closed
+    # or feed frozen). get_current_price() and modify_position() already guard
+    # this; close_position read the cache directly and could realise P&L at an
+    # old price. Same is_tick_stale() check keeps every execution path aligned.
     if is_tick_stale(tick):
-        raise HTTPException(
-            status_code=400,
-            detail=f"No live price for {pos.instrument.symbol} — the price feed is offline, so closing is paused until it recovers.",
-        )
+        raise HTTPException(status_code=400, detail="Price feed is stale; try again shortly")
     sv = side_val(pos.side)
     c_bid = Decimal(str(tick["bid"]))
     c_ask = Decimal(str(tick["ask"]))
-    # Per-user execution spread (opt-in) — mirror the open fill so the spread is
-    # crossed exactly once per round trip at the user's own rate. Off by default
-    # → close uses the global broadcast bid/ask.
-    if _get_settings().USER_SPREAD_AT_EXECUTION and pos.instrument:
+    had_spread_override = pos.spread_override is not None
+    if had_spread_override and pos.instrument:
+        # Per-trade override: close at the SAME spread the trader saw live while
+        # this position was open (admin set it on the running trade), re-centered
+        # around the current mid. Takes precedence over the per-user config
+        # spread so what they saw is what they realise.
+        mid = (c_bid + c_ask) / Decimal("2")
+        pip = Decimal(str(pos.instrument.pip_size or "0.0001"))
+        digits = int(pos.instrument.digits or 5)
+        c_bid, c_ask = symmetric_quote_from_mid(
+            mid, Decimal(str(pos.spread_override)),
+            (pos.spread_override_type or "pips"), pip, digits, Decimal("0"),
+        )
+    elif _get_settings().USER_SPREAD_AT_EXECUTION and pos.instrument:
+        # Per-user execution spread (opt-in) — mirror the open fill so the spread
+        # is crossed exactly once per round trip at the user's own rate. Off by
+        # default → close uses the global broadcast bid/ask.
         try:
             c_bid, c_ask = await resolve_user_quote(
                 db, pos.instrument, c_bid, c_ask,
@@ -1003,6 +1060,14 @@ async def close_position(position_id: UUID, req, user_id: UUID, db: AsyncSession
     close_price = c_bid if sv == "buy" else c_ask
     contract_size = pos.instrument.contract_size if pos.instrument else Decimal("100000")
 
+    # C-TRADE-2: the schema bounds lots to 0 < lots <= 100; reject an explicit
+    # request to close MORE than the open size (previously silently clamped,
+    # which masked client bugs). None = close the whole position.
+    if req.lots is not None and Decimal(str(req.lots)) > pos.lots:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot close {req.lots} lots; position holds {pos.lots}.",
+        )
     close_lots = Decimal(str(req.lots)) if req.lots and Decimal(str(req.lots)) < pos.lots else pos.lots
     is_partial = close_lots < pos.lots
 
@@ -1024,6 +1089,10 @@ async def close_position(position_id: UUID, req, user_id: UUID, db: AsyncSession
             detected_reason = "tp"
         elif sv == "sell" and close_price <= tp:
             detected_reason = "tp"
+    # Caller-supplied audit label (e.g. "algo_close") — only replaces the
+    # default "manual"; a detected SL/TP crossing always wins.
+    if close_reason_override and detected_reason == "manual":
+        detected_reason = close_reason_override
 
     if is_partial:
         ratio = close_lots / pos.lots
@@ -1086,6 +1155,20 @@ async def close_position(position_id: UUID, req, user_id: UUID, db: AsyncSession
         result_msg = "Position closed"
         result_profit = full_profit
 
+    # Recompute margin_used from the REMAINING open positions instead of trusting
+    # the incremental subtraction above — over many trades the running value can
+    # drift/stick, which then wrongly blocks new orders with "Insufficient
+    # margin" on an account that actually has plenty free. This self-heals it.
+    _rem = await db.execute(
+        select(Position).options(selectinload(Position.instrument)).where(
+            Position.account_id == account.id, Position.status == "open",
+        )
+    )
+    _om = Decimal("0")
+    for _p in _rem.scalars().all():
+        _cs = (_p.instrument.contract_size if _p.instrument else None) or Decimal("100000")
+        _om += (_p.lots * _cs * _p.open_price) / Decimal(str(account.leverage))
+    account.margin_used = _om
     account.equity = account.balance + (account.credit or Decimal("0"))
     account.free_margin = account.equity - (account.margin_used or Decimal("0"))
 
@@ -1115,6 +1198,16 @@ async def close_position(position_id: UUID, req, user_id: UUID, db: AsyncSession
         logger.debug("bonus release after close failed: %s", _bonus_exc)
 
     await db.commit()
+
+    # A fully-closed trade that carried a per-trade spread override no longer
+    # drives the owner's live quote — revert it instantly (the override is
+    # keyed on OPEN positions). A partial close keeps the position open, so its
+    # override stays in force and we must NOT revert.
+    if had_spread_override and not is_partial:
+        try:
+            await publish_instrument_config_reload()
+        except Exception:
+            pass
 
     # Fire-and-forget: notification, Kafka event, Redis publish — don't block response
     _pos_symbol = pos.instrument.symbol if pos.instrument else ""

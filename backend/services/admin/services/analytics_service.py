@@ -80,9 +80,7 @@ async def analytics_dashboard(db: AsyncSession) -> dict:
 
     wd_q = await db.execute(
         select(func.coalesce(func.sum(Withdrawal.amount), 0)).where(
-            # "paid" is the terminal state mark_withdrawal_paid writes —
-            # without it, paid-out withdrawals vanished from totals.
-            Withdrawal.status.in_(["approved", "completed", "paid"])
+            Withdrawal.status.in_(["approved", "completed"])
         )
     )
     total_withdrawals = float(wd_q.scalar() or 0)

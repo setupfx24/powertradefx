@@ -12,10 +12,8 @@ Performance fee runs on close only (see _close_copy).
 import asyncio
 import json
 import logging
-import unittest
 from decimal import Decimal
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from uuid import UUID
 from collections import defaultdict
 from typing import Optional, Tuple
@@ -31,7 +29,9 @@ from packages.common.src.models import (
 from packages.common.src.redis_client import redis_client, PriceChannel
 from packages.common.src.price_cache import price_cache
 from packages.common.src.admin_fees import credit_admin_fee
+from packages.common.src.copy_fees import apply_hwm_fee
 from packages.common.src.engine_lock import engine_lock
+from packages.common.src.row_locks import lock_account
 from packages.common.src.notify import create_notification
 
 logging.basicConfig(level=logging.INFO)
@@ -175,7 +175,7 @@ class CopyTradeEngine:
                         # computed live via EXISTS — never the denormalised
                         # master.followers_count counter. That counter drifts
                         # out of sync (double-decrements on stop/withdraw, admin
-                        # resets to 0, legacy backfills — see backend/ops-scripts/fix_pending_copies.py
+                        # resets to 0, legacy backfills — see fix_pending_copies.py
                         # and the "actual count from allocations, not stale
                         # counter" notes in every read path). When it drifts to 0
                         # while a follower is still active, the old query skipped
@@ -323,6 +323,7 @@ class CopyTradeEngine:
                     master_account,
                     total_pool,
                     db,
+                    catch_up=True,
                 )
             seeded.add(alloc_key)
             if current_master_pos_ids:
@@ -338,8 +339,8 @@ class CopyTradeEngine:
             master_pos = master_open[pos_id]
             for investor in active_investors:
                 # PAMM investors have no sub-account — funds are pooled on the
-                # master's account directly. P&L settles via NAV units when the
-                # investor withdraws (see social_service.withdraw_managed_account).
+                # master's account directly. Profit is distributed to their main
+                # wallet when the master closes the trade (see trading_service).
                 if resolve_copy_type(investor, master) == "pamm":
                     continue
                 investor_account = await db.get(TradingAccount, investor.investor_account_id)
@@ -408,6 +409,7 @@ class CopyTradeEngine:
         master_account: TradingAccount,
         total_pool: float,
         db: AsyncSession,
+        catch_up: bool = False,
     ):
         instrument = master_pos.instrument
         if not instrument:
@@ -504,9 +506,29 @@ class CopyTradeEngine:
         if investor.max_lot_override and copy_lots > float(investor.max_lot_override):
             copy_lots = float(investor.max_lot_override)
 
+        # C-TRADE-3: a follower joining while the master position is ALREADY
+        # open (catch-up seeding) must enter at the CURRENT market price, not
+        # the master's original entry — otherwise they instantly inherit the
+        # master's accrued unrealised P&L (a phantom gain/loss). A real-time
+        # mirror (catch_up=False) uses the master's open price, which is ~now.
+        open_price = master_pos.open_price
+        if catch_up:
+            tick_data = await price_cache.get(instrument.symbol)
+            if tick_data:
+                try:
+                    tick = json.loads(tick_data)
+                    open_price = Decimal(str(tick["ask"])) if side_val == "buy" else Decimal(str(tick["bid"]))
+                except (json.JSONDecodeError, KeyError, ValueError):
+                    open_price = master_pos.open_price
+            else:
+                logger.warning(
+                    "Catch-up copy open for %s: no live tick, falling back to master open_price",
+                    instrument.symbol,
+                )
+
         contract_size = float(instrument.contract_size or 100000)
         required_margin = Decimal(
-            str(copy_lots * contract_size * float(master_pos.open_price) / investor_account.leverage)
+            str(copy_lots * contract_size * float(open_price) / investor_account.leverage)
         )
 
         if required_margin > (investor_account.free_margin or Decimal("0")):
@@ -529,7 +551,7 @@ class CopyTradeEngine:
             side=side_val,
             status="filled",
             lots=Decimal(str(copy_lots)),
-            filled_price=master_pos.open_price,
+            filled_price=open_price,
             filled_at=datetime.now(timezone.utc),
             commission=Decimal("0"),
             comment=comment,
@@ -544,7 +566,7 @@ class CopyTradeEngine:
             side=side_val,
             status=PositionStatus.OPEN.value,
             lots=Decimal(str(copy_lots)),
-            open_price=master_pos.open_price,
+            open_price=open_price,
             stop_loss=master_pos.stop_loss,
             take_profit=master_pos.take_profit,
             comment=comment,
@@ -602,7 +624,7 @@ class CopyTradeEngine:
                 "symbol": instrument.symbol,
                 "side": side_val,
                 "lots": str(copy_lots),
-                "open_price": str(master_pos.open_price),
+                "open_price": str(open_price),
             }),
         ))
 
@@ -675,13 +697,19 @@ class CopyTradeEngine:
             cross_rate=await cross_rate_for(instrument),
         )
 
+        # High-water mark: charge only on profit ABOVE the follower's
+        # previous peak, so losses must be earned back before the master
+        # is paid again (compute_hwm_fee also advances the mark).
         performance_fee = Decimal("0")
         admin_fee = Decimal("0")
-        if gross_profit > 0:
-            perf_pct = master.performance_fee_pct or Decimal("0")
-            performance_fee = gross_profit * perf_pct / Decimal("100")
-            admin_pct = master.admin_commission_pct or Decimal("0")
-            admin_fee = performance_fee * admin_pct / Decimal("100")
+        alloc_for_fee = await db.get(InvestorAllocation, copy.investor_allocation_id)
+        if alloc_for_fee is not None:
+            performance_fee = apply_hwm_fee(
+                alloc_for_fee, gross_profit, master.performance_fee_pct or Decimal("0")
+            )
+            if performance_fee > 0:
+                admin_pct = master.admin_commission_pct or Decimal("0")
+                admin_fee = performance_fee * admin_pct / Decimal("100")
 
         net_profit = gross_profit - performance_fee
 
@@ -690,7 +718,10 @@ class CopyTradeEngine:
         investor_pos.profit = net_profit
         investor_pos.closed_at = datetime.now(timezone.utc)
 
-        investor_account = await db.get(TradingAccount, investor_pos.account_id)
+        # C-TRADE-4: lock the CF account row before crediting the mirror-close
+        # P&L, so this can't race a manual close / transfer / withdrawal on the
+        # same account (each of which also mutates balance under its own lock).
+        investor_account = await lock_account(db, investor_pos.account_id)
         if investor_account:
             investor_account.balance = (investor_account.balance or Decimal("0")) + net_profit
             margin_release = (investor_pos.lots * contract_size * investor_pos.open_price) / Decimal(
@@ -738,7 +769,10 @@ class CopyTradeEngine:
                 )
 
         if performance_fee > 0:
-            master_account = await db.get(TradingAccount, master.account_id)
+            # C-TRADE-4: lock the master pool row before crediting its
+            # performance-fee share (mirrors the investor-side lock above), so it
+            # can't race a concurrent close / transfer / withdrawal on that account.
+            master_account = await lock_account(db, master.account_id)
             if master_account:
                 master_share = performance_fee - admin_fee
                 master_account.balance = (master_account.balance or Decimal("0")) + master_share
@@ -810,75 +844,3 @@ class CopyTradeEngine:
 
 
 copy_engine = CopyTradeEngine()
-
-
-class _ComputeLotSizeTests(unittest.TestCase):
-    """Covers PAMM pool math, MAM scaling, Signal ratio, zero-pool, min-lot guards."""
-
-    def _accounts(self, m_eq, i_eq):
-        master = SimpleNamespace(equity=Decimal(str(m_eq)), balance=Decimal(str(m_eq)))
-        inv = SimpleNamespace(equity=Decimal(str(i_eq)), balance=Decimal(str(i_eq)))
-        return master, inv
-
-    def test_signal_equity_ratio(self):
-        ma, ia = self._accounts(10000, 2500)
-        alloc = SimpleNamespace(allocation_amount=100, allocation_pct=None, copy_type="signal")
-        lots, err = CopyTradeEngine.compute_lot_size(1.0, ma, alloc, ia, total_pool=0, copy_type="signal")
-        self.assertIsNone(err)
-        self.assertEqual(lots, 0.25)
-
-    def test_signal_zero_investor_equity(self):
-        ma, ia = self._accounts(10000, 0)
-        alloc = SimpleNamespace(allocation_amount=100, allocation_pct=None, copy_type="signal")
-        lots, err = CopyTradeEngine.compute_lot_size(1.0, ma, alloc, ia, total_pool=0, copy_type="signal")
-        self.assertIsNone(lots)
-        self.assertEqual(err, "signal_zero_investor_equity")
-
-    def test_signal_zero_master_equity(self):
-        ma, ia = self._accounts(0, 5000)
-        alloc = SimpleNamespace(allocation_amount=100, allocation_pct=None, copy_type="signal")
-        lots, err = CopyTradeEngine.compute_lot_size(1.0, ma, alloc, ia, total_pool=0, copy_type="signal")
-        self.assertIsNone(lots)
-        self.assertEqual(err, "signal_zero_master_equity")
-
-    def test_pamm_pool_share(self):
-        ma, ia = self._accounts(1, 1)
-        alloc = SimpleNamespace(allocation_amount=3000, allocation_pct=None, copy_type="pamm")
-        lots, err = CopyTradeEngine.compute_lot_size(1.0, ma, alloc, ia, total_pool=10000, copy_type="pamm")
-        self.assertIsNone(err)
-        self.assertEqual(lots, 0.3)
-
-    def test_pamm_zero_pool(self):
-        ma, ia = self._accounts(1, 1)
-        alloc = SimpleNamespace(allocation_amount=100, allocation_pct=None, copy_type="pamm")
-        lots, err = CopyTradeEngine.compute_lot_size(1.0, ma, alloc, ia, total_pool=0, copy_type="pamm")
-        self.assertIsNone(lots)
-        self.assertEqual(err, "pamm_zero_total_pool")
-
-    def test_mam_volume_scaling(self):
-        ma, ia = self._accounts(1, 1)
-        alloc = SimpleNamespace(allocation_amount=5000, allocation_pct=Decimal("150"), copy_type="mam")
-        lots, err = CopyTradeEngine.compute_lot_size(1.0, ma, alloc, ia, total_pool=10000, copy_type="mam")
-        self.assertIsNone(err)
-        self.assertEqual(lots, 0.75)
-
-    def test_mam_zero_allocation_pct(self):
-        ma, ia = self._accounts(1, 1)
-        alloc = SimpleNamespace(allocation_amount=5000, allocation_pct=Decimal("0"), copy_type="mam")
-        lots, err = CopyTradeEngine.compute_lot_size(1.0, ma, alloc, ia, total_pool=10000, copy_type="mam")
-        self.assertIsNone(lots)
-        self.assertEqual(err, "mam_zero_allocation_pct")
-
-    def test_below_min_lot_clamps_to_minimum(self):
-        # Proportional size rounds below 0.01 (1.0 * 10/10000 = 0.001) — the
-        # engine must clamp up to the minimum lot instead of skipping the copy,
-        # otherwise a master trading small sizes never mirrors to followers.
-        ma, ia = self._accounts(10000, 10)
-        alloc = SimpleNamespace(allocation_amount=100, allocation_pct=None, copy_type="signal")
-        lots, err = CopyTradeEngine.compute_lot_size(1.0, ma, alloc, ia, total_pool=0, copy_type="signal")
-        self.assertIsNone(err)
-        self.assertEqual(lots, MIN_COPY_LOT)
-
-
-if __name__ == "__main__":
-    unittest.main()

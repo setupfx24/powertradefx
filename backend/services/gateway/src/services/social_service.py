@@ -15,12 +15,11 @@ from packages.common.src.models import (
     TradeHistory, AllocationCopyType, Transaction,
     Referral, AccountGroup, Instrument,
 )
+from packages.common.src.copy_fees import apply_hwm_fee
+from packages.common.src.row_locks import lock_user, lock_account
 from packages.common.src.redis_client import redis_client
 from packages.common.src.price_cache import price_cache
-from packages.common.src.trading_service import (
-    calc_position_pnl, cross_rate_for, quote_to_account_pnl,
-)
-from packages.common.src.admin_fees import credit_admin_fee
+from packages.common.src.trading_service import calc_position_pnl, cross_rate_for
 
 
 async def _live_open_pnl(pos, instrument) -> float:
@@ -43,6 +42,27 @@ async def _live_open_pnl(pos, instrument) -> float:
     except Exception:
         pass
     return float(pos.profit or 0)
+
+
+async def _pool_value_with_floating(db: AsyncSession, pool_account) -> Decimal:
+    """H-TRADE-2: value a PAMM pool at balance PLUS the live floating P&L of its
+    open positions, so NAV for subscribe/redeem reflects true value. Using bare
+    balance let a joiner buy units cheaply during an unrealised gain (or dear
+    during a loss), diluting existing holders."""
+    base = pool_account.balance or Decimal("0")
+    pos_rows = (await db.execute(
+        select(Position).where(
+            Position.account_id == pool_account.id,
+            Position.status == PositionStatus.OPEN,
+        )
+    )).scalars().all()
+    floating = Decimal("0")
+    for pos in pos_rows:
+        inst = pos.instrument
+        if not inst:
+            continue
+        floating += Decimal(str(await _live_open_pnl(pos, inst)))
+    return base + floating
 
 
 def _gen_investor_account_number(copy_type: str = "signal") -> str:
@@ -115,6 +135,23 @@ async def list_leaderboard(
         )
         real_followers = real_followers_q.scalar() or 0
 
+        # Real trade stats straight from trade_history — the raw numbers a
+        # follower can sanity-check the ROI against.
+        from packages.common.src.models import TradeHistory as _TH
+        from sqlalchemy import case as _case
+        tstats = (
+            await db.execute(
+                select(
+                    func.count(),
+                    func.coalesce(func.sum(_case((_TH.profit > 0, 1), else_=0)), 0),
+                    func.coalesce(func.sum(_TH.profit), 0),
+                ).where(_TH.account_id == master.account_id)
+            )
+        ).one()
+        total_trades = int(tstats[0] or 0)
+        wins = int(tstats[1] or 0)
+        win_rate = (wins / total_trades * 100) if total_trades else 0.0
+
         items.append({
             "id": str(master.id),
             "user_id": str(master.user_id),
@@ -122,6 +159,9 @@ async def list_leaderboard(
             "total_return_pct": float(master.total_return_pct),
             "max_drawdown_pct": float(master.max_drawdown_pct),
             "sharpe_ratio": float(master.sharpe_ratio),
+            "win_rate": round(win_rate, 2),
+            "total_trades": total_trades,
+            "total_profit_usd": round(float(tstats[2] or 0), 2),
             "followers_count": real_followers,
             "performance_fee_pct": float(master.performance_fee_pct),
             "min_investment": float(master.min_investment),
@@ -354,8 +394,9 @@ async def start_copy(
     if investor_count.scalar() >= master.max_investors:
         raise HTTPException(status_code=400, detail="Provider has reached maximum investors")
 
-    user_result = await db.execute(select(User).where(User.id == user_id))
-    user = user_result.scalar_one_or_none()
+    # C-TRADE-4 / H-TRADE-1: lock the user row (canonical: user before account)
+    # so two concurrent subscriptions can't both spend the same wallet balance.
+    user = await lock_user(db, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -372,10 +413,9 @@ async def start_copy(
     investor_account: TradingAccount
     if account_id is not None:
         # ── Existing-account path ──
-        acc_q = await db.execute(
-            select(TradingAccount).where(TradingAccount.id == account_id)
-        )
-        acc = acc_q.scalar_one_or_none()
+        # Lock the account (after the user — canonical order) before checking
+        # its balance against the allocation.
+        acc = await lock_account(db, account_id)
         if not acc or acc.user_id != user_id:
             raise HTTPException(status_code=400, detail="Account not found or not yours")
         if acc.is_demo:
@@ -669,134 +709,6 @@ async def _allocation_trade_counts(
     return open_count, closed_count
 
 
-async def _settle_copy_close(
-    copy: CopyTrade,
-    allocation: InvestorAllocation,
-    master: MasterAccount | None,
-    db: AsyncSession,
-    *,
-    close_reason: str,
-) -> tuple[Decimal, bool]:
-    """Close ONE open copied position into the investor's account with the
-    same accounting the copy engine uses on a master close: net P&L credited
-    to the account balance, margin released, performance fee actually paid
-    (master share + platform cut) instead of silently vanishing.
-
-    Returns (net_pnl, closed). closed=False means no close price exists
-    (market shut and the master position still open) — the caller aborts the
-    whole settlement so nothing half-closes.
-    """
-    investor_pos = await db.get(Position, copy.investor_position_id)
-    if not investor_pos:
-        copy.status = "closed"
-        return Decimal("0"), True
-    pos_status = investor_pos.status.value if hasattr(investor_pos.status, "value") else str(investor_pos.status)
-    if pos_status != "open":
-        copy.status = "closed"
-        return Decimal("0"), True
-    instrument = investor_pos.instrument
-    if not instrument:
-        copy.status = "closed"
-        return Decimal("0"), True
-
-    side_val = investor_pos.side.value if hasattr(investor_pos.side, "value") else str(investor_pos.side)
-
-    close_price = None
-    tick_data = await price_cache.get(instrument.symbol)
-    if tick_data:
-        try:
-            tick = json.loads(tick_data)
-            close_price = Decimal(str(tick["bid"])) if side_val == "buy" else Decimal(str(tick["ask"]))
-        except (ValueError, KeyError):
-            close_price = None
-    if close_price is None:
-        master_pos = await db.get(Position, copy.master_position_id)
-        if master_pos is not None and master_pos.close_price is not None:
-            close_price = master_pos.close_price
-    if close_price is None:
-        return Decimal("0"), False
-
-    contract_size = instrument.contract_size or Decimal("100000")
-    if side_val == "buy":
-        gross = (close_price - investor_pos.open_price) * investor_pos.lots * contract_size
-    else:
-        gross = (investor_pos.open_price - close_price) * investor_pos.lots * contract_size
-    gross = quote_to_account_pnl(
-        gross,
-        getattr(instrument, "base_currency", None),
-        getattr(instrument, "quote_currency", None),
-        close_price,
-        symbol=getattr(instrument, "symbol", None),
-        cross_rate=await cross_rate_for(instrument),
-    )
-
-    perf_fee = Decimal("0")
-    admin_fee = Decimal("0")
-    if gross > 0 and master is not None:
-        perf_fee = gross * (master.performance_fee_pct or Decimal("0")) / Decimal("100")
-        admin_fee = perf_fee * (master.admin_commission_pct or Decimal("0")) / Decimal("100")
-    net = gross - perf_fee
-
-    now = datetime.now(timezone.utc)
-    investor_pos.status = PositionStatus.CLOSED.value
-    investor_pos.close_price = close_price
-    investor_pos.profit = net
-    investor_pos.closed_at = now
-
-    investor_account = await db.get(TradingAccount, investor_pos.account_id)
-    if investor_account:
-        investor_account.balance = (investor_account.balance or Decimal("0")) + net
-        margin_release = (investor_pos.lots * contract_size * investor_pos.open_price) / Decimal(
-            str(investor_account.leverage or 100)
-        )
-        investor_account.margin_used = max(
-            Decimal("0"), (investor_account.margin_used or Decimal("0")) - margin_release
-        )
-        investor_account.equity = investor_account.balance + (investor_account.credit or Decimal("0"))
-        investor_account.free_margin = investor_account.equity - investor_account.margin_used
-        if perf_fee > 0:
-            db.add(Transaction(
-                user_id=investor_account.user_id, account_id=investor_account.id,
-                type="commission", amount=-perf_fee, balance_after=investor_account.balance,
-                reference_id=investor_pos.id,
-                description=f"Performance fee ({master.performance_fee_pct}%) on copy trade",
-            ))
-
-    db.add(TradeHistory(
-        position_id=investor_pos.id, account_id=investor_pos.account_id,
-        instrument_id=investor_pos.instrument_id, side=investor_pos.side,
-        lots=investor_pos.lots, open_price=investor_pos.open_price,
-        close_price=close_price, swap=investor_pos.swap or Decimal("0"),
-        commission=investor_pos.commission or Decimal("0"), profit=net,
-        close_reason=close_reason, opened_at=investor_pos.created_at, closed_at=now,
-    ))
-
-    if perf_fee > 0 and master is not None:
-        master_share = perf_fee - admin_fee
-        master_account = await db.get(TradingAccount, master.account_id) if master.account_id else None
-        if master_account:
-            master_account.balance = (master_account.balance or Decimal("0")) + master_share
-            master_account.equity = master_account.balance + (master_account.credit or Decimal("0"))
-            master_account.free_margin = master_account.equity - (master_account.margin_used or Decimal("0"))
-            db.add(Transaction(
-                user_id=master.user_id, account_id=master_account.id,
-                type="ib_commission", amount=master_share, balance_after=master_account.balance,
-                reference_id=investor_pos.id,
-                description="Performance fee earned from copy trade",
-            ))
-        master.total_fee_earned = (master.total_fee_earned or Decimal("0")) + master_share
-        if admin_fee > 0:
-            await credit_admin_fee(
-                db, admin_fee,
-                description="Platform commission from copy-trade settlement",
-                reference_id=investor_pos.id,
-            )
-
-    allocation.total_profit = (allocation.total_profit or Decimal("0")) + net
-    copy.status = "closed"
-    return net, True
-
-
 async def stop_copy(allocation_id: UUID, user_id: UUID, db: AsyncSession) -> dict:
     result = await db.execute(
         select(InvestorAllocation).where(
@@ -810,6 +722,13 @@ async def stop_copy(allocation_id: UUID, user_id: UUID, db: AsyncSession) -> dic
     if allocation.status != "active":
         raise HTTPException(status_code=400, detail="Subscription already inactive")
 
+    # C-TRADE-4 / H-TRADE-1: acquire the balance-mutation locks up front in the
+    # canonical order (user, then account) so the refund can't race a concurrent
+    # transfer/subscribe on the same wallet or CF account.
+    user = await lock_user(db, user_id)
+
+    # Close open copied positions and calculate PnL
+    from packages.common.src.redis_client import PriceChannel
     open_copies_q = await db.execute(
         select(CopyTrade).where(
             CopyTrade.investor_allocation_id == allocation.id,
@@ -818,81 +737,130 @@ async def stop_copy(allocation_id: UUID, user_id: UUID, db: AsyncSession) -> dic
     )
     open_copies = open_copies_q.scalars().all()
 
+    total_pnl = Decimal("0")
     master_result = await db.execute(
         select(MasterAccount).where(MasterAccount.id == allocation.master_id)
     )
     master = master_result.scalar_one_or_none()
 
-    total_pnl = Decimal("0")
-    for copy in open_copies:
-        net, closed = await _settle_copy_close(
-            copy, allocation, master, db, close_reason="copy_stopped",
-        )
-        if not closed:
-            # No close price (market shut, master still open). Abort the whole
-            # settlement — raising rolls back every change in this session.
-            raise HTTPException(
-                status_code=400,
-                detail="Market is closed for one of the copied positions — stop the copy while the market is open.",
-            )
-        total_pnl += net
-
-    user_result = await db.execute(select(User).where(User.id == user_id))
-    user = user_result.scalar_one_or_none()
-
-    # Settlement:
-    # • CF sub-account (engine-created wallet-funded account): sweep the FULL
-    #   remaining balance back to the main wallet and deactivate the account.
-    #   The old code refunded allocation_amount+P&L to the wallet while the CF
-    #   account kept its balance — every stop paid the follower twice.
-    # • Existing-account destination: the money never left the follower's own
-    #   account, so nothing moves — positions are simply closed in place.
-    investor_account = (
-        await db.get(TradingAccount, allocation.investor_account_id)
+    # C-TRADE-1: the follower's capital lives in their own CF account. Realise
+    # P&L into THAT account and later refund its real balance — the old code
+    # credited allocation_amount + P&L to the wallet without ever zeroing the CF
+    # account, so deleting the account afterwards swept the same funds a second
+    # time (double refund).
+    inv_acct = (
+        await lock_account(db, allocation.investor_account_id)
         if allocation.investor_account_id else None
     )
-    swept = Decimal("0")
-    is_engine_account = bool(
-        investor_account and str(investor_account.account_number or "").startswith(("CF", "IF"))
-    )
-    if is_engine_account and investor_account:
-        swept = investor_account.balance or Decimal("0")
-        if swept > 0 and user:
-            user.main_wallet_balance = (user.main_wallet_balance or Decimal("0")) + swept
-            db.add(Transaction(
-                user_id=user_id, account_id=investor_account.id, type="transfer",
-                amount=-swept, balance_after=Decimal("0"),
-                description="Copy account settled to main wallet",
-            ))
-            db.add(Transaction(
-                user_id=user_id, account_id=None, type="deposit",
-                amount=swept, balance_after=user.main_wallet_balance,
-                description="Copy trading stopped — funds returned to wallet",
-            ))
-        investor_account.balance = Decimal("0")
-        investor_account.equity = investor_account.credit or Decimal("0")
-        investor_account.free_margin = investor_account.equity - (investor_account.margin_used or Decimal("0"))
-        investor_account.is_active = False
+
+    for copy in open_copies:
+        investor_pos = await db.get(Position, copy.investor_position_id)
+        if not investor_pos or investor_pos.status != PositionStatus.OPEN:
+            copy.status = "closed"
+            continue
+
+        instrument = investor_pos.instrument
+        if not instrument:
+            copy.status = "closed"
+            continue
+
+        tick_data = await price_cache.get(instrument.symbol)
+        if not tick_data:
+            continue
+
+        tick = json.loads(tick_data)
+        side_val = investor_pos.side.value if hasattr(investor_pos.side, "value") else str(investor_pos.side)
+        close_price = Decimal(str(tick["bid"])) if side_val == "buy" else Decimal(str(tick["ask"]))
+        contract_size = instrument.contract_size or Decimal("100000")
+
+        if side_val == "buy":
+            gross = (close_price - investor_pos.open_price) * investor_pos.lots * contract_size
+        else:
+            gross = (investor_pos.open_price - close_price) * investor_pos.lots * contract_size
+        from packages.common.src.trading_service import quote_to_account_pnl
+        gross = quote_to_account_pnl(
+            gross,
+            getattr(instrument, "base_currency", None),
+            getattr(instrument, "quote_currency", None),
+            close_price,
+            symbol=getattr(instrument, "symbol", None),
+            cross_rate=await cross_rate_for(instrument),
+        )
+
+        # Same high-water mark as the mirror-close path.
+        perf_fee = Decimal("0")
+        if master:
+            perf_fee = apply_hwm_fee(
+                allocation, gross, master.performance_fee_pct or Decimal("0")
+            )
+        net = gross - perf_fee
+        total_pnl += net
+        # Realise this position's P&L onto the CF account balance.
+        if inv_acct is not None:
+            inv_acct.balance = (inv_acct.balance or Decimal("0")) + net
+
+        investor_pos.status = PositionStatus.CLOSED.value
+        investor_pos.close_price = close_price
+        investor_pos.profit = net
+        from datetime import datetime, timezone
+        investor_pos.closed_at = datetime.now(timezone.utc)
+
+        db.add(TradeHistory(
+            position_id=investor_pos.id, account_id=investor_pos.account_id,
+            instrument_id=investor_pos.instrument_id, side=investor_pos.side,
+            lots=investor_pos.lots, open_price=investor_pos.open_price,
+            close_price=close_price, swap=investor_pos.swap or Decimal("0"),
+            commission=investor_pos.commission or Decimal("0"), profit=net,
+            close_reason="copy_stopped", opened_at=investor_pos.created_at,
+            closed_at=datetime.now(timezone.utc),
+        ))
+        copy.status = "closed"
+
+    # No master-pool deduct: signal/copy trade keeps follower funds in the follower's
+    # own CF account throughout. Master never held this money.
+
+    # Return capital + PnL to main wallet (user row already locked above).
+    # C-TRADE-1: refund the CF account's REAL balance (capital with realised P&L
+    # already applied above), then zero the account so it can't be swept again.
+    # Fall back to the reconstructed figure only for legacy allocations that
+    # never had a dedicated CF account.
+    if inv_acct is not None:
+        return_amount = inv_acct.balance or Decimal("0")
+        if return_amount < 0:
+            return_amount = Decimal("0")
+        inv_acct.balance = Decimal("0")
+        inv_acct.equity = Decimal("0")
+        inv_acct.free_margin = Decimal("0")
+        inv_acct.margin_used = Decimal("0")
+        inv_acct.is_active = False
+    else:
+        return_amount = (allocation.allocation_amount or Decimal("0")) + total_pnl
+        if return_amount < 0:
+            return_amount = Decimal("0")
+
+    if user:
+        user.main_wallet_balance = (user.main_wallet_balance or Decimal("0")) + return_amount
+        db.add(Transaction(
+            user_id=user_id, account_id=None, type="deposit",
+            amount=return_amount,
+            description="Copy trading withdrawal (capital + P&L)",
+        ))
 
     allocation.status = "stopped"
+    allocation.total_profit = (allocation.total_profit or Decimal("0")) + total_pnl
 
     if master and master.followers_count and master.followers_count > 0:
         master.followers_count -= 1
 
     await db.commit()
     return {
-        "message": (
-            "Copy trading stopped — funds returned to wallet"
-            if is_engine_account
-            else "Copy trading stopped — positions closed in your account"
-        ),
+        "message": "Copy trading stopped — funds returned to wallet",
         "allocation_id": str(allocation_id),
         "positions_closed": len(open_copies),
-        "returned_to_wallet": float(swept),
+        "returned_to_wallet": float(return_amount),
         "total_pnl": float(total_pnl),
         "wallet_balance": float(user.main_wallet_balance) if user else None,
     }
-
 
 
 async def withdraw_managed_account(
@@ -950,7 +918,9 @@ async def withdraw_managed_account(
         total_units = Decimal(str(total_units_q.scalar() or 0))
         my_units = allocation.units or Decimal("0")
         alloc_amt = allocation.allocation_amount or Decimal("0")  # cost basis
-        pool_balance = pool_account.balance or Decimal("0")
+        # H-TRADE-2: value the pool at equity (balance + floating P&L of open
+        # positions), not bare balance, so the redeem NAV is fair.
+        pool_balance = await _pool_value_with_floating(db, pool_account)
 
         # Investor share = their units valued at the current NAV
         # (NAV = pool_balance / total_units). Redeeming the full share removes
@@ -960,19 +930,6 @@ async def withdraw_managed_account(
             share_value = Decimal("0")
         else:
             share_value = (pool_balance * my_units) / total_units
-
-        # Cash locked as margin under the master's open trades cannot leave
-        # the pool — paying it out would break the open positions' margin and
-        # silently shift the risk onto the remaining investors.
-        available_cash = pool_balance - (pool_account.margin_used or Decimal("0"))
-        if share_value > available_cash:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "The manager has open trades locking pool margin. "
-                    "Withdraw after they close, or contact support."
-                ),
-            )
 
         gross_profit = share_value - alloc_amt  # realised P&L vs cost basis
         perf_fee = Decimal("0")
@@ -986,7 +943,9 @@ async def withdraw_managed_account(
         # The FULL share leaves the pool. The performance fee does NOT linger in
         # the pool (that would inflate the remaining investors' NAV) — it is
         # paid out to the master's own wallet below.
-        pool_account.balance = max(Decimal("0"), pool_balance - share_value)
+        # H-TRADE-2: reduce the REAL settled balance by the cash paid out, not the
+        # equity figure used for NAV (pool_balance now includes floating P&L).
+        pool_account.balance = max(Decimal("0"), (pool_account.balance or Decimal("0")) - share_value)
         pool_account.equity = pool_account.balance + (pool_account.credit or Decimal("0"))
         pool_account.free_margin = pool_account.equity - (pool_account.margin_used or Decimal("0"))
 
@@ -1029,11 +988,12 @@ async def withdraw_managed_account(
             "wallet_balance": float(user.main_wallet_balance) if user else None,
         }
 
-    # ─── MAM withdrawal ─────────────────────────────────────────────────
-    # Funds live on the investor's own IF sub-account (NOT the master pool —
-    # see invest_managed_account). Close all copies into the sub-account with
-    # full engine accounting, then sweep the entire remaining balance to the
-    # investor's main wallet and deactivate the sub-account.
+    # ─── MAM withdrawal (legacy) ────────────────────────────────────────
+    # Close any open copied positions for this allocation
+    from packages.common.src.models import CopyTrade, Position, PositionStatus
+    import json
+    from packages.common.src.redis_client import redis_client, PriceChannel
+
     open_copies_q = await db.execute(
         select(CopyTrade).where(
             CopyTrade.investor_allocation_id == allocation.id,
@@ -1044,40 +1004,100 @@ async def withdraw_managed_account(
 
     total_closed_pnl = Decimal("0")
     for copy in open_copies:
-        net, closed = await _settle_copy_close(
-            copy, allocation, master, db, close_reason="managed_withdrawal",
+        investor_pos = await db.get(Position, copy.investor_position_id)
+        if not investor_pos or investor_pos.status != PositionStatus.OPEN:
+            copy.status = "closed"
+            continue
+
+        instrument = investor_pos.instrument
+        if not instrument:
+            copy.status = "closed"
+            continue
+
+        tick_data = await price_cache.get(instrument.symbol)
+        if not tick_data:
+            continue  # defer — can't close without price
+
+        tick = json.loads(tick_data)
+        side_val = investor_pos.side.value if hasattr(investor_pos.side, "value") else str(investor_pos.side)
+        close_price = Decimal(str(tick["bid"])) if side_val == "buy" else Decimal(str(tick["ask"]))
+        contract_size = instrument.contract_size or Decimal("100000")
+
+        if side_val == "buy":
+            gross = (close_price - investor_pos.open_price) * investor_pos.lots * contract_size
+        else:
+            gross = (investor_pos.open_price - close_price) * investor_pos.lots * contract_size
+        from packages.common.src.trading_service import quote_to_account_pnl
+        gross = quote_to_account_pnl(
+            gross,
+            getattr(instrument, "base_currency", None),
+            getattr(instrument, "quote_currency", None),
+            close_price,
+            symbol=getattr(instrument, "symbol", None),
+            cross_rate=await cross_rate_for(instrument),
         )
-        if not closed:
-            raise HTTPException(
-                status_code=400,
-                detail="Market is closed for one of the open positions — withdraw while the market is open.",
+
+        perf_fee = Decimal("0")
+        if master:
+            perf_fee = apply_hwm_fee(
+                allocation, gross, master.performance_fee_pct or Decimal("0")
             )
+
+        net = gross - perf_fee
         total_closed_pnl += net
 
+        investor_pos.status = PositionStatus.CLOSED.value
+        investor_pos.close_price = close_price
+        investor_pos.profit = net
+        from datetime import datetime, timezone
+        investor_pos.closed_at = datetime.now(timezone.utc)
+
+        from packages.common.src.models import TradeHistory
+        db.add(TradeHistory(
+            position_id=investor_pos.id,
+            account_id=investor_pos.account_id,
+            instrument_id=investor_pos.instrument_id,
+            side=investor_pos.side,
+            lots=investor_pos.lots,
+            open_price=investor_pos.open_price,
+            close_price=close_price,
+            swap=investor_pos.swap or Decimal("0"),
+            commission=investor_pos.commission or Decimal("0"),
+            profit=net,
+            close_reason="managed_withdrawal",
+            opened_at=investor_pos.created_at,
+            closed_at=datetime.now(timezone.utc),
+        ))
+
+        copy.status = "closed"
+
+    # Return capital + PnL to main wallet
     user_result = await db.execute(select(User).where(User.id == user_id))
     user = user_result.scalar_one_or_none()
 
-    investor_account = (
-        await db.get(TradingAccount, allocation.investor_account_id)
-        if allocation.investor_account_id else None
-    )
-    return_amount = Decimal("0")
-    if investor_account:
-        return_amount = investor_account.balance or Decimal("0")
-        investor_account.balance = Decimal("0")
-        investor_account.equity = investor_account.credit or Decimal("0")
-        investor_account.free_margin = investor_account.equity - (investor_account.margin_used or Decimal("0"))
-        investor_account.is_active = False
+    return_amount = (allocation.allocation_amount or Decimal("0")) + total_closed_pnl
+    if return_amount < 0:
+        return_amount = Decimal("0")
 
-    if user and return_amount > 0:
+    # Deduct from master's pool account
+    if master and master.account_id:
+        pool_account = await db.get(TradingAccount, master.account_id)
+        if pool_account:
+            pool_account.balance = max(Decimal("0"), (pool_account.balance or Decimal("0")) - (allocation.allocation_amount or Decimal("0")))
+            pool_account.equity = pool_account.balance + (pool_account.credit or Decimal("0"))
+            pool_account.free_margin = pool_account.equity - (pool_account.margin_used or Decimal("0"))
+
+    if user:
         user.main_wallet_balance = (user.main_wallet_balance or Decimal("0")) + return_amount
         db.add(Transaction(
             user_id=user_id, account_id=None, type="deposit",
-            amount=return_amount, balance_after=user.main_wallet_balance,
-            description="Withdrawal from MAM (capital + P&L)",
+            amount=return_amount,
+            description=f"Withdrawal from {'PAMM' if allocation.copy_type == 'pamm' else 'MAM'} (capital + P&L)",
         ))
 
+    # Deactivate allocation
     allocation.status = "withdrawn"
+    allocation.total_profit = (allocation.total_profit or Decimal("0")) + total_closed_pnl
 
     if master and master.followers_count and master.followers_count > 0:
         master.followers_count -= 1
@@ -1090,7 +1110,7 @@ async def withdraw_managed_account(
         "positions_closed": len(open_copies),
         "returned_to_wallet": float(return_amount),
         "total_pnl": float(total_closed_pnl),
-        "total_profit": float(allocation.total_profit or 0),
+        "total_profit": float(allocation.total_profit),
         "wallet_balance": float(user.main_wallet_balance) if user else None,
     }
 
@@ -1101,7 +1121,7 @@ async def withdraw_managed_account(
 #
 # Two paths:
 #   1. Verified external P&L  — submit a track-record URL; admin reviews.
-#   2. Qualify via PowerTradeFX    — meet all four criteria below over the
+#   2. Qualify via SwissCresta    — meet all four criteria below over the
 #      user's lifetime trading on the platform.
 
 MASTER_MIN_ACTIVE_DAYS = 30
@@ -1393,7 +1413,7 @@ async def my_provider_stats(user_id: UUID, db: AsyncSession, master_type: str | 
     )
     master = result.scalars().first()
     if not master:
-        raise HTTPException(status_code=404, detail="You are not a trade master")
+        raise HTTPException(status_code=404, detail="You are not a signal provider")
 
     investor_result = await db.execute(
         select(
@@ -1691,7 +1711,8 @@ async def invest_managed_account(
     # first investor (or an empty pool). MAM is unaffected (units stays 0).
     pamm_new_units = Decimal("0")
     if master.master_type == "pamm" and pool_account is not None:
-        pool_value_before = pool_account.balance or Decimal("0")
+        # H-TRADE-2: NAV uses pool equity (balance + floating P&L), not balance.
+        pool_value_before = await _pool_value_with_floating(db, pool_account)
         tot_units_q = await db.execute(
             select(func.coalesce(func.sum(InvestorAllocation.units), 0)).where(
                 InvestorAllocation.master_id == master_id,
@@ -1707,9 +1728,10 @@ async def invest_managed_account(
         )
         pamm_new_units = amount / nav
 
-    # Only PAMM pools funds on the master's account. A MAM deposit is seeded
-    # into the investor's own IF sub-account below — crediting the pool as
-    # well duplicated the money (and let the master trade/withdraw it).
+    # H-TRADE-3: credit exactly ONE destination. PAMM is a pooled fund → the
+    # pool account. MAM mirrors into the investor's own sub-account → credited
+    # below. Previously the pool was credited for BOTH types AND the MAM
+    # sub-account too, double-crediting every MAM investment.
     if master.master_type == "pamm" and pool_account:
         pool_account.balance = (pool_account.balance or Decimal("0")) + amount
         pool_account.equity = pool_account.balance + (pool_account.credit or Decimal("0"))
@@ -1719,8 +1741,8 @@ async def invest_managed_account(
 
     # PAMM is a pooled fund — investors do NOT get a sub-account. Funds live
     # on the master's pool account, allocation tracks each investor's share,
-    # and P&L settles via NAV: units are bought at the live NAV on invest
-    # and redeemed at the live NAV on withdrawal (see withdraw_managed_account).
+    # and P&L is settled to the investor's main wallet when the master closes
+    # a trade (see trading_service.close_position → distribute_pamm_profit).
     is_pamm = master.master_type == "pamm"
 
     if existing_alloc:
@@ -1842,7 +1864,7 @@ async def get_my_followers(user_id: UUID, db: AsyncSession) -> dict:
     )
     master = master_result.scalars().first()
     if not master:
-        raise HTTPException(status_code=404, detail="You are not a trade master")
+        raise HTTPException(status_code=404, detail="You are not a signal provider")
 
     # LEFT join the investor account: an INNER join silently dropped any
     # active follower whose investor_account_id was NULL or pointed at a
@@ -1928,12 +1950,19 @@ async def get_provider_followers(provider_id: UUID, db: AsyncSession) -> dict:
         if allocation.allocation_amount and allocation.allocation_amount > 0:
             profit_pct = (float(allocation.total_profit or 0) / float(allocation.allocation_amount)) * 100
 
-        # Public view: hide sensitive info like account numbers
+        # Public view — ANY authenticated user can enumerate masters (via the
+        # leaderboard) and call this, so it must NOT expose other investors'
+        # real names or exact capital. Mask the name to first-name + last
+        # initial and drop absolute dollar amounts; the relative profit % and
+        # trade count are safe social-proof and reveal no one's capital.
+        fn = (user.first_name or "").strip()
+        ln = (user.last_name or "").strip()
+        masked_name = (f"{fn} {ln[0]}." if fn and ln else fn) or "Anonymous"
         followers.append({
             "id": str(allocation.id),
-            "user_name": f"{user.first_name or ''} {user.last_name or ''}".strip() or "Anonymous",
-            "allocation_amount": float(allocation.allocation_amount or 0),
-            "total_profit": float(allocation.total_profit or 0),
+            "user_name": masked_name,
+            "allocation_amount": 0.0,   # hidden — do not expose other users' capital
+            "total_profit": 0.0,        # hidden — absolute $ is private
             "profit_pct": round(profit_pct, 2),
             "total_copied_trades": total_copied_trades,
             "joined_at": allocation.created_at.isoformat() if allocation.created_at else None,
@@ -1942,7 +1971,7 @@ async def get_provider_followers(provider_id: UUID, db: AsyncSession) -> dict:
     return {
         "provider_id": str(master.id),
         "total_followers": len(followers),
-        "total_aum": sum(f["allocation_amount"] for f in followers),
+        "total_aum": 0.0,               # hidden — aggregate capital is private
         "followers": followers,
     }
 
@@ -2513,8 +2542,6 @@ async def master_transactions(
     page: int = 1,
     per_page: int = 20,
     filter_type: str = "all",
-    date_from: str | None = None,
-    date_to: str | None = None,
 ) -> dict:
     """Paginated transaction history for a Trade Master.
 
@@ -2522,25 +2549,14 @@ async def master_transactions(
     withdrawals, account transfers, deposits and bonuses — everything that
     moves money in or out of the master's wallets — in one ordered feed
     so the master can audit earnings against payouts in a single place.
-
-    date_from / date_to are inclusive ISO dates (YYYY-MM-DD); date_to
-    covers the whole day. The summary block respects the same window so
-    the totals match the filtered list.
     """
     from packages.common.src.models import Instrument
 
-    # A user can legitimately hold MORE than one master account (e.g. a
-    # copy-trading master AND a PAMM pool). scalar_one_or_none() crashed
-    # with MultipleResultsFound the moment a second one existed — fetch
-    # them all and aggregate the feed across every approved master.
-    masters_q = await db.execute(
-        select(MasterAccount).where(
-            MasterAccount.user_id == user_id,
-            MasterAccount.status.in_(["approved", "active"]),
-        )
+    master_q = await db.execute(
+        select(MasterAccount).where(MasterAccount.user_id == user_id)
     )
-    masters = list(masters_q.scalars().all())
-    if not masters:
+    master = master_q.scalar_one_or_none()
+    if not master or master.status != "approved":
         raise HTTPException(status_code=404, detail="You are not an approved Trade Master")
 
     page = max(1, page)
@@ -2555,53 +2571,24 @@ async def master_transactions(
     }
     allowed_types = type_filters.get(filter_type, type_filters["all"])
 
-    # Scope every query to the masters' pool/CT accounts. Activity on
+    # Scope every query to the master's pool/CT account. Activity on
     # the user's main wallet or other trading accounts is NOT master
     # activity — it already lives in the Funds → Transaction History
     # tab, so surfacing it here would just be duplicate noise.
-    master_account_ids = [m.account_id for m in masters if m.account_id]
-    if not master_account_ids:
-        raise HTTPException(status_code=404, detail="Master account missing")
-    pct_by_account = {
-        m.account_id: (float(m.performance_fee_pct or 0), float(m.admin_commission_pct or 0))
-        for m in masters if m.account_id
-    }
-
-    # Inclusive date window. A bad date string is a 400, not a silent
-    # no-filter — silently ignoring it would show the master MORE rows
-    # than they asked for in an audit view.
-    date_conds = []
-    try:
-        if date_from:
-            start = datetime.fromisoformat(date_from)
-            if start.tzinfo is None:
-                start = start.replace(tzinfo=timezone.utc)
-            date_conds.append(Transaction.created_at >= start)
-        if date_to:
-            end = datetime.fromisoformat(date_to)
-            if end.tzinfo is None:
-                end = end.replace(tzinfo=timezone.utc)
-            # a bare date means "that whole day"
-            if len(date_to) <= 10:
-                end = end + timedelta(days=1)
-            date_conds.append(Transaction.created_at < end)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date filter — use YYYY-MM-DD")
+    master_account_id = master.account_id
 
     count_q = await db.execute(
         select(func.count()).select_from(Transaction).where(
-            Transaction.account_id.in_(master_account_ids),
+            Transaction.account_id == master_account_id,
             Transaction.type.in_(allowed_types),
-            *date_conds,
         )
     )
     total = int(count_q.scalar() or 0)
 
     rows_q = await db.execute(
         select(Transaction).where(
-            Transaction.account_id.in_(master_account_ids),
+            Transaction.account_id == master_account_id,
             Transaction.type.in_(allowed_types),
-            *date_conds,
         ).order_by(Transaction.created_at.desc())
         .limit(per_page).offset((page - 1) * per_page)
     )
@@ -2624,7 +2611,7 @@ async def master_transactions(
         for ct, alloc, follower in copy_q.all():
             follower_by_ref[ct.investor_position_id] = {
                 "user_id": str(follower.id),
-                "name": (f"{follower.first_name or ''} {follower.last_name or ''}".strip() or follower.email),
+                "name": f"{follower.first_name or ''} {follower.last_name or ''}".strip() or follower.email,
                 "email": follower.email,
             }
 
@@ -2641,7 +2628,8 @@ async def master_transactions(
                 "gross_profit": float(pos.profit) if pos.profit is not None else None,
             }
 
-
+    perf_pct = float(master.performance_fee_pct or 0)
+    admin_pct = float(master.admin_commission_pct or 0)
 
     items: list[dict] = []
     for t in txns:
@@ -2677,7 +2665,6 @@ async def master_transactions(
             # we surface the % so the trader can see exactly how their
             # number was derived rather than just a flat amount.
             master_net = float(t.amount or 0)
-            perf_pct, admin_pct = pct_by_account.get(t.account_id, (0.0, 0.0))
             row["master_net"] = master_net
             row["performance_fee_pct"] = perf_pct
             row["admin_commission_pct"] = admin_pct
@@ -2692,7 +2679,7 @@ async def master_transactions(
     # page) so they survive pagination.
     summary_q = await db.execute(
         select(Transaction.type, func.coalesce(func.sum(Transaction.amount), 0))
-        .where(Transaction.account_id.in_(master_account_ids), *date_conds)
+        .where(Transaction.account_id == master_account_id)
         .group_by(Transaction.type)
     )
     summary_raw = {row[0]: float(row[1] or 0) for row in summary_q.all()}

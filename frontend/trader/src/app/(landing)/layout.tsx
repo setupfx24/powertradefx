@@ -1,60 +1,70 @@
-'use client';
+'use client'
+
+import { useEffect } from 'react'
+import { usePathname } from 'next/navigation'
+import { PopupProvider } from '@/landing/components/PopupContext'
+import ScrollProgress from '@/landing/components/animations/ScrollProgress'
+import Footer from '@/landing/components/Footer'
+import { Navbar as HomeNavbar } from '@/home/components/Navbar'
+import { ScrollToTopButton } from '@/home/components/ScrollToTopButton'
+import '@/marketing/tokens.css'
+import '@/home/styles.css'
+import '@/landing/landing.css'
 
 /**
- * Landing shell.
- *
- * The HOME route is the portal surface (see ./page.tsx) and opts out of
- * three things this shell normally provides:
- *
- *   - SiteFooter — the portal page ends with its own hairline footer
- *     strip and cropped wordmark; a second footer under it reads as a
- *     mistake.
- *   - SmoothScroll (lenis) — it eases scroll over 1.3s and, by its own
- *     comment, runs unconditionally regardless of prefers-reduced-motion.
- *     The portal hero is bound to scroll POSITION, so that easing makes
- *     the panels visibly lag the wheel, and it would also smuggle motion
- *     past a reader who asked for none.
- *   - lx-canvas — the portal paints its own near-black ground.
- *
- * LandingNav was already skipped on home; the portal ships its own bar.
- *
- * Legal pages keep a white reading surface (long legal text on dark is
- * hostile), so the nav flips variant per path.
+ * Landing layout — wraps every page under (landing). The home page (/)
+ * brings its own self-contained chrome (see src/home/HomePage), so we
+ * skip the legacy Navbar/Footer + scrub the body padding on that exact
+ * path. All inner pages (about, contact, how-it-works, etc.) keep the
+ * existing landing chrome unchanged.
  */
-import { usePathname } from 'next/navigation';
-import LandingNav from '@/components/landing/LandingNav';
-import SiteFooter from '@/components/landing/SiteFooter';
-import { LandingLangProvider } from '@/components/landing/i18n';
-import SmoothScroll from '@/components/landing/SmoothScroll';
-import '@/components/landing/landing-fx.css';
-
-/* /contact is NOT here any more — it moved to the (portal) group and
-   ships the dark portal chrome with the rest of the nav. */
-const LIGHT_PATHS = new Set([
-  '/privacy', '/terms', '/risk', '/policy', '/account-deletion',
-]);
-
 export default function LandingLayout({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname() || '/';
-  const light = LIGHT_PATHS.has(pathname);
-  const isHome = pathname === '/';
+  const pathname = usePathname()
+  const isHome = pathname === '/'
+
+  /* Override trader-app theme for landing pages.
+     The marketing site is light-only after the 2026-09-01 redesign — it
+     no longer flips the document to dark on entry. We still pin the
+     attribute (rather than inheriting) so a visitor who left the trader
+     app in dark mode doesn't land on a half-dark marketing page, and we
+     restore whatever the app had on the way out. */
+  useEffect(() => {
+    const html = document.documentElement
+    const prevTheme = html.getAttribute('data-theme')
+    const prevBg = html.style.backgroundColor
+    const prevColor = html.style.color
+
+    html.setAttribute('data-theme', 'light')
+    html.style.backgroundColor = '#ffffff'
+    html.style.color = '#0b0b0c'
+
+    return () => {
+      if (prevTheme) html.setAttribute('data-theme', prevTheme)
+      html.style.backgroundColor = prevBg
+      html.style.color = prevColor
+    }
+  }, [])
 
   if (isHome) {
+    // Bare wrapper — HomePage renders its own Navbar + CtaFooter.
     return (
-      <LandingLangProvider>
-        <main>{children}</main>
-      </LandingLangProvider>
-    );
+      <PopupProvider>
+        <ScrollProgress />
+        <div className="mk">{children}</div>
+        <ScrollToTopButton />
+      </PopupProvider>
+    )
   }
 
   return (
-    <LandingLangProvider>
-      <SmoothScroll />
-      <div className={light ? 'min-h-screen bg-white' : 'min-h-screen lx-canvas'}>
-        <LandingNav dark={!light} />
-        <main>{children}</main>
-        <SiteFooter />
+    <PopupProvider>
+      <ScrollProgress />
+      <div className="mk brand-home landing-root min-h-screen">
+        <HomeNavbar />
+        {children}
+        <Footer />
       </div>
-    </LandingLangProvider>
-  );
+      <ScrollToTopButton />
+    </PopupProvider>
+  )
 }

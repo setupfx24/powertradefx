@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 export const metadata = {
-  title: 'Social Trading — PowerTradeFX',
+  title: 'Social Trading — SwissCresta',
   description: 'Follow top traders, copy their positions, and share your own strategies.',
 }
 

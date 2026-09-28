@@ -333,13 +333,10 @@ async def master_transactions(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     filter_type: str = Query("all"),
-    date_from: str | None = Query(None, description="Inclusive start date (YYYY-MM-DD)"),
-    date_to: str | None = Query(None, description="Inclusive end date (YYYY-MM-DD)"),
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     return await social_service.master_transactions(
         user_id=current_user["user_id"], db=db,
         page=page, per_page=per_page, filter_type=filter_type,
-        date_from=date_from, date_to=date_to,
     )

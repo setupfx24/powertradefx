@@ -2,10 +2,10 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 /**
  * Domain split (asymmetric, by design):
- *   - powertradefx.com (apex): marketing + auth + every user-app page.
+ *   - swisscresta.com (apex): marketing + auth + every user-app page.
  *     If the user lands on the apex with /trading/terminal, we bounce
  *     them to the trade subdomain so the terminal has a clean origin.
- *   - trade.powertradefx.com: hosts the trading terminal canonically, but
+ *   - trade.swisscresta.com: hosts the trading terminal canonically, but
  *     ALSO serves every other page. Previously we redirected non-
  *     terminal traffic back to the apex, but that caused two persistent
  *     production issues: (1) RSC prefetches and TradingView chart
@@ -16,7 +16,7 @@ import { NextResponse, type NextRequest } from 'next/server';
  *     adds no real cost — they're authenticated app pages, not
  *     marketing pages with SEO concerns.
  *
- * The auth cookie is Domain=.powertradefx.com so a single session works on
+ * The auth cookie is Domain=.swisscresta.com so a single session works on
  * apex AND subdomain. If NEXT_PUBLIC_MARKETING_HOST or
  * NEXT_PUBLIC_TRADE_HOST is unset (local dev), this middleware no-ops.
  *
@@ -33,12 +33,7 @@ import { NextResponse, type NextRequest } from 'next/server';
  * the proxy route which would already have ingested the JSON body.
  */
 
-// Paths that must live on the trade subdomain. /auth/* is here so
-// credentials are only ever typed on trade.powertradefx.com — the apex
-// stays a marketing surface with no login form (audit C1: an XSS on a
-// marketing page must not sit next to the password field). Top-level
-// navigations redirect; RSC prefetches are exempted below as usual.
-const TRADE_PREFIXES = ['/trading/terminal', '/auth'];
+const TRADE_PREFIXES = ['/trading/terminal'];
 const NEUTRAL_PREFIXES = ['/api/', '/_next/', '/s/', '/static/', '/images/'];
 const NEUTRAL_EXACT = new Set<string>(['/favicon.ico', '/robots.txt', '/sitemap.xml']);
 
@@ -108,8 +103,59 @@ function checkRateLimit(
   return { allowed: true };
 }
 
+/* ── White-label tenant marketing block-list ─────────────────────
+ * The (landing) route group = SwissCresta's marketing + platform legal
+ * pages. On a tenant's custom domain these must redirect to the login
+ * page. Kept in sync with src/app/(landing)/ — top-level segments only;
+ * matching is exact-or-prefix per segment.
+ *   - '/accounts' is EXCLUDED as an exact path (it's the trader app's
+ *     accounts page); its marketing children /accounts/demo|pro|standard
+ *     are covered by the entries below.
+ *   - '/trading' marketing children are listed explicitly so the app's
+ *     /trading/terminal keeps serving. */
+const TENANT_BLOCKED_EXACT = new Set<string>(['/', '/trading']);
+const TENANT_BLOCKED_PREFIXES = [
+  '/about', '/account-deletion', '/careers', '/cfds', '/collaboration',
+  '/company', '/contact', '/currency-pairs', '/demo-account', '/group',
+  '/how-it-works', '/institutional', '/introducing-brokers', '/markets',
+  '/money-managers', '/partners', '/platforms', '/policy',
+  '/precious-metals', '/privacy', '/protocol', '/risk', '/terms',
+  '/white-label',
+  '/accounts/demo', '/accounts/pro', '/accounts/standard',
+  '/trading/commodities', '/trading/crypto', '/trading/forex',
+  '/trading/indices', '/trading/overview',
+];
+
+function isTenantMarketingPath(path: string): boolean {
+  if (TENANT_BLOCKED_EXACT.has(path)) return true;
+  return TENANT_BLOCKED_PREFIXES.some(
+    (p) => path === p || path.startsWith(p + '/'),
+  );
+}
+
 function isTradePath(path: string): boolean {
   return TRADE_PREFIXES.some((p) => path === p || path.startsWith(p + '/') || path.startsWith(p + '?'));
+}
+
+/* ── H-FE-3: private-route auth guard (defence in depth) ──────────
+ * Unambiguously-authenticated app sections. A request to one of these
+ * with no session cookie is redirected to /auth/login by the middleware,
+ * in addition to the client-side AuthProvider gate. Ambiguous prefixes
+ * shared with marketing (/accounts, /trading) are intentionally omitted
+ * so we never bounce a legitimate marketing visitor. */
+const PRIVATE_APP_PREFIXES = [
+  '/dashboard', '/wallet', '/deposit', '/portfolio', '/transactions',
+  '/profile', '/kyc', '/social', '/pamm', '/ai-strategies',
+  '/algo-connector', '/business',
+];
+
+function isPrivateAppPath(path: string): boolean {
+  return PRIVATE_APP_PREFIXES.some((p) => path === p || path.startsWith(p + '/'));
+}
+
+function hasSessionCookie(req: NextRequest): boolean {
+  // Cookie names from backend config (ACCESS/REFRESH_TOKEN_COOKIE_NAME).
+  return req.cookies.has('pt_access') || req.cookies.has('pt_refresh');
 }
 
 function isNeutral(path: string): boolean {
@@ -142,6 +188,18 @@ export function middleware(req: NextRequest) {
     }
   }
 
+  // H-FE-3: defence-in-depth auth guard — runs on every host, before the host
+  // split. A private app route with no session cookie is redirected to login
+  // (the client AuthProvider enforces this too). Neutral paths (/api, /_next,
+  // static) are skipped so proxied API calls keep handling their own auth.
+  if (!isNeutral(path) && isPrivateAppPath(path) && !hasSessionCookie(req)) {
+    const loginUrl = new URL('/auth/login', req.url);
+    loginUrl.searchParams.set('next', path);
+    const r = NextResponse.redirect(loginUrl, 307);
+    r.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    return r;
+  }
+
   const marketingHost = process.env.NEXT_PUBLIC_MARKETING_HOST;
   const tradeHost = process.env.NEXT_PUBLIC_TRADE_HOST;
   if (!marketingHost || !tradeHost) return NextResponse.next();
@@ -149,7 +207,27 @@ export function middleware(req: NextRequest) {
   const host = req.headers.get('host')?.toLowerCase().split(':')[0] ?? '';
   const onMarketing = host === marketingHost.toLowerCase();
   const onTrade = host === tradeHost.toLowerCase();
-  if (!onMarketing && !onTrade) return NextResponse.next();
+  if (!onMarketing && !onTrade) {
+    // ── White-label tenant host ────────────────────────────────────
+    // Any other host reaching this app is a broker's custom domain
+    // (nginx only routes provisioned tenant server_names here). Those
+    // visitors must never see the SwissCresta marketing site or the
+    // platform's legal pages — a tenant's site starts at their login.
+    // App pages (/dashboard, /trading/terminal, /auth/*, …) serve
+    // normally; only the (landing) marketing group is intercepted.
+    // The apex '/' REWRITES (address bar keeps the broker's domain) to
+    // the generated tenant landing page; every other SwissCresta
+    // marketing/legal path redirects to the branded login.
+    if (req.nextUrl.pathname === '/') {
+      return NextResponse.rewrite(new URL('/tenant-home', req.url));
+    }
+    if (isTenantMarketingPath(req.nextUrl.pathname)) {
+      const r = NextResponse.redirect(new URL('/auth/login', req.url), 307);
+      r.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+      return r;
+    }
+    return NextResponse.next();
+  }
 
   const { pathname, search } = req.nextUrl;
   if (isNeutral(pathname)) return NextResponse.next();

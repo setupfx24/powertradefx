@@ -9,54 +9,66 @@ import toast from 'react-hot-toast';
 const STAFF_ROLES = new Set(['admin', 'super_admin', 'employee', 'manager', 'support']);
 
 /** Single source of truth for "this URL renders without auth".
- *  Covers the marketing site (home + every (landing)/* route),
- *  legal pages, the public trade-share short URLs, and /auth/*. */
-const PUBLIC_EXACT_PATHS = new Set<string>([
-  '/',
-  '/contact', '/account-deletion',
-  '/privacy', '/terms', '/risk', '/policy',
-  '/label',   // standalone Nocturne label page — public, no account needed
-  // Portal marketing sub-pages. Linked from the home nav, so they must
-  // render logged-out; without this they bounce to /auth/login.
-  // /classes and /sessions are no longer in the top bar but are still
-  // linked from /platform and the footer, so they stay public too.
-  '/markets', '/platform', '/classes', '/sessions',
+ *  H-FE-2/H-FE-3: the public set is derived from the (landing) route group —
+ *  every route under src/app/(landing)/* is public marketing/legal content, so
+ *  we allow-list by TOP-LEVEL SEGMENT. This list mirrors the (landing)/*
+ *  directories; keep the two in sync when adding a marketing page. Previously a
+ *  hand-kept exact-path set silently missed new pages (/faq, /markets,
+ *  /download, /services/*, /products/*, /academy/*, …), bouncing anonymous
+ *  visitors off legitimate public pages. */
+const PUBLIC_LANDING_SEGMENTS = new Set<string>([
+  'about', 'academy', 'account-types', 'accounts', 'careers', 'company',
+  'collaboration', 'contact', 'delete-account', 'deposit-withdrawal',
+  'download', 'education', 'faq', 'group', 'how-it-works', 'institutional',
+  'introducing-brokers', 'markets', 'money-managers', 'partners', 'platforms',
+  'policy', 'privacy', 'products', 'protocol', 'restricted-countries', 'risk',
+  'risk-warning', 'services', 'terms', 'trading', 'white-label',
 ]);
+
+function _firstSegment(pathname: string): string {
+  return pathname.split('/')[1] || '';
+}
 
 function isPublicPath(pathname: string | null | undefined): boolean {
   if (!pathname) return false;
+  if (pathname === '/') return true;
   if (pathname.startsWith('/auth')) return true;
   if (pathname.startsWith('/s/')) return true;       // public share-trade short links
-  if (pathname.startsWith('/education')) return true;
-  // /classes AND its per-class pages (/classes/forex, …). A prefix rule
-  // rather than five entries, so adding a class to marketData.ts does not
-  // silently produce a page that bounces logged-out visitors to login.
-  if (pathname.startsWith('/classes')) return true;
-  return PUBLIC_EXACT_PATHS.has(pathname);
+  // Chrome-free chart embed for the mobile app's WebView. It authenticates via
+  // the token in the URL (the WebView has NO session cookie), so the cookie-
+  // based AuthProvider must NEVER treat it as "logged out" and bounce it.
+  if (pathname.startsWith('/chart')) return true;
+  if (pathname.startsWith('/app-chart')) return true; // APK's dedicated chart
+  // The app's own /accounts management page is private; its marketing children
+  // (/accounts/demo|pro|standard) stay public via the segment set below.
+  if (pathname === '/accounts' || pathname.startsWith('/accounts/')) {
+    return pathname.startsWith('/accounts/demo')
+      || pathname.startsWith('/accounts/pro')
+      || pathname.startsWith('/accounts/standard');
+  }
+  if (pathname === '/trading' || pathname.startsWith('/trading/')) {
+    return !pathname.startsWith('/trading/terminal');
+  }
+  return PUBLIC_LANDING_SEGMENTS.has(_firstSegment(pathname));
 }
 
 function MaintenanceScreen() {
   return (
-    <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center gap-4 bg-bg-base p-6">
-      <svg
-        width="48"
-        height="48"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className="text-warning"
-        aria-hidden
-      >
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 9999,
+      background: '#050707',
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      gap: 16, padding: 24,
+    }}>
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#facc15" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
         <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
       </svg>
-      <h1 className="text-xl font-semibold tracking-tight text-text-primary">
+      <h1 style={{ color: '#f9fafb', fontSize: 22, fontWeight: 700, margin: 0 }}>
         Platform Under Maintenance
       </h1>
-      <p className="max-w-sm text-center text-sm text-text-secondary">
+      <p style={{ color: '#9ca3af', fontSize: 14, textAlign: 'center', maxWidth: 360, margin: 0 }}>
         We&apos;re performing scheduled maintenance. Trading and account features are temporarily unavailable. Please check back shortly.
       </p>
     </div>

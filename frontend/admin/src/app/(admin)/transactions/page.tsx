@@ -248,14 +248,23 @@ export default function TransactionsPage() {
         { header: 'Description' }, { header: 'Admin By' }, { header: 'Date', mono: true },
       ],
       rows: exportRows(),
-      filename: `powertradefx-transactions-${new Date().toISOString().slice(0, 10)}.pdf`,
+      filename: `swisscresta-transactions-${new Date().toISOString().slice(0, 10)}.pdf`,
     });
   };
 
   const handleExportCsv = () => {
     if (transactions.length === 0) { toast.error('No transactions to export'); return; }
     const headers = ['Type', 'User', 'Email', 'Account', 'Amount', 'Balance After', 'Description', 'Admin By', 'Date'];
-    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    // CSV/formula injection guard: user names, emails and descriptions are
+    // attacker-controlled (a trader picks their own name). A cell starting with
+    // = + - @ (or tab/CR) is executed as a formula by Excel/Sheets when an admin
+    // opens the export — prefix it with ' so it's inert text. Real numbers
+    // (amounts, which may be negative) are left as numbers.
+    const esc = (v: unknown) => {
+      let s = v == null ? '' : String(v);
+      if (typeof v !== 'number' && /^[=+\-@\t\r]/.test(s) && !/^[-+]?\d+(\.\d+)?$/.test(s)) s = "'" + s;
+      return `"${s.replace(/"/g, '""')}"`;
+    };
     const lines = [headers.map(esc).join(',')];
     for (const t of transactions) {
       lines.push([
@@ -267,7 +276,7 @@ export default function TransactionsPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `powertradefx-transactions-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `swisscresta-transactions-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };

@@ -2,16 +2,15 @@
 
 import { useState, useEffect, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import Image from 'next/image';
+import Link from 'next/link';
 import { Eye, EyeOff, Loader2, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api/client';
 import { scorePassword } from '@/lib/passwordStrength';
-import { DotMatrixBackdrop } from '@/components/ui/dot-matrix-backdrop';
-import '@/components/landing/landing-fx.css';
+import { useBrandDisplay } from '@/components/providers/BrandingProvider';
 
 type Mode = 'login' | 'signup';
 type SignupStep = 'credentials' | 'otp';
@@ -33,8 +32,8 @@ const COPY: Record<Mode, {
   switchHref: string;
 }> = {
   signup: {
-    hero: 'A precision-engineered trading platform for serious investors.',
-    eyebrow: 'Welcome to PowerTradeFX',
+    hero: 'A Swiss-precision trading platform for serious investors.',
+    eyebrow: 'Welcome to SwissCresta',
     title: 'Create your account',
     subtitle: 'Trade FX, indices, metals and crypto with bank-grade execution.',
     cta: 'Create account',
@@ -43,9 +42,9 @@ const COPY: Record<Mode, {
     switchHref: '/auth/login',
   },
   login: {
-    hero: 'A precision-engineered trading platform for serious investors.',
+    hero: 'A Swiss-precision trading platform for serious investors.',
     eyebrow: 'Welcome back',
-    title: 'Sign in to PowerTradeFX',
+    title: 'Sign in to SwissCresta',
     subtitle: 'Access your portfolio, positions and watchlists.',
     cta: 'Sign in',
     switchPrompt: "Don't have an account yet?",
@@ -76,18 +75,23 @@ export const FullScreenSignup = ({ mode = 'signup' }: FullScreenSignupProps) => 
   // /auth/register/start where the backend stages it and attributes the
   // referral on verify. Without this the IB never gets credited.
   const [referralCode, setReferralCode] = useState<string | null>(null);
-  const copy = COPY[mode];
+  const brand = useBrandDisplay();
+  // White-label tenants get their own name in every piece of copy and
+  // a neutral hero line (the platform's Swiss-precision pitch is
+  // SwissCresta marketing, not theirs).
+  const copy = brand.isWhiteLabel
+    ? {
+        ...COPY[mode],
+        hero: 'A professional multi-asset trading platform.',
+        eyebrow: mode === 'signup' ? `Welcome to ${brand.name}` : 'Welcome back',
+        title: mode === 'signup' ? 'Create your account' : `Sign in to ${brand.name}`,
+      }
+    : COPY[mode];
 
   useEffect(() => {
     try {
-      const q = new URLSearchParams(window.location.search);
-      const ref = q.get('ref');
+      const ref = new URLSearchParams(window.location.search).get('ref');
       if (ref && ref.trim()) setReferralCode(ref.trim());
-      // ?email= is set by the marketing footer's sign-up field, which is a
-      // plain GET form onto this page. Only ever pre-fills the input — the
-      // usual validation and OTP flow still run.
-      const prefill = q.get('email');
-      if (prefill && prefill.trim()) setEmail(prefill.trim());
     } catch {
       /* no query string / SSR guard — ignore */
     }
@@ -164,7 +168,7 @@ export const FullScreenSignup = ({ mode = 'signup' }: FullScreenSignupProps) => 
         otp: code,
       });
       await refreshUser();
-      toast.success('Email verified. Welcome to PowerTradeFX.');
+      toast.success(`Email verified. Welcome to ${brand.name}.`);
       router.push('/dashboard');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Invalid or expired code.';
@@ -197,7 +201,7 @@ export const FullScreenSignup = ({ mode = 'signup' }: FullScreenSignupProps) => 
     try {
       setSubmitting(true);
       await demoLogin();
-      toast.success('Demo account ready. Welcome to PowerTradeFX.');
+      toast.success(`Demo account ready. Welcome to ${brand.name}.`);
       router.push('/dashboard');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Could not start a demo session.';
@@ -222,276 +226,222 @@ export const FullScreenSignup = ({ mode = 'signup' }: FullScreenSignupProps) => 
   };
 
   return (
-    /* lx-auth swaps the accent tokens from the app's blue to gold for
-       this card and everything under it — see landing-fx.css. */
-    /* min-h-[100dvh] over min-h-screen: `screen` is 100vh, which on mobile
-       is the URL-bar-hidden height, so the card sat taller than the visible
-       area and the footer legal line fell below the fold. */
-    <div className="lx-auth min-h-screen min-h-[100dvh] relative overflow-hidden flex flex-col bg-black">
-      {/* Backdrop — dot matrix sweeping out from the centre, then a vignette
-          so the card does not fight the grid for attention. */}
-      <div aria-hidden="true" className="absolute inset-0 pointer-events-none">
-        <DotMatrixBackdrop className="absolute inset-0 h-full w-full" />
-        <div
-          className="absolute inset-0"
-          style={{
-            background:
-              'radial-gradient(circle at center, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0) 70%)',
-          }}
-        />
-      </div>
-
-      {/* The vignette above only darkens the CENTRE, so the top band is where
-          the dot matrix is at full strength — and that is exactly where the
-          bar's small type sits. This scrim gives it a ground to read against.
-          Deliberately taller than the 64px bar and faded out at the bottom:
-          sized to the bar it would draw a hard horizontal edge across the
-          backdrop, which reads as a mis-rendered header. z-[5] puts it above
-          the backdrop (z-auto) and below the bar (z-10). */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-0 z-[5] h-28 bg-gradient-to-b from-black via-black/90 to-transparent"
-      />
-
-      {/* Top bar */}
-      <header className="relative z-10 h-16 flex items-center justify-between px-5 sm:px-8">
-        {/* The lockup already carries the name, so it replaces the old tile +
-            type pair rather than joining it. Sized by height; `w-auto` keeps
-            the ~6.5:1 ratio and stops next/image warning about a modified
-            dimension. The link's accessible name comes from aria-label, so
-            the image itself is decorative.
-
-            `sizes` is required for the same reason as the marketing bar:
-            without it next/image ships a 1920px variant for a ~180px box. */}
-        <Link href="/" aria-label="PowerTradeFX home" className="inline-flex items-center">
-          <Image
-            src="/portal/logo.png"
-            alt=""
-            width={1536}
-            height={236}
-            sizes="200px"
-            priority
-            className="h-6 w-auto select-none sm:h-7"
-          />
-        </Link>
-        {/* The mode switch lives here, to the side, on every breakpoint —
-            only the prompt text drops away on narrow screens. */}
-        {/* gray-300 rather than gray-400: even over the scrim this is the
-            smallest type on the page, and the dots still show through. */}
-        <div className="flex items-center gap-3 text-sm text-gray-300">
-          <span className="hidden sm:inline">{copy.switchPrompt}</span>
-          <Link
-            href={copy.switchHref}
-            className="font-semibold text-white border border-white/15 hover:border-accent/60 rounded-xl px-4 py-2 transition-colors"
-          >
-            {copy.switchLink}
-          </Link>
+    <div className="min-h-screen flex items-center justify-center overflow-hidden bg-[#FAFAFA] p-4">
+      <div className="w-full relative max-w-5xl rounded-3xl overflow-hidden flex flex-col md:flex-row shadow-2xl ring-1 ring-black/5">
+        {/* Decorative orange ball + blurred bands behind the left panel */}
+        <div className="absolute inset-0 z-0 pointer-events-none">
+          <div className="absolute inset-0 bg-gradient-to-t from-transparent to-black/60" />
+          <div className="absolute -bottom-12 -left-8 w-60 h-60 bg-[#E94E1B] rounded-full opacity-90" />
+          <div className="absolute -bottom-6 left-32 w-32 h-20 bg-white rounded-full opacity-90 blur-2xl" />
+          <div className="absolute bottom-2 left-12 w-32 h-20 bg-white rounded-full opacity-70 blur-xl" />
         </div>
-      </header>
 
-      {/* Centre stage */}
-      <main className="relative z-10 flex-1 flex items-center justify-center px-4 py-10">
-        <div className="w-full max-w-md">
-          <div className="relative rounded-xl border border-[#222] bg-[#121212] p-7 shadow-[0_10px_40px_rgba(0,0,0,0.8)] sm:p-9">
-            {step === 'credentials' && (
-              <>
-                <div className="mb-7">
-                  <p className="text-xs uppercase tracking-[0.2em] text-accent font-semibold mb-2">
-                    {copy.eyebrow}
-                  </p>
-                  <h1 className="font-display text-2xl sm:text-[1.7rem] font-bold text-white tracking-tight mb-1.5">
-                    {copy.title}
-                  </h1>
-                  <p className="text-sm text-gray-400">{copy.subtitle}</p>
-                </div>
+        {/* Left dark hero panel */}
+        <div className="bg-black text-white p-8 md:p-12 md:w-1/2 relative overflow-hidden z-10 flex flex-col justify-between min-h-[20rem] md:min-h-[36rem]">
+          <Link
+            href="/"
+            aria-label={`${brand.name} home`}
+            className="inline-flex items-center self-start relative z-10 bg-white/95 rounded-lg px-3 py-1.5"
+          >
+            {brand.isWhiteLabel ? (
+              brand.logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={brand.logoUrl}
+                  alt={brand.name}
+                  className="h-8 w-auto max-w-[180px] object-contain"
+                />
+              ) : (
+                <span className="font-bold tracking-tight text-lg text-[#0A0A0A] select-none">
+                  {brand.name}
+                </span>
+              )
+            ) : (
+              <Image
+                src="/marketing/swisscresta-logo.png"
+                alt="SwissCresta"
+                width={220}
+                height={48}
+                priority
+                className="h-8 w-auto"
+              />
+            )}
+          </Link>
+          <h1 className="text-2xl md:text-3xl font-medium leading-tight tracking-tight relative z-10">
+            {copy.hero}
+          </h1>
+        </div>
 
-                <form className="flex flex-col gap-4" onSubmit={submitCredentials} noValidate>
+        {/* Right form panel */}
+        <div className="p-8 md:p-12 md:w-1/2 flex flex-col bg-white text-[#0A0A0A] relative z-20">
+          {step === 'credentials' && (
+            <>
+              <div className="mb-8">
+                <p className="text-sm uppercase tracking-wider text-[#E94E1B] font-semibold mb-3">
+                  {copy.eyebrow}
+                </p>
+                <h2 className="text-3xl font-medium mb-2 tracking-tight">{copy.title}</h2>
+                <p className="text-[#5B5B5B]">{copy.subtitle}</p>
+              </div>
+
+              <form className="flex flex-col gap-4" onSubmit={submitCredentials} noValidate>
+                <Field
+                  id="email"
+                  label="Email"
+                  type="email"
+                  autoComplete="email"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={setEmail}
+                  error={errors.email}
+                />
+
+                <Field
+                  id="password"
+                  label={mode === 'signup' ? 'Create password' : 'Password'}
+                  type="password"
+                  revealable
+                  autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                  placeholder={mode === 'signup' ? 'At least 8 characters' : ''}
+                  value={password}
+                  onChange={setPassword}
+                  error={errors.password}
+                  rightSlot={
+                    mode === 'login' ? (
+                      <Link
+                        href="/auth/reset-password"
+                        className="text-xs text-[#5B5B5B] hover:text-[#E94E1B] transition-colors"
+                      >
+                        Forgot password?
+                      </Link>
+                    ) : null
+                  }
+                />
+
+                {mode === 'signup' && <PasswordStrengthMeter password={password} />}
+
+                {mode === 'signup' && (
                   <Field
-                    id="email"
-                    label="Email"
-                    type="email"
-                    autoComplete="email"
-                    placeholder="you@example.com"
-                    value={email}
-                    onChange={setEmail}
-                    error={errors.email}
-                  />
-
-                  <Field
-                    id="password"
-                    label={mode === 'signup' ? 'Create password' : 'Password'}
+                    id="confirm-password"
+                    label="Confirm password"
                     type="password"
                     revealable
-                    autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-                    placeholder={mode === 'signup' ? 'At least 8 characters' : 'Enter your password'}
-                    value={password}
-                    onChange={setPassword}
-                    error={errors.password}
-                    rightSlot={
-                      mode === 'login' ? (
-                        <Link
-                          href="/auth/reset-password"
-                          className="text-xs text-gray-500 hover:text-accent transition-colors"
-                        >
-                          Forgot password?
-                        </Link>
-                      ) : null
-                    }
+                    autoComplete="new-password"
+                    placeholder="Re-type your password"
+                    value={confirmPassword}
+                    onChange={setConfirmPassword}
+                    error={errors.confirmPassword}
                   />
+                )}
 
-                  {mode === 'signup' && <PasswordStrengthMeter password={password} />}
-
-                  {mode === 'signup' && (
-                    <Field
-                      id="confirm-password"
-                      label="Confirm password"
-                      type="password"
-                      revealable
-                      autoComplete="new-password"
-                      placeholder="Re-type your password"
-                      value={confirmPassword}
-                      onChange={setConfirmPassword}
-                      error={errors.confirmPassword}
-                    />
-                  )}
-
-                  {/* Same reason as the fields above — see Field(). Only the
-                      two buttons in THIS branch need it: the OTP step's
-                      buttons never exist at hydration time, because `step`
-                      always starts at 'credentials'. */}
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="lx-cta w-full disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 px-4 rounded-xl transition hover:brightness-110 inline-flex items-center justify-center gap-2 mt-1.5"
-                    suppressHydrationWarning
-                  >
-                    {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                    {submitting ? 'Please wait…' : copy.cta}
-                  </button>
-
-                  <div className="flex items-center gap-3 my-0.5">
-                    <span className="flex-1 h-px bg-white/10" aria-hidden />
-                    <span className="text-[11px] uppercase tracking-wider text-gray-500">or</span>
-                    <span className="flex-1 h-px bg-white/10" aria-hidden />
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={handleDemo}
-                    disabled={submitting}
-                    className="w-full disabled:opacity-60 disabled:cursor-not-allowed border border-white/15 hover:border-accent/60 text-gray-200 hover:text-white font-semibold py-3 px-4 rounded-xl transition-colors inline-flex items-center justify-center gap-2"
-                    suppressHydrationWarning
-                  >
-                    Try free $10,000 demo
-                  </button>
-                </form>
-              </>
-            )}
-
-            {step === 'otp' && (
-              <>
-                {/* Prominent close — lets the user back out of the OTP step if
-                    they typo'd their email. Wired to cancel the pending
-                    registration server-side so the address is freed
-                    immediately. */}
                 <button
-                  type="button"
-                  onClick={cancelPendingRegistration}
-                  aria-label="Close verification — use a different email"
-                  className="absolute top-4 right-4 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full text-gray-500 hover:text-white hover:bg-white/10 transition-colors"
+                  type="submit"
+                  disabled={submitting}
+                  className="w-full bg-[#E94E1B] hover:bg-[#C73E11] disabled:opacity-60 disabled:cursor-not-allowed text-white font-medium py-2.5 px-4 rounded-lg transition-colors inline-flex items-center justify-center gap-2 mt-2"
                 >
-                  <X className="h-5 w-5" />
+                  {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {submitting ? 'Please wait…' : copy.cta}
                 </button>
 
-                <div className="mb-7">
-                  <p className="text-xs uppercase tracking-[0.2em] text-accent font-semibold mb-2">
-                    Verify your email
-                  </p>
-                  <h1 className="font-display text-2xl font-bold text-white tracking-tight mb-1.5">
-                    Enter the code
-                  </h1>
-                  <p className="text-sm text-gray-400">
-                    We sent a 6-digit code to <span className="font-medium text-white">{email}</span>.
-                  </p>
+                <div className="flex items-center gap-3 my-1">
+                  <span className="flex-1 h-px bg-[#E5E5E5]" aria-hidden />
+                  <span className="text-xs uppercase tracking-wider text-[#9A9A9A]">or</span>
+                  <span className="flex-1 h-px bg-[#E5E5E5]" aria-hidden />
                 </div>
 
-                <form className="flex flex-col gap-4" onSubmit={submitOtp} noValidate>
-                  <div>
-                    <input
-                      type="text"
-                      id="otp"
-                      autoComplete="one-time-code"
-                      inputMode="numeric"
-                      maxLength={6}
-                      placeholder="••••••"
-                      className={`lx-field lx-field--otp focus:outline-none transition-colors ${
-                        errors.otp ? 'lx-field--error' : ''
-                      }`}
-                      value={otp}
-                      onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                      aria-invalid={!!errors.otp}
-                      aria-describedby={errors.otp ? 'otp-error' : undefined}
-                    />
-                    {errors.otp && (
-                      <p id="otp-error" className="text-red-400 text-xs mt-1.5">{errors.otp}</p>
-                    )}
-                  </div>
+                <button
+                  type="button"
+                  onClick={handleDemo}
+                  disabled={submitting}
+                  className="w-full bg-white hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed border border-[#E5E5E5] text-[#0A0A0A] font-medium py-2.5 px-4 rounded-lg transition-colors inline-flex items-center justify-center gap-2"
+                >
+                  Try with demo
+                </button>
 
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="lx-cta w-full disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 px-4 rounded-xl transition hover:brightness-110 inline-flex items-center justify-center gap-2 mt-1"
+                <div className="text-center text-[#5B5B5B] text-sm">
+                  {copy.switchPrompt}{' '}
+                  <Link
+                    href={copy.switchHref}
+                    className="text-[#0A0A0A] font-medium underline underline-offset-2 hover:text-[#E94E1B]"
                   >
-                    {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                    {submitting ? 'Verifying…' : 'Verify and continue'}
+                    {copy.switchLink}
+                  </Link>
+                </div>
+              </form>
+            </>
+          )}
+
+          {step === 'otp' && (
+            <>
+              {/* Prominent close — lets the user back out of the OTP
+                  step if they typo'd their email. Wired to cancel the
+                  pending registration server-side so the address is
+                  freed immediately, then drops them back on the
+                  credentials form with their previous email pre-filled
+                  for quick editing. */}
+              <button
+                type="button"
+                onClick={cancelPendingRegistration}
+                aria-label="Close verification — use a different email"
+                className="absolute top-4 right-4 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full text-[#5B5B5B] hover:text-[#0A0A0A] hover:bg-[#F0F0F0] transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+
+              <div className="mb-8">
+                <p className="text-sm uppercase tracking-wider text-[#E94E1B] font-semibold mb-3">
+                  Verify your email
+                </p>
+                <h2 className="text-3xl font-medium mb-2 tracking-tight">Enter the code</h2>
+                <p className="text-[#5B5B5B]">
+                  We sent a 6-digit code to <span className="font-medium text-[#0A0A0A]">{email}</span>.
+                </p>
+              </div>
+
+              <form className="flex flex-col gap-4" onSubmit={submitOtp} noValidate>
+                <Field
+                  id="otp"
+                  label="Verification code"
+                  type="text"
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
+                  placeholder="123456"
+                  value={otp}
+                  onChange={(v) => setOtp(v.replace(/\D/g, '').slice(0, 6))}
+                  error={errors.otp}
+                  maxLength={6}
+                />
+
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="w-full bg-[#E94E1B] hover:bg-[#C73E11] disabled:opacity-60 disabled:cursor-not-allowed text-white font-medium py-2.5 px-4 rounded-lg transition-colors inline-flex items-center justify-center gap-2 mt-2"
+                >
+                  {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {submitting ? 'Verifying…' : 'Verify and continue'}
+                </button>
+
+                <div className="flex items-center justify-between text-sm">
+                  <button
+                    type="button"
+                    onClick={cancelPendingRegistration}
+                    className="text-[#5B5B5B] hover:text-[#0A0A0A] transition-colors"
+                  >
+                    ← Use a different email
                   </button>
-
-                  <div className="flex items-center justify-between text-sm">
-                    <button
-                      type="button"
-                      onClick={cancelPendingRegistration}
-                      className="text-gray-500 hover:text-white transition-colors"
-                    >
-                      ← Use a different email
-                    </button>
-                    <button
-                      type="button"
-                      onClick={resendOtp}
-                      className="text-white font-semibold hover:text-accent transition-colors"
-                    >
-                      Resend code
-                    </button>
-                  </div>
-                </form>
-              </>
-            )}
-          </div>
-
-          {/* Same problem as the top bar, one line lower: this sits below the
-              card, outside the vignette's reach, so it lands on the dot matrix
-              at full strength. A halo alone was not enough at 12px, so it also
-              gets its own ground — a radial fade rather than a box, so there
-              is no edge to notice. `isolate` keeps the -z-10 scrim inside this
-              wrapper instead of letting it slip behind the page background. */}
-          <div className="relative isolate mt-6">
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute -inset-x-8 -inset-y-4 -z-10"
-              style={{
-                background:
-                  'radial-gradient(58% 100% at 50% 50%, rgba(0,0,0,0.94) 0%, rgba(0,0,0,0.78) 52%, rgba(0,0,0,0) 100%)',
-              }}
-            />
-            <p className="text-center text-xs text-gray-400 leading-relaxed [text-shadow:0_1px_3px_rgb(0_0_0)]">
-              By continuing you agree to our{' '}
-              <Link href="/terms" className="text-gray-300 hover:text-accent underline underline-offset-2">Terms</Link>{' '}
-              and{' '}
-              <Link href="/privacy" className="text-gray-300 hover:text-accent underline underline-offset-2">Privacy Policy</Link>.
-              Trading involves significant risk.
-            </p>
-          </div>
+                  <button
+                    type="button"
+                    onClick={resendOtp}
+                    className="text-[#0A0A0A] font-medium hover:text-[#E94E1B] transition-colors"
+                  >
+                    Resend code
+                  </button>
+                </div>
+              </form>
+            </>
+          )}
         </div>
-      </main>
+      </div>
     </div>
   );
 };
@@ -525,17 +475,11 @@ function Field({
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <label htmlFor={id} className="block text-sm font-medium text-gray-300">
+        <label htmlFor={id} className="block text-sm text-[#0A0A0A]">
           {label}
         </label>
         {rightSlot}
       </div>
-      {/* suppressHydrationWarning on the field and its reveal toggle: a
-          password manager is exactly the kind of extension that stamps an
-          `fdprocessedid` attribute onto inputs and buttons before React
-          hydrates, and a sign-in form is the first thing it goes for. Both
-          elements render from props and from `revealed`, whose initial value
-          matches on both sides, so nothing genuine is being masked. */}
       <div className="relative">
         <input
           type={effectiveType}
@@ -544,14 +488,13 @@ function Field({
           inputMode={inputMode}
           maxLength={maxLength}
           placeholder={placeholder}
-          className={`lx-field focus:outline-none transition-colors ${
-            revealable ? 'lx-field--pr' : ''
-          } ${error ? 'lx-field--error' : ''}`}
+          className={`text-sm w-full py-2.5 px-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E94E1B]/20 bg-white text-black transition-colors ${
+            revealable ? 'pr-10' : ''
+          } ${error ? 'border-red-500' : 'border-[#E5E5E5] focus:border-[#E94E1B]'}`}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           aria-invalid={!!error}
           aria-describedby={error ? `${id}-error` : undefined}
-          suppressHydrationWarning
         />
         {revealable && (
           <button
@@ -559,15 +502,14 @@ function Field({
             onClick={() => setRevealed((r) => !r)}
             tabIndex={-1}
             aria-label={revealed ? 'Hide password' : 'Show password'}
-            className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-200 transition-colors"
-            suppressHydrationWarning
+            className="absolute inset-y-0 right-0 flex items-center px-3 text-[#9A9A9A] hover:text-[#0A0A0A] transition-colors"
           >
             {revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
         )}
       </div>
       {error && (
-        <p id={`${id}-error`} className="text-red-400 text-xs mt-1.5">
+        <p id={`${id}-error`} className="text-red-500 text-xs mt-1">
           {error}
         </p>
       )}
@@ -589,7 +531,7 @@ function PasswordStrengthMeter({ password }: { password: string }) {
           <span
             key={seg}
             className="h-1 flex-1 rounded-full transition-colors"
-            style={{ backgroundColor: s.score >= seg ? color : 'rgba(255,255,255,0.12)' }}
+            style={{ backgroundColor: s.score >= seg ? color : '#E5E5E5' }}
           />
         ))}
         <span className="text-xs ml-1 shrink-0" style={{ color: s.score >= 2 ? color : '#EF4444' }}>
@@ -599,8 +541,8 @@ function PasswordStrengthMeter({ password }: { password: string }) {
       {s.issues.length > 0 && (
         <ul className="mt-1.5 space-y-0.5">
           {s.issues.map((issue) => (
-            <li key={issue} className="text-xs text-gray-500 flex items-start gap-1.5">
-              <span className="text-red-400 leading-4">•</span>
+            <li key={issue} className="text-xs text-[#9A9A9A] flex items-start gap-1.5">
+              <span className="text-[#EF4444] leading-4">•</span>
               {issue}
             </li>
           ))}

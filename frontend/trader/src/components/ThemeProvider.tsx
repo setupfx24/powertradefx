@@ -1,36 +1,67 @@
 'use client';
 
 import { useEffect } from 'react';
-import { usePathname } from 'next/navigation';
 import { useUIStore } from '@/stores/uiStore';
-import { cn } from '@/lib/utils';
+
+const LIGHT_BG = '#ffffff';
+const LIGHT_TEXT = '#0A0A0A';
+const DARK_BG = '#0a0a0a';
+const DARK_TEXT = '#ffffff';
+
+// Brand orange → black glow for dark mode. A warm radial bloom anchored at
+// the top of the viewport that fades into pure black — keeps the SwissCresta
+// orange (#E94E1B) present without washing out chart/panel surfaces.
+const DARK_BG_IMAGE =
+  'radial-gradient(125% 75% at 50% -10%, rgba(233,78,27,0.30) 0%, rgba(150,55,16,0.13) 28%, rgba(10,10,10,0) 60%)';
+// Light mode is a clean white surface with a whisper of orange at the top.
+const LIGHT_BG_IMAGE =
+  'radial-gradient(120% 70% at 50% -10%, rgba(233,78,27,0.06) 0%, rgba(255,255,255,0) 45%)';
 
 /**
- * Mirrors the persisted theme onto <html> (data-theme + theme-* class) and
- * wraps the app in a matching container. Every colour comes from the token
- * blocks in globals.css — this component paints nothing itself.
- *
- * The trading terminal is always the dark desk: token lookup is
- * ancestor-based, so the nearer data-theme="dark" wrapper wins even when
- * the user's preference is light.
+ * Forces theme on html, body, and wrapper so every element gets correct CSS variables.
+ * Dark mode paints an orange→black gradient; light mode stays white + orange.
  */
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const stored = useUIStore((s) => s.theme);
-  const pathname = usePathname();
-  const theme = pathname?.startsWith('/trading/terminal') ? 'dark' : stored;
+  const theme = useUIStore((s) => s.theme);
+  const isLight = theme === 'light';
 
   useEffect(() => {
-    const el = document.documentElement;
-    el.setAttribute('data-theme', theme);
-    el.classList.toggle('theme-dark', theme === 'dark');
-    el.classList.toggle('theme-light', theme === 'light');
-    el.style.colorScheme = theme;
-  }, [theme]);
+    const bg = isLight ? LIGHT_BG : DARK_BG;
+    const bgImage = isLight ? LIGHT_BG_IMAGE : DARK_BG_IMAGE;
+    const txt = isLight ? LIGHT_TEXT : DARK_TEXT;
+    const cls = isLight ? 'theme-light' : 'theme-dark';
+    const removeCls = isLight ? 'theme-dark' : 'theme-light';
+
+    // backgroundColor + backgroundImage are set as SEPARATE properties (not
+    // the `background` shorthand) so the flat base colour never resets the
+    // gradient — and the gradient stays pinned to the viewport while scrolling.
+    for (const el of [document.documentElement, document.body]) {
+      el.setAttribute('data-theme', theme);
+      el.classList.add(cls);
+      el.classList.remove(removeCls);
+      el.style.backgroundColor = bg;
+      el.style.backgroundImage = bgImage;
+      el.style.backgroundAttachment = 'fixed';
+      el.style.backgroundRepeat = 'no-repeat';
+      el.style.color = txt;
+    }
+  }, [theme, isLight]);
 
   return (
     <div
       data-theme={theme}
-      className={cn('flex min-h-full w-full flex-col', theme === 'dark' ? 'theme-dark' : 'theme-light')}
+      className={isLight ? 'theme-light' : 'theme-dark'}
+      style={{
+        minHeight: '100%',
+        width: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        backgroundColor: isLight ? LIGHT_BG : DARK_BG,
+        backgroundImage: isLight ? LIGHT_BG_IMAGE : DARK_BG_IMAGE,
+        backgroundAttachment: 'fixed',
+        backgroundRepeat: 'no-repeat',
+        color: isLight ? LIGHT_TEXT : DARK_TEXT,
+      }}
     >
       {children}
     </div>

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# PowerTradeFX — daily backup of Postgres + TimescaleDB + uploads/.
+# SwissCresta — daily backup of Postgres + TimescaleDB + uploads/.
 #
 # Runs on the host (NOT inside a container) and shells into the running
 # postgres / timescaledb containers via `docker compose exec` to take
@@ -16,10 +16,32 @@
 set -euo pipefail
 
 # ─── Config (overridable via env or .env) ─────────────────────────────
-COMPOSE_DIR="${POWERTRADEFX_DIR:-/opt/powertradefx}"
+COMPOSE_DIR="${SWISSCRESTA_DIR:-/opt/swisscresta}"
+
+# H-INF-2: load .env WITHOUT `source` — sourcing executes any command
+# substitution / backticks embedded in a value (arbitrary code as whoever runs
+# cron). Parse strict KEY=VALUE lines only; ignore everything else.
+load_env_file() {
+  local f="$1"; [[ -f "$f" ]] || return 0
+  local line key val
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    line="${line#"${line%%[![:space:]]*}"}"      # ltrim
+    [[ "$line" == export\ * ]] && line="${line#export }"
+    key="${line%%=*}"; val="${line#*=}"
+    key="${key//[[:space:]]/}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    val="${val%\"}"; val="${val#\"}"; val="${val%\'}"; val="${val#\'}"
+    export "$key=$val"
+  done < "$f"
+}
+load_env_file "$COMPOSE_DIR/.env"
+
 DEST="${BACKUP_LOCAL_DIR:-${COMPOSE_DIR}/backups}"
 RETAIN_DAYS="${BACKUP_RETENTION_DAYS:-14}"
-# rclone remote — empty = local-only (NOT recommended for prod). Example: "b2:powertradefx-backups"
+# rclone remote — empty = local-only (NOT recommended for prod). Example: "b2:swisscresta-backups"
 RCLONE_REMOTE="${BACKUP_RCLONE_REMOTE:-}"
 # GPG passphrase for symmetric encryption (`gpg --symmetric --cipher-algo
 # AES256`). MUST be set in production — KYC documents, password hashes,
@@ -28,6 +50,16 @@ RCLONE_REMOTE="${BACKUP_RCLONE_REMOTE:-}"
 # and store in a password manager — never the same file as the data.
 GPG_PASSPHRASE="${BACKUP_GPG_PASSPHRASE:-}"
 STAMP="$(date +%Y-%m-%d_%H%M)"
+
+# H-INF-4: in production, refuse to run without encryption. KYC docs, password
+# hashes and PII must never be written to disk / the offsite remote in
+# plaintext. Fail loudly at the top rather than silently producing an
+# unencrypted dump.
+if [[ "${ENVIRONMENT:-}" == "production" && -z "$GPG_PASSPHRASE" ]]; then
+  echo "[backup] FATAL: ENVIRONMENT=production but BACKUP_GPG_PASSPHRASE is unset." >&2
+  echo "[backup] Set a strong passphrase (openssl rand -hex 32) before backing up." >&2
+  exit 1
+fi
 
 # Colour-free, parsable log lines so cron output is easy to grep.
 log() { printf '[backup %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
@@ -62,20 +94,18 @@ cd "$COMPOSE_DIR"
 DUMP="$DEST/postgres-$STAMP.sql.gz"
 log "dumping postgres → $DUMP"
 docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-  exec -T postgres pg_dumpall -U "${POSTGRES_USER:-powertradefx}" \
+  exec -T postgres pg_dumpall -U "${POSTGRES_USER:-swisscresta}" \
   | gzip > "$DUMP"
 encrypt_inplace "$DUMP"
 
 # ─── 2. Uploads (KYC + manual deposit screenshots) ─────────────────────
 UPLOADS="$DEST/uploads-$STAMP.tar.gz"
-# The compose bind mount is ./backend/uploads:/app/uploads — the files
-# live under backend/uploads on the host, not a repo-root uploads/.
-if [[ -d "$COMPOSE_DIR/backend/uploads" ]]; then
+if [[ -d "$COMPOSE_DIR/uploads" ]]; then
   log "archiving uploads → $UPLOADS"
-  tar czf "$UPLOADS" -C "$COMPOSE_DIR/backend" uploads
+  tar czf "$UPLOADS" -C "$COMPOSE_DIR" uploads
   encrypt_inplace "$UPLOADS"
 else
-  log "no backend/uploads/ directory — skipping"
+  log "no uploads/ directory — skipping"
 fi
 
 # ─── 3. TimescaleDB (separate DB, separate dump) ──────────────────────
@@ -85,7 +115,7 @@ if docker compose -f docker-compose.yml -f docker-compose.prod.yml ps -q timesca
    && [[ -n "$(docker compose -f docker-compose.yml -f docker-compose.prod.yml ps -q timescaledb)" ]]; then
   log "dumping timescaledb → $TS"
   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-    exec -T timescaledb pg_dumpall -U "${TIMESCALE_USER:-powertradefx}" \
+    exec -T timescaledb pg_dumpall -U "${TIMESCALE_USER:-swisscresta}" \
     | gzip > "$TS"
   encrypt_inplace "$TS"
 else

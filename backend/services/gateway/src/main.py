@@ -1,4 +1,4 @@
-"""PowerTradeFX Gateway — REST + WebSocket API Server."""
+"""SwissCresta Gateway — REST + WebSocket API Server."""
 import asyncio
 import json
 import logging
@@ -8,16 +8,16 @@ from uuid import UUID
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, status, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import func, select
+from sqlalchemy import func, select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.config import get_settings
 from packages.common.src.database import get_db, AsyncSessionLocal
-from packages.common.src.redis_client import redis_client, PriceChannel, BARS_UPDATES_CHANNEL, FEED_STATUS_KEY
+from packages.common.src.redis_client import redis_client, PriceChannel, BARS_UPDATES_CHANNEL, CONFIG_INSTRUMENTS_RELOAD_CHANNEL
 from packages.common.src.price_cache import price_cache
 from packages.common.src.kafka_client import close_producer
 from packages.common.src.auth import decode_token, require_onboarded
-from packages.common.src.models import TradingAccount, SpreadConfig, Instrument
+from packages.common.src.models import TradingAccount, SpreadConfig, Instrument, Position
 from packages.common.src.instrument_pricing import symmetric_quote_from_mid
 from packages.common.src.instrumentation import init_sentry, add_middleware_stack
 
@@ -25,7 +25,8 @@ from .api import (
     auth, orders, positions, accounts, instruments, deposits, webhooks,
     websocket_manager, social, business, portfolio, profile, support,
     notifications, banners, trading_catalog, followers, lp_receiver,
-    share, algo_connector, algo_keys, algo_market_data,
+    share, algo_connector, algo_keys, algo_market_data, ai_strategies,
+    branding,
 )
 from .engines.sltp_engine import sltp_engine
 from .engines.copy_engine import copy_engine
@@ -36,6 +37,7 @@ from .engines.monthly_statement_engine import monthly_statement_engine
 from .engines.chain_verifier_engine import chain_verifier_engine
 from .engines.bars_persist_engine import bars_persist_engine
 from .engines.reconcile_engine import reconcile_engine
+from .engines.ai_strategy_engine import ai_strategy_engine
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-5s [%(name)s] %(message)s")
 logger = logging.getLogger("gateway")
@@ -46,6 +48,14 @@ init_sentry("gateway")
 _cors_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
 if not _cors_origins:
     _cors_origins = ["http://localhost:3000", "http://localhost:3001"]
+# Credentialed REST CORS is narrower than the WS origin allow-list (which keeps
+# using _cors_origins): hosts that only need the live price socket (marketing
+# apex/www) must not also get credentialed cross-origin API access. Falls back
+# to CORS_ORIGINS when API_CORS_ORIGINS is unset.
+if settings.API_CORS_ORIGINS is not None:
+    _api_cors_origins = [o.strip() for o in settings.API_CORS_ORIGINS.split(",") if o.strip()]
+else:
+    _api_cors_origins = list(_cors_origins)
 _cors_methods = [m.strip() for m in settings.CORS_ALLOW_METHODS.split(",") if m.strip()]
 _cors_headers = [h.strip() for h in settings.CORS_ALLOW_HEADERS.split(",") if h.strip()]
 
@@ -182,31 +192,6 @@ async def _ensure_pamm_units_column():
         logger.warning("pamm units column ensure skipped: %s", e)
 
 
-async def _ensure_allocation_status_constraint():
-    """The original investor_allocations_status_check only allowed
-    pending/active/paused/closed/withdrawn — but the code writes 'stopped'
-    (stop_copy) and 'paused_drawdown' (copy-engine drawdown cap). Both
-    writes hit a CheckViolation: stopping a copy 500'd and the drawdown
-    pause crashed (and rolled back) every engine cycle. Widen the
-    constraint to the full set the code actually uses. Idempotent."""
-    from sqlalchemy import text
-    try:
-        async with AsyncSessionLocal() as session:
-            await session.execute(text(
-                "ALTER TABLE investor_allocations "
-                "DROP CONSTRAINT IF EXISTS investor_allocations_status_check"
-            ))
-            await session.execute(text(
-                "ALTER TABLE investor_allocations "
-                "ADD CONSTRAINT investor_allocations_status_check CHECK "
-                "(status IN ('pending','active','paused','paused_drawdown',"
-                "'stopped','closed','withdrawn'))"
-            ))
-            await session.commit()
-    except Exception as e:
-        logger.warning("allocation status constraint ensure skipped: %s", e)
-
-
 async def _ensure_push_tokens_table():
     """Device push-token registry for OS-level push notifications (Expo).
     Created at startup so no separate migration is needed — idempotent."""
@@ -246,7 +231,6 @@ async def _ensure_ohlc_bars_table():
 async def lifespan(app: FastAPI):
     await _backfill_close_reasons()
     await _ensure_pamm_units_column()
-    await _ensure_allocation_status_constraint()
     await _ensure_push_tokens_table()
     await _ensure_ohlc_bars_table()
     # Run the self-heal once at startup (catches drift accumulated while
@@ -266,7 +250,9 @@ async def lifespan(app: FastAPI):
     await chain_verifier_engine.start()
     await bars_persist_engine.start()
     await reconcile_engine.start()
+    await ai_strategy_engine.start()
     yield
+    await ai_strategy_engine.stop()
     healer_task.cancel()
     try:
         await healer_task
@@ -293,7 +279,7 @@ async def lifespan(app: FastAPI):
 # for explicitly tagged dev/local environments.
 _EXPOSE_DOCS = settings.ENVIRONMENT in ("development", "local")
 app = FastAPI(
-    title="PowerTradeFX Gateway",
+    title="SwissCresta Gateway",
     version="1.0.0",
     description="Forex CFD B-Book Trading Platform API",
     lifespan=lifespan,
@@ -304,7 +290,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins,
+    allow_origins=_api_cors_origins,
     allow_credentials=True,
     allow_methods=_cors_methods,
     allow_headers=_cors_headers,
@@ -340,6 +326,7 @@ app.include_router(portfolio.router, prefix="/api/v1/portfolio", tags=["Portfoli
 app.include_router(profile.router, prefix="/api/v1/profile", tags=["Profile"])
 app.include_router(support.router, prefix="/api/v1/support", tags=["Support"])
 app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["Notifications"])
+app.include_router(branding.router, prefix="/api/v1/branding", tags=["Branding"])
 app.include_router(banners.media_router, prefix="/api/v1/banners", tags=["Banners"])
 app.include_router(banners.router, prefix="/api/v1/banners", tags=["Banners"])
 app.include_router(followers.router, prefix="/api/v1/followers", tags=["Followers"])
@@ -355,31 +342,13 @@ app.include_router(share.public_router, prefix="/api/v1/public", tags=["Public S
 app.include_router(algo_keys.router, prefix="/api/v1/algo", tags=["Algo Keys"])
 app.include_router(algo_connector.router, prefix="/api/algo", tags=["Algo Connector"])
 app.include_router(algo_market_data.router, prefix="/api/algo", tags=["Algo Market Data"])
+# AI Strategy Builder — natural-language strategies, backtests, deployments.
+app.include_router(ai_strategies.router, prefix="/api/v1/ai-strategies", tags=["AI Strategies"])
 
 
 @app.get("/health")
 async def health():
-    """Liveness + price-feed state.
-
-    `status` is "degraded" (still HTTP 200 — the gateway itself is fine)
-    when market-data reports the primary feed down during market hours, so
-    uptime monitors can alert on the body instead of a client noticing that
-    gold is three weeks old. `feed` is the raw market-data heartbeat, or
-    None if market-data has not written one in the last two minutes.
-    """
-    feed = None
-    try:
-        raw = await redis_client.get(FEED_STATUS_KEY)
-        if raw:
-            feed = json.loads(raw)
-    except Exception:
-        feed = None
-    degraded = feed is None or bool(feed.get("degraded"))
-    return {
-        "status": "degraded" if degraded else "ok",
-        "service": "gateway",
-        "feed": feed,
-    }
+    return {"status": "ok", "service": "gateway"}
 
 
 # ============================================
@@ -448,8 +417,8 @@ def _verify_admin_ws_token(token: str | None) -> dict | None:
 
 def _normalize_origin(raw: str) -> str:
     """Lower-case + strip trailing slash + drop the port if it's the
-    default for the scheme. Lets `https://trade.powertradefx.com:443/`
-    compare equal to `https://trade.powertradefx.com`."""
+    default for the scheme. Lets `https://trade.swisscresta.com:443/`
+    compare equal to `https://trade.swisscresta.com`."""
     o = raw.strip().rstrip("/").lower()
     if o.startswith("https://") and o.endswith(":443"):
         o = o[:-4]
@@ -459,6 +428,35 @@ def _normalize_origin(raw: str) -> str:
 
 
 _NORMALIZED_ALLOWED_ORIGINS = {_normalize_origin(o) for o in _cors_origins}
+
+
+# Phase 3: cap the number of concurrent WebSocket connections a single user may
+# hold, so one client (or a bug / abuse) can't open unbounded streams and
+# exhaust the worker's sockets/memory. Per-worker in-process counter — good
+# enough as a guard-rail; a multi-worker deploy multiplies the cap by worker
+# count, which is acceptable for a resource ceiling.
+_WS_MAX_PER_USER = 10
+_ws_user_conn_counts: dict[str, int] = {}
+
+
+def _ws_try_acquire(user_id: str | None) -> bool:
+    if not user_id:
+        return True  # anonymous streams are already tightly scoped
+    n = _ws_user_conn_counts.get(user_id, 0)
+    if n >= _WS_MAX_PER_USER:
+        return False
+    _ws_user_conn_counts[user_id] = n + 1
+    return True
+
+
+def _ws_release(user_id: str | None) -> None:
+    if not user_id:
+        return
+    n = _ws_user_conn_counts.get(user_id, 0) - 1
+    if n <= 0:
+        _ws_user_conn_counts.pop(user_id, None)
+    else:
+        _ws_user_conn_counts[user_id] = n
 
 
 def _check_ws_origin(websocket: WebSocket) -> bool:
@@ -505,15 +503,19 @@ async def _load_user_spread_overrides(
     user_id: str,
     trading_account_id: str | None = None,
 ) -> dict[str, tuple[Decimal, str, Decimal, int]]:
-    """symbol -> (spread_value, spread_type, pip_size, digits) for the
-    user's enabled user-scope spread overrides. A row without an
-    instrument applies to every active instrument (blanket override);
-    instrument-specific rows win over the blanket one.
+    """symbol -> (spread_value, spread_type, pip_size, digits) for the trader's
+    EFFECTIVE spread, so the live /ws/prices quote matches what a fill would use.
 
-    Account targeting: rows pinned to a trading account apply only when
-    the client reports trading THAT account (``set_account`` control
-    message); they then beat the user-wide (NULL account) rows. Rows
-    pinned to other accounts are ignored."""
+    Resolves the same priority chain as resolve_spread_config's user+tier layers
+    (so an admin per-tier / per-user spread edit shows LIVE on the stream, not
+    only at execution):
+      1. user + this instrument   (account-pinned row beats user-wide)
+      2. user + blanket           (account-pinned beats user-wide)
+      3. account_group + this instrument   (tier)
+      4. account_group + blanket           (tier)
+    Instrument / segment / default spread is already baked into the broadcast
+    tick by market-data, so it needs no override here — those levels flow through
+    unchanged and reflect live via market-data's own pub/sub reload."""
     try:
         uid = UUID(str(user_id))
     except (ValueError, TypeError):
@@ -527,59 +529,153 @@ async def _load_user_spread_overrides(
     out: dict[str, tuple[Decimal, str, Decimal, int]] = {}
     try:
         async with AsyncSessionLocal() as db:
+            group_id: UUID | None = None
             if acct_uuid is not None:
                 # Never let a client claim someone else's account context.
-                owner = (
+                row = (
                     await db.execute(
-                        select(TradingAccount.id).where(
-                            TradingAccount.id == acct_uuid,
+                        select(TradingAccount.account_group_id, TradingAccount.user_id)
+                        .where(TradingAccount.id == acct_uuid)
+                    )
+                ).first()
+                if row is None or row[1] != uid:
+                    acct_uuid = None
+                else:
+                    group_id = row[0]
+            if group_id is None:
+                # No pinned account (or not owned) — use the tier of the user's
+                # oldest live account so the per-tier spread still applies.
+                group_id = (
+                    await db.execute(
+                        select(TradingAccount.account_group_id).where(
                             TradingAccount.user_id == uid,
-                        )
+                            TradingAccount.is_demo == False,  # noqa: E712
+                        ).order_by(TradingAccount.created_at.asc()).limit(1)
                     )
                 ).scalar_one_or_none()
-                if owner is None:
-                    acct_uuid = None
+
+            # ── Config-based per-symbol spread (user + tier priority chain) ──
+            conds = [
+                and_(func.lower(SpreadConfig.scope) == "user", SpreadConfig.user_id == uid)
+            ]
+            if group_id is not None:
+                conds.append(
+                    and_(func.lower(SpreadConfig.scope) == "account_group",
+                         SpreadConfig.account_group_id == group_id)
+                )
             rows = (
                 await db.execute(
                     select(SpreadConfig).where(
-                        func.lower(SpreadConfig.scope) == "user",
                         SpreadConfig.is_enabled == True,  # noqa: E712
-                        SpreadConfig.user_id == uid,
+                        or_(*conds),
                     )
                 )
             ).scalars().all()
-            if not rows:
-                return {}
-            # (instrument_id | None) -> (value, type); account-pinned rows
-            # overwrite user-wide ones for the same slot.
-            slots: dict = {}
-            for pinned in (False, True):
-                for cfg in rows:
-                    is_pinned = cfg.trading_account_id is not None
-                    if is_pinned != pinned:
-                        continue
-                    if is_pinned and (acct_uuid is None or cfg.trading_account_id != acct_uuid):
-                        continue
-                    val = Decimal(str(cfg.value or 0))
-                    if val <= 0:
-                        continue
-                    slots[cfg.instrument_id] = (val, (cfg.spread_type or "pips").lower())
-            if not slots:
-                return {}
-            blanket = slots.get(None)
+
+            # Active instruments (pip/digits) — loaded unconditionally because the
+            # per-position override path below needs them even when the user has
+            # no config spread rows at all.
             insts = (
                 await db.execute(select(Instrument).where(Instrument.is_active == True))  # noqa: E712
             ).scalars().all()
-            for inst in insts:
-                sym = (inst.symbol or "").strip().upper()
-                if not sym:
-                    continue
-                cfg2 = slots.get(inst.id) or blanket
-                if cfg2 is None:
-                    continue
-                pip = Decimal(str(inst.pip_size or "0.0001"))
-                digits = int(inst.digits or 5)
-                out[sym] = (cfg2[0], cfg2[1], pip, digits)
+
+            if rows:
+                # Resolve the four candidate slots. rank encodes account-pinned >
+                # user-wide within the user scope; user always beats group
+                # (handled by the per-instrument fallback order below).
+                user_inst: dict = {}          # instrument_id -> (val, type, rank)
+                user_blanket: tuple | None = None
+                group_inst: dict = {}         # instrument_id -> (val, type)
+                group_blanket: tuple | None = None
+                for cfg in rows:
+                    val = Decimal(str(cfg.value or 0))
+                    if val <= 0:
+                        continue
+                    st = (cfg.spread_type or "pips").lower()
+                    scope = (cfg.scope or "").lower()
+                    if scope == "user":
+                        is_pinned = cfg.trading_account_id is not None
+                        if is_pinned and (acct_uuid is None or cfg.trading_account_id != acct_uuid):
+                            continue  # pinned to a different account — ignore
+                        rank = 2 if is_pinned else 1
+                        if cfg.instrument_id is None:
+                            if user_blanket is None or rank > user_blanket[2]:
+                                user_blanket = (val, st, rank)
+                        else:
+                            ex = user_inst.get(cfg.instrument_id)
+                            if ex is None or rank > ex[2]:
+                                user_inst[cfg.instrument_id] = (val, st, rank)
+                    elif scope == "account_group":
+                        if cfg.instrument_id is None:
+                            if group_blanket is None:
+                                group_blanket = (val, st)
+                        else:
+                            group_inst.setdefault(cfg.instrument_id, (val, st))
+
+                for inst in insts:
+                    sym = (inst.symbol or "").strip().upper()
+                    if not sym:
+                        continue
+                    # Priority: user+inst → user+blanket → group+inst → group+blanket.
+                    eff = (
+                        user_inst.get(inst.id)
+                        or user_blanket
+                        or group_inst.get(inst.id)
+                        or group_blanket
+                    )
+                    if eff is None:
+                        continue
+                    pip = Decimal(str(inst.pip_size or "0.0001"))
+                    digits = int(inst.digits or 5)
+                    out[sym] = (eff[0], eff[1], pip, digits)
+
+            # ── Per-position spread override (TEMPORARY, highest priority) ──
+            # An admin can set a spread on a RUNNING trade. While that position is
+            # OPEN it drives THIS user's live quote for that instrument (price +
+            # chart + P&L), above any config spread. The moment the position
+            # closes it is no longer open, so it drops out here and the config
+            # spreads resume — it never permanently overrides the account-group /
+            # instrument / user config. (Stop-out / SL/TP are mid-based, so this
+            # override changes what the user SEES/realises, never force-closes.)
+            if acct_uuid is not None:
+                acct_ids = [acct_uuid]
+            else:
+                acct_ids = (
+                    await db.execute(
+                        select(TradingAccount.id).where(TradingAccount.user_id == uid)
+                    )
+                ).scalars().all()
+            if acct_ids:
+                inst_by_id = {i.id: i for i in insts}
+                ov_rows = (
+                    await db.execute(
+                        select(
+                            Position.instrument_id,
+                            Position.spread_override,
+                            Position.spread_override_type,
+                        ).where(
+                            Position.status == "open",
+                            Position.spread_override.isnot(None),
+                            Position.account_id.in_(acct_ids),
+                        ).order_by(Position.created_at.asc())  # latest override wins
+                    )
+                ).all()
+                for inst_id, ov_val, ov_type in ov_rows:
+                    inst = inst_by_id.get(inst_id)
+                    if inst is None:
+                        continue
+                    try:
+                        v = Decimal(str(ov_val))
+                    except (ValueError, TypeError):
+                        continue
+                    if v < 0:
+                        continue
+                    sym = (inst.symbol or "").strip().upper()
+                    if not sym:
+                        continue
+                    pip = Decimal(str(inst.pip_size or "0.0001"))
+                    digits = int(inst.digits or 5)
+                    out[sym] = (v, (ov_type or "pips").lower(), pip, digits)
     except Exception as exc:
         logger.warning("user spread override load failed for %s: %s", user_id, exc)
     return out
@@ -622,9 +718,14 @@ async def price_stream(websocket: WebSocket, token: str | None = Query(default=N
             return
         user_id = str(user.get("user_id") or "") or None
 
+    if not _ws_try_acquire(user_id):
+        await websocket.close(code=4008, reason="Too many concurrent connections")
+        return
     await websocket.accept()
     pubsub = redis_client.pubsub()
-    await pubsub.subscribe(PriceChannel.PRICE_CHANNEL)
+    # Also subscribe to the config-reload channel so an admin spread edit is
+    # reflected on THIS live connection instantly (pub/sub), not on the 30s poll.
+    await pubsub.subscribe(PriceChannel.PRICE_CHANNEL, CONFIG_INSTRUMENTS_RELOAD_CHANNEL)
 
     # Per-user display spread (empty dict = pass-through fast path). The
     # client can pin the context to one trading account via a
@@ -635,19 +736,60 @@ async def price_stream(websocket: WebSocket, token: str | None = Query(default=N
     last_override_reload = asyncio.get_event_loop().time()
 
     try:
+        # ── Drain + coalesce + fixed-rate flush ─────────────────────────
+        # The old loop read ONE pubsub message per iteration (plus a 10ms
+        # control-message wait), capping forwarding at ~100 msg/s across
+        # ALL symbols — a fast feed (crypto book ticks) starved slow ones
+        # and everything lagged behind the backlog. Now every wake drains
+        # the WHOLE backlog keeping only the newest payload per symbol,
+        # and flushes at ~20fps. Perceived latency stays <50ms while
+        # bandwidth is bounded no matter how fast the upstream feed gets.
+        FLUSH_INTERVAL = 0.05
         ping_interval = 30
-        last_ping = asyncio.get_event_loop().time()
+        _now = asyncio.get_event_loop().time
+        last_ping = _now()
+        last_flush = _now()
+        pending: dict[str, str] = {}  # symbol -> latest raw payload
+
         while True:
-            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
-            if message and message["type"] == "message":
-                data = message["data"]
-                if overrides:
-                    data = _rewrite_tick_with_spread(data, overrides)
-                await websocket.send_text(data)
+            # Wait for the first message up to the next flush deadline,
+            # then drain everything queued without blocking.
+            wait = max(0.005, FLUSH_INTERVAL - (_now() - last_flush))
+            config_reloaded = False
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=wait)
+            while message:
+                if message["type"] == "message":
+                    ch = message.get("channel")
+                    if isinstance(ch, bytes):
+                        ch = ch.decode("utf-8", "ignore")
+                    if ch == CONFIG_INSTRUMENTS_RELOAD_CHANNEL:
+                        # Admin changed spread/instrument config — reload overrides.
+                        config_reloaded = True
+                    else:
+                        raw_tick = message["data"]
+                        try:
+                            sym = str(json.loads(raw_tick).get("symbol") or "")
+                        except (ValueError, TypeError):
+                            sym = ""
+                        if sym:
+                            pending[sym] = raw_tick
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0)
+
+            if config_reloaded and user_id:
+                overrides = await _load_user_spread_overrides(user_id, active_account_id)
+                last_override_reload = asyncio.get_event_loop().time()
+
+            now_flush = _now()
+            if pending and now_flush - last_flush >= FLUSH_INTERVAL:
+                for raw_tick in pending.values():
+                    data = _rewrite_tick_with_spread(raw_tick, overrides) if overrides else raw_tick
+                    await websocket.send_text(data)
+                pending.clear()
+                last_flush = now_flush
 
             # Drain client control messages without blocking the stream.
             try:
-                raw = await asyncio.wait_for(websocket.receive_text(), timeout=0.01)
+                raw = await asyncio.wait_for(websocket.receive_text(), timeout=0.001)
             except asyncio.TimeoutError:
                 raw = None
             if raw and user_id:
@@ -674,7 +816,8 @@ async def price_stream(websocket: WebSocket, token: str | None = Query(default=N
     except WebSocketDisconnect:
         pass
     finally:
-        await pubsub.unsubscribe(PriceChannel.PRICE_CHANNEL)
+        _ws_release(user_id)
+        await pubsub.unsubscribe(PriceChannel.PRICE_CHANNEL, CONFIG_INSTRUMENTS_RELOAD_CHANNEL)
         await pubsub.close()
 
 
@@ -700,13 +843,18 @@ async def bars_stream(websocket: WebSocket, token: str | None = Query(default=No
     if not _check_ws_origin(websocket):
         await websocket.close(code=4003, reason="Origin not allowed")
         return
+    user_id: str | None = None
     effective = _ws_token_from_websocket(websocket, token)
     if effective:
         user = _verify_ws_token(effective)
         if not user:
             await websocket.close(code=4001, reason="Invalid token")
             return
+        user_id = str(user.get("user_id") or "") or None
 
+    if not _ws_try_acquire(user_id):
+        await websocket.close(code=4008, reason="Too many concurrent connections")
+        return
     await websocket.accept()
     pubsub = redis_client.pubsub()
     await pubsub.subscribe(BARS_UPDATES_CHANNEL)
@@ -715,13 +863,26 @@ async def bars_stream(websocket: WebSocket, token: str | None = Query(default=No
     subs: set[tuple[str, str]] = set()
 
     try:
+        # Same drain + coalesce + ~20fps flush as /ws/prices: the channel
+        # carries a forming-bar update per tick for EVERY symbol, so the
+        # old one-message-per-iteration read backlogged badly the moment
+        # the feed got fast. Only the newest bar per (symbol, tf) matters
+        # for the forming candle — with ONE exception: a bar flagged
+        # closed=true is final candle data and must never be coalesced
+        # away by the next period's forming bar, so it flushes through
+        # immediately.
+        FLUSH_INTERVAL = 0.05
         ping_interval = 30
-        last_ping = asyncio.get_event_loop().time()
+        _now = asyncio.get_event_loop().time
+        last_ping = _now()
+        last_flush = _now()
+        pending: dict[tuple[str, str], str] = {}
+
         while True:
             # 1) Drain client control messages (subscribe / unsubscribe / pong).
             raw = None
             try:
-                raw = await asyncio.wait_for(websocket.receive_text(), timeout=0.05)
+                raw = await asyncio.wait_for(websocket.receive_text(), timeout=0.001)
             except asyncio.TimeoutError:
                 pass
             if raw:
@@ -741,29 +902,41 @@ async def bars_stream(websocket: WebSocket, token: str | None = Query(default=No
                             else:
                                 subs.discard((sym, tf))
 
-            # 2) Relay matching bar updates.
-            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
-            if message and message["type"] == "message" and subs:
-                try:
-                    bar = json.loads(message["data"])
-                    key = (
-                        str(bar.get("symbol") or "").upper(),
-                        str(bar.get("timeframe") or ""),
-                    )
-                    if key in subs:
-                        await websocket.send_text(message["data"])
-                except (ValueError, TypeError):
-                    pass
+            # 2) Drain the whole bar backlog, newest per (symbol, tf).
+            wait = max(0.005, FLUSH_INTERVAL - (_now() - last_flush))
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=wait)
+            while message:
+                if message["type"] == "message" and subs:
+                    try:
+                        bar = json.loads(message["data"])
+                        key = (
+                            str(bar.get("symbol") or "").upper(),
+                            str(bar.get("timeframe") or ""),
+                        )
+                        if key in subs:
+                            prev = pending.get(key)
+                            if prev is not None and '"closed": true' in prev:
+                                # Never lose a finalised candle to coalescing.
+                                await websocket.send_text(prev)
+                            pending[key] = message["data"]
+                    except (ValueError, TypeError):
+                        pass
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0)
 
-            now = asyncio.get_event_loop().time()
+            now = _now()
+            if pending and now - last_flush >= FLUSH_INTERVAL:
+                for payload in pending.values():
+                    await websocket.send_text(payload)
+                pending.clear()
+                last_flush = now
+
             if now - last_ping >= ping_interval:
                 await websocket.send_json({"type": "ping"})
                 last_ping = now
-
-            await asyncio.sleep(0.01)
     except WebSocketDisconnect:
         pass
     finally:
+        _ws_release(user_id)
         await pubsub.unsubscribe(BARS_UPDATES_CHANNEL)
         await pubsub.close()
 
@@ -797,6 +970,10 @@ async def trade_stream(websocket: WebSocket, account_id: str, token: str | None 
             await websocket.close(code=4003, reason="Account not found or access denied")
             return
 
+    _uid = str(user.get("user_id") or "") or None
+    if not _ws_try_acquire(_uid):
+        await websocket.close(code=4008, reason="Too many concurrent connections")
+        return
     await websocket.accept()
     manager = websocket_manager.ConnectionManager()
     await manager.connect(account_id, websocket)
@@ -835,6 +1012,7 @@ async def trade_stream(websocket: WebSocket, account_id: str, token: str | None 
     except WebSocketDisconnect:
         manager.disconnect(account_id)
     finally:
+        _ws_release(_uid)
         await pubsub.unsubscribe(channel)
         await pubsub.close()
 

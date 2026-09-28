@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.common.src.database import get_db
 from dependencies import require_permission
 from packages.common.src.models import User
-from packages.common.src.rate_limit import client_ip_for_inet
 from services import instruments_admin_service
 
 router = APIRouter(prefix="/instruments", tags=["Instruments"])
@@ -47,7 +46,7 @@ async def put_instrument_config(
 ):
     return await instruments_admin_service.put_instrument_config(
         instrument_id=instrument_id, body=body, admin_id=admin.id,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
 
 
@@ -60,7 +59,7 @@ async def create_instrument(
 ):
     return await instruments_admin_service.create_instrument(
         body=body, admin_id=admin.id,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
 
 
@@ -73,7 +72,7 @@ async def deactivate_instrument(
 ):
     return await instruments_admin_service.deactivate_instrument(
         instrument_id=instrument_id, admin_id=admin.id,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
 
 
@@ -86,5 +85,5 @@ async def bulk_update_configs(
 ):
     return await instruments_admin_service.bulk_update_configs(
         body=body, admin_id=admin.id,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )

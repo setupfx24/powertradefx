@@ -8,7 +8,6 @@ from dependencies import require_super_admin, EMPLOYEE_ROLE_PERMISSIONS
 from routes.auth import _set_admin_cookie
 from packages.common.src.models import User
 from packages.common.src.admin_schemas import EmployeeIn, EmployeeUpdate
-from packages.common.src.rate_limit import client_ip_for_inet
 from services import employee_service
 
 router = APIRouter(prefix="/employees", tags=["Employees"])
@@ -17,15 +16,11 @@ router = APIRouter(prefix="/employees", tags=["Employees"])
 # Static catalog of permissions the admin UI renders as checkboxes. Keep in sync
 # with require_permission() call sites across the admin backend.
 PERMISSION_CATALOG = {
-    "Users":       ["users.view", "users.add_fund", "users.deduct_fund", "users.ban", "users.block_trading", "users.kill_switch", "users.impersonate", "users.delete"],
-    # funds.approve = execute/reject a colleague's staged fund move
-    # (two-person rule). Deliberately NOT in any default role — grant it
-    # explicitly, and to different people than users.add_fund/deduct_fund.
-    "Funds":       ["funds.approve"],
+    "Users":       ["users.view", "users.add_fund", "users.deduct_fund", "users.ban", "users.block_trading", "users.kill_switch"],
     "KYC":         ["kyc.view", "kyc.manage"],
     "Deposits":    ["deposits.view", "deposits.approve", "deposits.reject"],
     "Withdrawals": ["withdrawals.view", "withdrawals.approve", "withdrawals.reject"],
-    "Trading":     ["trades.view", "trades.modify", "trades.close", "trades.create", "trades.manage", "positions.view", "orders.view"],
+    "Trading":     ["trades.view", "trades.modify", "trades.close", "trades.create", "positions.view", "orders.view"],
     "Social":      ["social.view", "social.manage"],
     "Banks":       ["banks.view", "banks.create", "banks.update"],
     "IB":          ["ib.view", "ib.manage"],
@@ -33,11 +28,6 @@ PERMISSION_CATALOG = {
     "Support":     ["tickets.view", "tickets.reply", "tickets.assign"],
     "Analytics":   ["analytics.view", "exposure.view"],
     "Audit":       ["audit_logs.view"],
-    # Config + Settings were enforced by require_permission() but missing
-    # here, so a super-admin could never actually grant them through the
-    # Employees UI — the surfaces were reachable only by super_admin.
-    "Config":      ["config.view", "config.update"],
-    "Settings":    ["settings.view", "settings.edit"],
 }
 
 
@@ -58,7 +48,7 @@ async def create_employee(
 ):
     return await employee_service.create_employee(
         body=body, admin=admin,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
 
 
@@ -72,7 +62,7 @@ async def update_employee(
 ):
     return await employee_service.update_employee(
         employee_id=employee_id, body=body, admin=admin,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
 
 
@@ -85,7 +75,7 @@ async def delete_employee(
 ):
     return await employee_service.delete_employee(
         employee_id=employee_id, admin=admin,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
 
 
@@ -134,7 +124,7 @@ async def update_employee_permissions(
         raise HTTPException(status_code=400, detail="extra_permissions must be a list of strings")
     return await employee_service.update_employee_permissions(
         employee_id=employee_id, extra_permissions=perms, admin=admin,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
 
 
@@ -148,7 +138,7 @@ async def login_as_employee(
 ):
     result = await employee_service.login_as_employee(
         employee_id=employee_id, admin=admin,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
     # The admin session lives in an HttpOnly cookie and get_current_admin
     # reads the cookie BEFORE any Bearer header — without swapping the

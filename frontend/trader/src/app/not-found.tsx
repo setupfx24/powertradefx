@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { Home, ArrowLeft } from 'lucide-react'
 
-export const metadata = { title: 'Page Not Found — PowerTradeFX' }
+export const metadata = { title: 'Page Not Found — SwissCresta' }
 
 /**
  * Root-level 404 — catches any path that doesn't match a route AND
@@ -10,26 +10,26 @@ export const metadata = { title: 'Page Not Found — PowerTradeFX' }
  */
 export default function NotFound() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-bg-base text-text-primary px-6">
+    <div className="min-h-screen flex items-center justify-center bg-[#0a0a0a] text-white px-6">
       <div className="max-w-md w-full text-center">
-        <p className="font-mono tabular-nums text-[120px] font-bold leading-none text-accent mb-2">404</p>
-        <h1 className="text-2xl font-semibold tracking-tight mb-3">Page not found</h1>
-        <p className="text-sm text-text-secondary mb-8 leading-relaxed">
+        <p className="text-[120px] font-bold leading-none text-[#E94E1B] mb-2">404</p>
+        <h1 className="text-2xl font-bold mb-3">Page not found</h1>
+        <p className="text-gray-400 mb-8 leading-relaxed">
           The page you&apos;re looking for doesn&apos;t exist or has been moved.
         </p>
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
           <Link
             href="/dashboard"
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-accent px-5 text-md font-semibold text-text-on-accent shadow-sm transition-colors hover:bg-accent-hover"
+            className="inline-flex items-center justify-center gap-2 bg-[#E94E1B] hover:bg-[#C73E11] text-white font-semibold px-6 py-3 rounded-lg transition-colors"
           >
-            <Home className="w-4 h-4" aria-hidden />
+            <Home className="w-4 h-4" />
             Dashboard
           </Link>
           <Link
             href="/"
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-border-strong px-5 text-md font-semibold text-text-primary transition-colors hover:bg-bg-hover"
+            className="inline-flex items-center justify-center gap-2 border border-white/15 hover:border-white/30 text-white font-medium px-6 py-3 rounded-lg transition-colors"
           >
-            <ArrowLeft className="w-4 h-4" aria-hidden />
+            <ArrowLeft className="w-4 h-4" />
             Home
           </Link>
         </div>

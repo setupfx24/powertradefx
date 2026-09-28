@@ -49,7 +49,7 @@ class ApiClient {
     if (typeof window !== 'undefined') {
       try {
         localStorage.removeItem('token');
-        localStorage.removeItem('powertradefx-auth');
+        localStorage.removeItem('swisscresta-auth');
       } catch {
         /* ignore */
       }

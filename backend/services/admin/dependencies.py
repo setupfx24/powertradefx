@@ -1,6 +1,3 @@
-import hashlib
-import hmac
-import logging
 import uuid
 from datetime import datetime
 from functools import wraps
@@ -14,11 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.config import get_settings
 from packages.common.src.database import get_db
-from packages.common.src.models import User, Employee
+from packages.common.src.models import User, Employee, BrokerProfile
+from packages.common.src import broker_tenancy
+from packages.common.src.models.broker import (
+    PERMISSION_VIEW, PERMISSION_EDIT, permission_at_least,
+)
 
 security = HTTPBearer()
 settings = get_settings()
-logger = logging.getLogger(__name__)
 
 EMPLOYEE_ROLE_PERMISSIONS = {
     "super_admin": {"*"},
@@ -58,73 +58,6 @@ EMPLOYEE_ROLE_PERMISSIONS = {
 
 ADMIN_COOKIE_NAME = "fx_admin"
 
-# `iss` claim stamped on every admin JWT and required on decode. Stops a
-# token signed for another audience with the same HS256 secret (a shared
-# .env, a copy-pasted secret between services) from being accepted here.
-ADMIN_JWT_ISSUER = "powertradefx-admin"
-
-# Length of the password fingerprint carried in the `pwd` claim: 16 hex
-# chars = 64 bits, plenty to distinguish "same hash" from "rotated" and
-# short enough to keep the cookie small. It is derived from the bcrypt
-# HASH, never the password, so the claim reveals nothing usable.
-_PWD_FINGERPRINT_HEX_LEN = 16
-
-
-def password_fingerprint(password_hash: str | None) -> str:
-    """Fingerprint of the stored bcrypt hash, embedded in the admin JWT.
-
-    Threat: an admin whose credential leaked rotates their password, but
-    every session minted before the rotation stays valid until `exp`
-    (up to ADMIN_JWT_EXPIRY_HOURS + the refresh grace window). Binding
-    the token to sha256(password_hash) makes a password change revoke
-    all outstanding sessions on the next request, with no session table
-    or migration. bcrypt hashes are salted, so the fingerprint changes
-    even when the same password is set again.
-    """
-    return hashlib.sha256((password_hash or "").encode("utf-8")).hexdigest()[:_PWD_FINGERPRINT_HEX_LEN]
-
-
-def decode_admin_token(token: str, *, verify_exp: bool = True) -> dict:
-    """Verify signature, issuer and token type; return the claims.
-
-    Raises 401 on any failure. ``verify_exp=False`` is used only by the
-    refresh flow, which deliberately accepts recently-expired tokens and
-    enforces its own bounded grace window.
-    """
-    try:
-        payload = jwt.decode(
-            token,
-            settings.ADMIN_JWT_SECRET,
-            algorithms=[settings.ADMIN_JWT_ALGORITHM],
-            issuer=ADMIN_JWT_ISSUER,
-            options={"verify_exp": verify_exp, "require": ["iss", "exp", "iat"]},
-        )
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
-    if payload.get("type") != "admin":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token")
-    if not payload.get("admin_id"):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
-    return payload
-
-
-def assert_token_matches_password(payload: dict, admin: User) -> None:
-    """Reject a token whose `pwd` claim does not match the admin's CURRENT
-    password hash (see ``password_fingerprint``). A missing claim is also
-    rejected: tokens minted before this check existed are invalidated
-    exactly once and the operator simply signs in again — the acceptable
-    cost of not needing a migration or a session table."""
-    claimed = payload.get("pwd")
-    if not isinstance(claimed, str) or not hmac.compare_digest(
-        claimed, password_fingerprint(admin.password_hash)
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Session invalidated — please sign in again",
-        )
-
 
 async def get_current_admin(
     request: Request,
@@ -137,11 +70,7 @@ async def get_current_admin(
     no XSS-readable token) OR a Bearer header (legacy clients). The
     cookie path is what the new admin frontend uses; the header path
     is retained so cron / scripts that already mint a token via /login
-    keep working until they migrate.
-
-    Every token must carry the admin issuer and a `pwd` fingerprint that
-    matches the account's current password hash, so a password rotation
-    kills all pre-existing sessions on their next request."""
+    keep working until they migrate."""
     token: str | None = None
     cookie_token = request.cookies.get(ADMIN_COOKIE_NAME)
     if cookie_token:
@@ -150,17 +79,40 @@ async def get_current_admin(
         token = credentials.credentials
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-
-    payload = decode_admin_token(token)
     try:
-        admin_uuid = uuid.UUID(str(payload["admin_id"]))
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+        payload = jwt.decode(
+            token,
+            settings.ADMIN_JWT_SECRET,
+            algorithms=[settings.ADMIN_JWT_ALGORITHM],
+        )
+        if payload.get("type") != "admin":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token")
+        admin_id = payload.get("admin_id")
+        if admin_id is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+
+    # H-ADMIN-1: reject a token whose admin session was revoked (logout /
+    # password change). Tokens minted before sessions existed carry no sid and
+    # are grandfathered (they lapse within the 8h lifetime). Fail OPEN on an
+    # infra error so a Redis/DB blip can never lock every admin out.
+    sid = payload.get("sid")
+    if sid:
+        from packages.common.src.auth import _session_is_active
+        try:
+            _sess_ok = await _session_is_active(sid)
+        except Exception:
+            _sess_ok = True
+        if not _sess_ok:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked, please sign in again")
 
     result = await db.execute(
         select(User).where(
-            User.id == admin_uuid,
-            User.role.in_(["admin", "super_admin"]),
+            User.id == uuid.UUID(admin_id),
+            # White-label brokers authenticate against the same admin panel
+            # with a scoped, permission-gated view of THEIR user pool only.
+            User.role.in_(["admin", "super_admin", "broker"]),
             User.status == "active",
         )
     )
@@ -168,7 +120,16 @@ async def get_current_admin(
     if admin is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin user not found or inactive")
 
-    assert_token_matches_password(payload, admin)
+    if admin.role == "broker":
+        # A suspended tenant (rental lapsed, ToS breach, …) loses admin
+        # access immediately — checked per request, not just at login.
+        profile = await broker_tenancy.get_broker_profile(db, admin.id)
+        if profile is None or profile.is_suspended:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Broker account is suspended — contact the platform",
+            )
+
     return admin
 
 
@@ -186,6 +147,45 @@ async def require_super_admin(
     return admin
 
 
+# ── White-label broker permission mapping ─────────────────────────────
+# Maps the existing fine-grained permission strings onto the broker
+# tri-state sections (off/view/edit). A permission that maps to None is
+# NEVER available to brokers regardless of grants — platform-only
+# surfaces (config, banks, banners, IB, social, settings, employees…).
+# Rule of thumb: ".view" needs VIEW, any mutation needs EDIT, and the
+# target row must additionally sit inside the broker's pool (enforced
+# by the scoped routes via broker_scope_ids / assert_broker_scope).
+_BROKER_SECTION_MAP: dict[str, str | None] = {
+    "users": "users",
+    "kyc": "kyc",
+    "deposits": "deposits",
+    "withdrawals": "withdrawals",
+    "trades": "trades",
+    "positions": "trades",
+    "orders": "trades",
+    "transactions": "transactions",
+}
+
+# Mutations too destructive to ever delegate to a tenant, even at EDIT.
+_BROKER_DENIED_PERMISSIONS = {
+    "users.delete", "users.impersonate", "users.kill_switch",
+    "trades.create", "trades.manage",
+}
+
+
+def _broker_allows(profile: BrokerProfile | None, permission: str) -> bool:
+    if permission in _BROKER_DENIED_PERMISSIONS:
+        return False
+    section_key, _, action = permission.partition(".")
+    section = _BROKER_SECTION_MAP.get(section_key)
+    if section is None:
+        return False
+    needed = PERMISSION_VIEW if action == "view" else PERMISSION_EDIT
+    return permission_at_least(
+        broker_tenancy.broker_permission_level(profile, section), needed
+    )
+
+
 def require_permission(permission: str):
     """FastAPI dependency factory that checks if the current admin has the required permission."""
     async def _check(
@@ -199,24 +199,25 @@ def require_permission(permission: str):
         if admin.role == "super_admin":
             return admin
 
+        if admin.role == "broker":
+            profile = await broker_tenancy.get_broker_profile(db, admin.id)
+            if _broker_allows(profile, permission):
+                return admin
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission '{permission}' not granted to your broker account",
+            )
+
         result = await db.execute(
             select(Employee).where(Employee.user_id == admin.id, Employee.is_active == True)
         )
         employee = result.scalar_one_or_none()
-        if employee is None:
-            # A role="admin" user with no employees row used to be treated as
-            # a "legacy full admin" and bypassed every permission check — any
-            # path that created an admin user without an employee record
-            # silently granted god mode. Deny now; log loudly so a genuinely
-            # legacy account is easy to diagnose and fix (a super_admin can
-            # recreate it from the Employees page, which writes both rows).
-            logger.warning(
-                "admin user %s (role=admin) has no active employees row — "
-                "denied '%s'. Create an employee record for this account "
-                "via the Employees page to restore access.",
-                admin.id, permission,
-            )
-        else:
+        # C-ADMIN-2: no "role=admin without an ACTIVE employees row = full
+        # admin" fallthrough. Such a user now gets 403; access requires an
+        # active employees row that grants the permission (or super_admin,
+        # handled above). See docs/audit/REMEDIATION.md for the query that
+        # finds any role='admin' users left without an employees row.
+        if employee is not None:
             role_perms = EMPLOYEE_ROLE_PERMISSIONS.get(employee.role, set())
             extra = set(employee.extra_permissions or [])
             effective = role_perms | extra
@@ -228,6 +229,52 @@ def require_permission(permission: str):
             detail=f"Permission '{permission}' required",
         )
     return _check
+
+
+# ── White-label pool scoping ──────────────────────────────────────────
+
+def require_platform_permission(permission: str):
+    """Like require_permission, but NEVER satisfied by a broker account —
+    for platform-wide surfaces (A/B book management, LP settings) that
+    share permission strings with tenant-scoped pages but must stay the
+    platform's alone."""
+    inner = require_permission(permission)
+
+    async def _check(admin: User = Depends(inner)) -> User:
+        if admin.role == "broker":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This section is platform-only",
+            )
+        return admin
+    return _check
+
+
+async def broker_scope_ids(
+    admin: User, db: AsyncSession
+) -> list[uuid.UUID] | None:
+    """None = unscoped (platform admins keep their existing full view).
+    For a broker actor: the explicit list of client user ids in their
+    pool (subtree incl. sub-brokers' clients). An empty pool returns a
+    sentinel list with one impossible id so callers' IN() filters match
+    nothing instead of everything."""
+    if admin.role != "broker":
+        return None
+    ids = await broker_tenancy.scoped_client_ids(db, admin)
+    return ids or [uuid.UUID(int=0)]
+
+
+async def assert_broker_scope(
+    admin: User, target_user_id: uuid.UUID, db: AsyncSession
+) -> User:
+    """403s when a broker actor targets a user outside their pool.
+    Platform admins pass through unchanged."""
+    try:
+        return await broker_tenancy.assert_user_in_broker_scope(db, admin, target_user_id)
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 
 
 async def write_audit_log(

@@ -9,38 +9,24 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.common.src.config import get_settings
 from packages.common.src.models import User, TradingAccount, Deposit, Withdrawal, Transaction, BonusOffer
 from packages.common.src.notify import create_notification
+from packages.common.src.email_branding import apply_email_brand
 from packages.common.src.admin_schemas import DepositOut, WithdrawalOut, PaginatedResponse
+from packages.common.src.path_safety import PathTraversalError, safe_join_under_base
+from packages.common.src.withdrawal_limits import available_to_withdraw
 from dependencies import write_audit_log
 
-
-def _resolve_stored_upload(raw: str) -> Path:
-    """Resolve a DB-stored upload path and require it to live under
-    WALLET_UPLOAD_ROOT.
-
-    Deposit.screenshot_url can arrive from a *request field* on the generic
-    deposit route (not only from the gateway's own upload writer), so serving
-    it with a bare Path() would let a crafted row make the admin API stream
-    an arbitrary server file (/etc/passwd, .env, ...). 404 on escape — same
-    contract as packages.common.path_safety.
-    """
-    root_raw = (get_settings().WALLET_UPLOAD_ROOT or "").strip() or "uploads/wallet"
-    root = Path(root_raw)
-    if not root.is_absolute():
-        root = Path.cwd() / root
-    root = root.resolve()
-
-    p = Path(str(raw))
-    if not p.is_absolute():
-        p = Path.cwd() / p
-    p = p.resolve()
-    try:
-        p.relative_to(root)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-    return p
+# C-ADMIN-1: only proof/QR image + PDF uploads may ever be served back, and each
+# with its real content type (never a generic octet-stream that a browser might
+# mishandle, nor an arbitrary extension a traversal could smuggle in).
+_DOWNLOAD_MEDIA_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".pdf": "application/pdf",
+}
 
 
 def _deposit_to_out(d: Deposit, user: User = None) -> DepositOut:
@@ -83,8 +69,12 @@ def _withdrawal_to_out(w: Withdrawal, user: User = None) -> WithdrawalOut:
     )
 
 
-async def list_pending_deposits(page: int, per_page: int, db: AsyncSession):
+async def list_pending_deposits(page: int, per_page: int, db: AsyncSession,
+                                user_ids: list | None = None):
     query = select(Deposit).where(Deposit.status == "pending")
+    # White-label pool scoping (broker actors); None = unscoped.
+    if user_ids is not None:
+        query = query.where(Deposit.user_id.in_(user_ids))
     count_q = select(func.count()).select_from(query.subquery())
     total = (await db.execute(count_q)).scalar() or 0
 
@@ -104,8 +94,11 @@ async def list_pending_deposits(page: int, per_page: int, db: AsyncSession):
     return PaginatedResponse(items=items, total=total, page=page, per_page=per_page)
 
 
-async def list_pending_withdrawals(page: int, per_page: int, db: AsyncSession):
+async def list_pending_withdrawals(page: int, per_page: int, db: AsyncSession,
+                                   user_ids: list | None = None):
     query = select(Withdrawal).where(Withdrawal.status == "pending")
+    if user_ids is not None:
+        query = query.where(Withdrawal.user_id.in_(user_ids))
     count_q = select(func.count()).select_from(query.subquery())
     total = (await db.execute(count_q)).scalar() or 0
 
@@ -126,8 +119,11 @@ async def list_pending_withdrawals(page: int, per_page: int, db: AsyncSession):
 async def list_all_deposits(
     page: int, per_page: int, status: str | None, db: AsyncSession,
     user_id: uuid.UUID | None = None,
+    user_ids: list | None = None,
 ):
     query = select(Deposit)
+    if user_ids is not None:
+        query = query.where(Deposit.user_id.in_(user_ids))
     # Optional per-user filter for the user-detail ledger page.
     if user_id is not None:
         query = query.where(Deposit.user_id == user_id)
@@ -155,8 +151,11 @@ async def list_all_deposits(
 async def list_all_withdrawals(
     page: int, per_page: int, status: str | None, db: AsyncSession,
     user_id: uuid.UUID | None = None,
+    user_ids: list | None = None,
 ):
     query = select(Withdrawal)
+    if user_ids is not None:
+        query = query.where(Withdrawal.user_id.in_(user_ids))
     if user_id is not None:
         query = query.where(Withdrawal.user_id == user_id)
     if status and status != "all":
@@ -250,7 +249,7 @@ async def set_payment_link(
         from packages.common.src.email_templates.base import render_layout
         from packages.common.src.config import get_settings as _gs
         if smtp_configured() and user_row and user_row.email:
-            trader_app_url = (_gs().TRADER_APP_URL or "https://trade.powertradefx.com").rstrip("/")
+            trader_app_url = (_gs().TRADER_APP_URL or "https://trade.swisscresta.com").rstrip("/")
             body_html = f"""
             <p>We've reviewed your deposit request and attached a payment link below.
             Click through to complete payment with your bank or card. Once you've paid,
@@ -269,7 +268,7 @@ async def set_payment_link(
             )
             fire_and_forget(send_email(
                 user_row.email,
-                "Your PowerTradeFX deposit payment link",
+                "Your SwissCresta deposit payment link",
                 html,
             ))
     except Exception as e:  # pragma: no cover - email path is best-effort
@@ -365,6 +364,20 @@ async def approve_deposit(
             )
         )
 
+    # CPA to the referring IB, if their plan carries one. This is the only
+    # trigger for it: the commission engine was previously only ever called
+    # from the fill path, so IBCommissionPlan.cpa_per_deposit could be set in
+    # admin and would never pay anything. Charged once per referred trader.
+    # Best-effort — a CPA problem must never block crediting a deposit.
+    try:
+        from packages.common.src.ib_commission import distribute_ib_cpa
+        await distribute_ib_cpa(db, deposit.user_id, deposit.amount)
+    except Exception as _cpa_exc:
+        import logging as _lg
+        _lg.getLogger("admin-deposits").error(
+            "IB CPA accrual failed for deposit %s: %s", deposit.id, _cpa_exc
+        )
+
     bonus_msg = ""
     applied_bonuses: list[tuple[str, Decimal]] = []
     now = datetime.utcnow()
@@ -436,8 +449,9 @@ async def approve_deposit(
             render_deposit_confirmed, render_bonus_credited,
         )
         from packages.common.src.config import get_settings as _get_settings
+        await apply_email_brand(db, user_row)
         if smtp_configured() and user_row.email:
-            app_url = (_get_settings().TRADER_APP_URL or "https://trade.powertradefx.com")
+            app_url = (_get_settings().TRADER_APP_URL or "https://trade.swisscresta.com")
             subject, html, text = render_deposit_confirmed(
                 first_name=user_row.first_name,
                 amount=deposit.amount,
@@ -469,7 +483,11 @@ async def reject_deposit(
     deposit_id: uuid.UUID, reason: str | None,
     admin_id: uuid.UUID, ip_address: str | None, db: AsyncSession,
 ) -> dict:
-    result = await db.execute(select(Deposit).where(Deposit.id == deposit_id))
+    # Phase 3: lock the row like approve_deposit does, so a reject can't race a
+    # concurrent approve/auto-approve (both passing the pending check).
+    result = await db.execute(
+        select(Deposit).where(Deposit.id == deposit_id).with_for_update()
+    )
     deposit = result.scalar_one_or_none()
     if not deposit:
         raise HTTPException(status_code=404, detail="Deposit not found")
@@ -529,8 +547,23 @@ async def approve_withdrawal(
         account = acc_q.scalar_one_or_none()
         if account:
             if not already_debited:
-                if (account.balance or Decimal("0")) < withdrawal.amount:
-                    raise HTTPException(status_code=400, detail="Insufficient account balance")
+                # C-MONEY-3: withdrawable = balance − margin_used (capped by
+                # free_margin), NOT the raw balance — otherwise an admin approval
+                # could pull out funds collateralising open positions and push the
+                # account into a margin deficit. Same rule as the user-facing
+                # withdrawal paths (account row is locked above, so this is
+                # consistent with the debit).
+                avail = available_to_withdraw(
+                    "trading",
+                    balance=account.balance,
+                    margin_used=account.margin_used,
+                    free_margin=account.free_margin,
+                )
+                if avail < withdrawal.amount:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Insufficient withdrawable balance — funds backing open positions cannot be withdrawn",
+                    )
                 account.balance = (account.balance or Decimal("0")) - withdrawal.amount
                 account.equity = account.balance + (account.credit or Decimal("0"))
                 account.free_margin = account.equity - (account.margin_used or Decimal("0"))
@@ -610,6 +643,7 @@ async def approve_withdrawal(
                 acct = withdrawal.bank_details.get("account_number") or ""
                 if acct:
                     destination_str = f"Bank ****{str(acct)[-4:]}"
+            await apply_email_brand(db, u)
             subject, html, text = render_withdrawal_approved(
                 first_name=u.first_name,
                 amount=withdrawal.amount,
@@ -617,7 +651,7 @@ async def approve_withdrawal(
                 method=withdrawal.method or "Manual",
                 destination=destination_str,
                 request_id=str(withdrawal.id),
-                trader_app_url=(_gs().TRADER_APP_URL or "https://trade.powertradefx.com"),
+                trader_app_url=(_gs().TRADER_APP_URL or "https://trade.swisscresta.com"),
             )
             fire_and_forget(send_email(u.email, subject, html, text=text))
     except Exception as _e:
@@ -727,13 +761,14 @@ async def reject_withdrawal(
         from packages.common.src.config import get_settings as _gs
         u = (await db.execute(select(User).where(User.id == withdrawal.user_id))).scalar_one_or_none()
         if smtp_configured() and u and u.email:
+            await apply_email_brand(db, u)
             subject, html, text = render_withdrawal_rejected(
                 first_name=u.first_name,
                 amount=withdrawal.amount,
                 currency="USD",
                 reason=reason_str or None,
                 request_id=str(withdrawal.id),
-                trader_app_url=(_gs().TRADER_APP_URL or "https://trade.powertradefx.com"),
+                trader_app_url=(_gs().TRADER_APP_URL or "https://trade.swisscresta.com"),
             )
             fire_and_forget(send_email(u.email, subject, html, text=text))
     except Exception as _e:
@@ -832,16 +867,52 @@ async def mark_withdrawal_paid(
     return {"message": "Withdrawal marked as paid", "tx_hash": tx_hash}
 
 
+def _uploads_root() -> Path:
+    from packages.common.src.config import get_settings
+    # e.g. WALLET_UPLOAD_ROOT=/app/uploads/wallet → base /app/uploads covers
+    # wallet/, qr/, deposits/, withdrawals/ … under one confinement root.
+    return Path(
+        get_settings().WALLET_UPLOAD_ROOT.strip() or "uploads/wallet"
+    ).resolve().parent
+
+
+def _safe_upload_path(stored: str) -> Path:
+    """Resolve a stored upload path, confine it strictly under the uploads root
+    via the shared safe_join_under_base helper, and require a served-file type.
+
+    SECURITY (C-ADMIN-1): deposit `screenshot_url` and withdrawal QR paths can be
+    client-influenced. Passing them straight to Path()/FileResponse let a crafted
+    absolute or ``..`` value make the admin server read ARBITRARY files. We reduce
+    the value to its components under the uploads root and re-join them one
+    segment at a time (each rejected if it contains ``/``, ``\\`` or ``..``), then
+    require an allow-listed image/PDF extension; anything else is 404.
+    """
+    uploads_root = _uploads_root()
+    raw = Path(stored)
+    try:
+        rel = raw.resolve().relative_to(uploads_root) if raw.is_absolute() else raw
+        p = safe_join_under_base(uploads_root, *rel.parts)
+    except (ValueError, PathTraversalError):
+        raise HTTPException(status_code=404, detail="File not found")
+    if p.suffix.lower() not in _DOWNLOAD_MEDIA_TYPES:
+        raise HTTPException(status_code=404, detail="File not found")
+    return p
+
+
+def _serve(p: Path) -> FileResponse:
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="File missing on server")
+    media_type = _DOWNLOAD_MEDIA_TYPES.get(p.suffix.lower(), "application/octet-stream")
+    return FileResponse(str(p), filename=p.name, media_type=media_type)
+
+
 async def download_deposit_screenshot(deposit_id: uuid.UUID, db: AsyncSession):
     """Serve manual deposit proof file (same filesystem path gateway wrote)."""
     result = await db.execute(select(Deposit).where(Deposit.id == deposit_id))
     deposit = result.scalar_one_or_none()
     if not deposit or not deposit.screenshot_url:
         raise HTTPException(status_code=404, detail="Screenshot not found")
-    p = _resolve_stored_upload(deposit.screenshot_url)
-    if not p.is_file():
-        raise HTTPException(status_code=404, detail="File missing on server")
-    return FileResponse(str(p), filename=p.name, media_type="application/octet-stream")
+    return _serve(_safe_upload_path(deposit.screenshot_url))
 
 
 async def download_withdrawal_payout_qr(withdrawal_id: uuid.UUID, db: AsyncSession):
@@ -853,10 +924,7 @@ async def download_withdrawal_payout_qr(withdrawal_id: uuid.UUID, db: AsyncSessi
     raw = w.bank_details.get("user_payout_qr_path") if isinstance(w.bank_details, dict) else None
     if not raw:
         raise HTTPException(status_code=404, detail="No payout QR on file")
-    p = _resolve_stored_upload(raw)
-    if not p.is_file():
-        raise HTTPException(status_code=404, detail="File missing on server")
-    return FileResponse(str(p), filename=p.name, media_type="application/octet-stream")
+    return _serve(_safe_upload_path(str(raw)))
 
 
 async def approve_with_razorpay(

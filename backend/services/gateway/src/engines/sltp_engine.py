@@ -21,6 +21,7 @@ from packages.common.src.models import (
 from packages.common.src.notify import create_notification
 from packages.common.src import corecen_trade_client
 from packages.common.src.engine_lock import engine_lock
+from packages.common.src.row_locks import lock_account
 from ..services import wallet_service
 
 logger = logging.getLogger("gateway.sltp")
@@ -68,9 +69,9 @@ class SLTPEngine:
     async def _load_prices(self):
         """Load latest prices directly from Redis keys instead of pubsub."""
         try:
-            # SCAN, not KEYS — this runs every second, and KEYS is an O(N)
-            # blocking sweep of the whole keyspace (market-data already uses
-            # scan_iter for the same job).
+            # Phase 3: SCAN, not KEYS. KEYS is O(N) over the entire keyspace and
+            # blocks the single-threaded Redis for every SL/TP tick; scan_iter
+            # walks the keyspace in small cursored batches without blocking.
             keys = [k async for k in redis_client.scan_iter(match="tick:*", count=500)]
             if not keys:
                 return
@@ -133,20 +134,47 @@ class SLTPEngine:
                 ask = Decimal(str(tick["ask"]))
                 side = _side_val(pos.side)
 
+                # Trigger on the MID, never the spread-adjusted bid/ask. bid/ask
+                # move with the platform spread, so triggering on them let a
+                # spread change — including an admin widening the spread while
+                # the market itself never moved — fire a user's SL/TP at a level
+                # the real market never reached. The mid is the true market
+                # reference, so an SL/TP now fires only on genuine price
+                # movement. Fills still book at the SL/TP level itself (below),
+                # so the trader is never closed at a worse price than their own
+                # level. (Same principle as the risk engine's mid-based
+                # stop-out: an artificial spread must not auto-close a trade.)
+                mid = (bid + ask) / Decimal("2")
+
                 triggered = None
 
+                # Trigger purely on side + level. SL and TP are already
+                # distinct fields, so the direction is unambiguous without
+                # comparing to the open price.
+                #
+                # The old code guarded each with `sl < open_price` /
+                # `tp > open_price`. That silently broke every stop moved into
+                # profit — a break-even or trailing SL sits ABOVE entry on a
+                # buy, so `sl < open_price` was false and the stop NEVER fired
+                # even as price fell back through it. set-time validation
+                # (trading_service.check_sltp_levels) deliberately validates
+                # against the CURRENT price, not the open, precisely to allow
+                # those stops — so the trigger side must match, or a level the
+                # platform accepts can never execute. It also guarantees a level
+                # is never already-through when set, so comparing by side alone
+                # here cannot fire one prematurely.
                 if pos.stop_loss:
                     sl = Decimal(str(pos.stop_loss))
-                    if side == "buy" and sl < pos.open_price and bid <= sl:
+                    if side == "buy" and mid <= sl:
                         triggered = "sl"
-                    elif side == "sell" and sl > pos.open_price and ask >= sl:
+                    elif side == "sell" and mid >= sl:
                         triggered = "sl"
 
                 if not triggered and pos.take_profit:
                     tp = Decimal(str(pos.take_profit))
-                    if side == "buy" and tp > pos.open_price and bid >= tp:
+                    if side == "buy" and mid >= tp:
                         triggered = "tp"
-                    elif side == "sell" and tp < pos.open_price and ask <= tp:
+                    elif side == "sell" and mid <= tp:
                         triggered = "tp"
 
                 if triggered:
@@ -203,10 +231,10 @@ class SLTPEngine:
         pos.closed_at = datetime.utcnow()
         pos.comment = f"Auto-closed by {reason.upper()}"
 
-        acct_result = await db.execute(
-            select(TradingAccount).where(TradingAccount.id == pos.account_id)
-        )
-        account = acct_result.scalar_one_or_none()
+        # Lock the account row (FOR UPDATE) before mutating balance — otherwise a
+        # concurrent close on the same account (manual close, another SL/TP, or a
+        # stop-out) can lose-update the balance. Position is already locked above.
+        account = await lock_account(db, pos.account_id)
         if account:
             margin_release = (pos.lots * contract_size * pos.open_price) / Decimal(str(account.leverage))
             account.balance += profit

@@ -1,36 +1,36 @@
 'use client';
 
-import Link from 'next/link';
-import Image from 'next/image';
-
 import { useEffect, useState, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { clsx } from 'clsx';
-import { CandlestickChart, List, Minimize2, Minus, Plus, Search, X } from 'lucide-react';
-import { Badge, Button, EmptyState, Input } from '@/components/ui';
+import '@/styles/crextio.css';
+import { CandlestickChart, Home, List, Minimize2, Search, Wallet, X } from 'lucide-react';
 import { useUIStore } from '@/stores/uiStore';
 import { TERMINAL_RESIZE, maxBottomPanelHeightPx } from '@/lib/terminalLayout';
 import PanelResizeHandle from '@/components/trading/PanelResizeHandle';
 import { useTradingStore, InstrumentInfo } from '@/stores/tradingStore';
+import { useWarmTheme } from '@/stores/warmThemeStore';
 import toast from 'react-hot-toast';
 import { sounds, unlockAudio } from '@/lib/sounds';
 import { getMarketStatus } from '@/lib/marketHours';
 import { setPersistedTradingAccountId, tradingTerminalUrl } from '@/lib/tradingNav';
 import { wsManager } from '@/lib/ws/wsManager';
 import Watchlist from '@/components/trading/Watchlist';
-import InstrumentsTable from '@/components/trading/InstrumentsTable';
-import DraggableOrderModal from '@/components/trading/DraggableOrderModal';
 import OrderPanel from '@/components/trading/OrderPanel';
+import ChartExitsPanel from '@/components/trading/ChartExitsPanel';
 import RiskCalculator from '@/components/trading/RiskCalculator';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import PositionsPanel from '@/components/trading/PositionsPanel';
 import { ActiveAccountBadge } from '@/components/trading/ActiveAccountBadge';
 import TerminalLeftRail, { type TerminalSpaceId } from '@/components/trading/TerminalLeftRail';
+import TerminalTicker from '@/components/trading/TerminalTicker';
+import AppNavbar from '@/components/layout/AppNavbar';
 
 const TradingViewChart = dynamic(() => import('@/components/charts/TradingViewChart'), { ssr: false });
 import { ChartErrorBoundary } from '@/components/charts/ChartErrorBoundary';
-const TradingViewNewsTimeline = dynamic(() => import('@/components/charts/TradingViewNewsTimeline'), {
+import AnimatedPrice from '@/components/ui/AnimatedPrice';
+const TerminalNewsPanel = dynamic(() => import('@/components/trading/TerminalNewsPanel'), {
   ssr: false,
 });
 
@@ -74,8 +74,22 @@ export default function TradingTerminalPage() {
   const [terminalCalcOpen, setTerminalCalcOpen] = useState(false);
   // The Buy/Sell order panel now lives in a movable floating window instead
   // of a pinned right column, so the chart can be full-width.
-  const [orderModalOpen, setOrderModalOpen] = useState(false);
-  const openOrderModal = useCallback(() => setOrderModalOpen(true), []);
+  // Fixed right sidebar (Markets + Trade stacked). Not resizable, not
+  // draggable — the old floating order window is gone.
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // One panel at a time: Markets (instrument list) OR Trade (order ticket).
+  const [sidebarView, setSidebarView] = useState<'markets' | 'trade'>('trade');
+  const openOrderModal = useCallback(() => { setSidebarView('trade'); setSidebarOpen(true); }, []);
+  // Chart-driven review (TP/SL drag or ✕ on the position line) takes over the
+  // sidebar — TradingView-style "Exits" panel where the order ticket sits.
+  const chartReview = useTradingStore((s) => !!(s.chartExitsDraft || s.chartCloseRequest));
+  // Follow the shared light/dark toggle (AppNavbar sun/moon, persisted per
+  // browser) like DashboardShell does — the terminal used to pin itself to
+  // the dark token set, so the toggle appeared but did nothing here.
+  const warmDark = useWarmTheme((st) => st.dark);
+  useEffect(() => {
+    if (chartReview) { setSidebarView('trade'); setSidebarOpen(true); }
+  }, [chartReview]);
 
   const snapshotLayout = useCallback(() => {
     const s = useUIStore.getState();
@@ -221,11 +235,12 @@ export default function TradingTerminalPage() {
     setChartExpanded(false);
     setTerminalCalcOpen(false);
     setTerminalMarketsOpen(true);
+    setSidebarView('markets');
+    setSidebarOpen(true);
   }, [terminalMarketsOpen, terminalNewsOpen, chartExpanded, terminalCalcOpen, setTerminalMarketsOpen, setTerminalNewsOpen, resetAllPanels]);
 
   const onPanelsSelectOrder = useCallback(() => {
-    // The order panel is a floating window now — the rail's "Order" button
-    // closes any side panel and pops the order window.
+    // Rail "Order" button → the Trade panel in the right sidebar.
     resetAllPanels();
     openOrderModal();
   }, [resetAllPanels, openOrderModal]);
@@ -405,21 +420,12 @@ export default function TradingTerminalPage() {
         });
     };
 
-    /** Mobile sub-view header: back-to-chart link, centred title, spacer. */
-    const mobileViewHeader = (title: string) => (
-      <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-border-primary bg-bg-secondary">
-        <Button variant="link" size="xs" onClick={() => router.push(tradingTerminalUrl(accountId, { view: 'chart' }))}>
-          ← Chart
-        </Button>
-        <span className="text-xs font-bold text-text-primary uppercase tracking-wider">{title}</span>
-        <span className="w-14" aria-hidden />
-      </div>
-    );
-
     return (
       <div
+        data-theme={warmDark ? 'dark' : 'light'}
         className={clsx(
-          'flex-1 flex flex-col overflow-hidden min-h-0 scrollbar-none bg-bg-base',
+          'theme-warm font-crextio flex-1 flex flex-col overflow-hidden min-h-0 scrollbar-none bg-bg-base',
+          warmDark && 'theme-warm-dark',
           // Only the chart view has the fixed Sell/Lots/Buy bar at the bottom;
           // reserving the space in the other views just leaves a dead band.
           mobileView === 'chart'
@@ -427,21 +433,27 @@ export default function TradingTerminalPage() {
             : 'pb-[env(safe-area-inset-bottom,0px)]',
         )}
       >
-        {/* Slim mobile home bar — the legacy top navbar was deleted in the
-            shell unification; the terminal only needs a way back home. */}
-        <div className="lg:hidden flex items-center gap-2 px-3 h-11 border-b border-border-primary bg-bg-secondary shrink-0">
-          <Link href="/dashboard" aria-label="Back to dashboard" className="flex items-center gap-2">
-            <Image src="/marketing/powertradefx_fevicon.png" alt="" width={22} height={22} className="rounded-md" />
-            <span className="text-sm font-semibold text-text-primary">Dashboard</span>
-          </Link>
-        </div>
+        {/* Top app navbar — provides the hamburger (three-bar) icon that
+            opens the navigation sidebar drawer (close via the same toggle
+            or the backdrop). Mobile terminal otherwise has no app nav. */}
+        <AppNavbar />
         <div className="flex-1 min-h-0 overflow-hidden relative flex flex-col scrollbar-none">
           {mobileView === 'watchlist' && <Watchlist />}
           {mobileView === 'news' && (
-            <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-bg-base">
-              {mobileViewHeader('Live news')}
+            <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-bg-primary">
+              <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-border-glass bg-bg-secondary">
+                <button
+                  type="button"
+                  onClick={() => router.push(tradingTerminalUrl(accountId, { view: 'chart' }))}
+                  className="text-xs font-semibold text-buy"
+                >
+                  ← Chart
+                </button>
+                <span className="text-xs font-bold text-text-primary uppercase tracking-wider">Market news</span>
+                <span className="w-14" aria-hidden />
+              </div>
               <div className="flex-1 min-h-0">
-                <TradingViewNewsTimeline />
+                <TerminalNewsPanel />
               </div>
             </div>
           )}
@@ -449,87 +461,74 @@ export default function TradingTerminalPage() {
             <div className="h-full flex flex-col min-h-0">
               {/* Dynamic Chart Tabs Header */}
               {!chartExpanded ? (
-              <div className="flex items-center gap-1.5 px-3 py-2 bg-bg-secondary border-b border-border-primary overflow-x-auto no-scrollbar scrollbar-none">
+              <div className="flex items-center gap-1.5 px-3 py-2 bg-bg-secondary border-b border-border-glass overflow-x-auto no-scrollbar scrollbar-none">
                 {chartTabs.map((symbol) => (
                   <button
                     key={symbol}
-                    type="button"
                     onClick={() => setSelectedSymbol(symbol)}
-                    aria-current={symbol === selectedSymbol ? 'true' : undefined}
                     className={clsx(
-                      'h-8 px-3 rounded-md text-xs font-bold font-mono transition-colors border whitespace-nowrap flex items-center gap-2 group',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45',
+                      'px-4 py-1.5 rounded-xl text-xs font-extrabold transition-all border whitespace-nowrap flex items-center gap-2 group',
                       symbol === selectedSymbol
-                        ? 'bg-card text-text-primary border-border-primary shadow-sm'
+                        ? 'bg-bg-primary text-text-primary border-border-glass shadow-sm'
                         : 'bg-transparent text-text-tertiary border-transparent hover:text-text-primary'
                     )}
                   >
                     {symbol}
-                    <span
-                      role="button"
-                      aria-label={`Close ${symbol} tab`}
+                    <div
                       onClick={(e) => removeTab(e, symbol)}
-                      className="p-0.5 rounded-sm hover:bg-danger/10 hover:text-danger transition-colors opacity-60 group-hover:opacity-100"
+                      className="p-0.5 rounded-md hover:bg-sell/10 hover:text-sell transition-colors opacity-60 group-hover:opacity-100"
                     >
-                      <X className="w-3.5 h-3.5" strokeWidth={3} aria-hidden />
-                    </span>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                    </div>
                   </button>
                 ))}
 
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  iconOnly
+                <button
+                  type="button"
                   onClick={() => { setMobileSymbolSearch(true); setMobileSearchQuery(''); setTimeout(() => mobileSearchRef.current?.focus(), 100); }}
-                  aria-label="Add symbol"
-                  className="shrink-0"
+                  className="shrink-0 w-10 h-[34px] flex items-center justify-center rounded-xl bg-bg-hover/80 text-text-primary border border-border-glass hover:bg-buy/10 transition-all active:scale-95"
                 >
-                  <Plus className="w-5 h-5" strokeWidth={2.5} aria-hidden />
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14" /></svg>
+                </button>
+                <button
+                  type="button"
                   onClick={() => router.push(tradingTerminalUrl(accountId, { view: 'news' }))}
-                  className="shrink-0 uppercase tracking-wide !text-xxs"
+                  className="shrink-0 px-3 h-[34px] rounded-xl bg-bg-hover/80 text-text-primary border border-border-glass text-[10px] font-extrabold uppercase tracking-wide hover:bg-buy/10 transition-all active:scale-95"
                 >
                   News
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
+                </button>
+                <button
+                  type="button"
                   onClick={() => router.push(tradingTerminalUrl(accountId, { view: 'order' }))}
-                  className="shrink-0 uppercase tracking-wide !text-xxs"
+                  className="shrink-0 px-3 h-[34px] rounded-xl bg-bg-hover/80 text-text-primary border border-border-glass text-[10px] font-extrabold uppercase tracking-wide hover:bg-accent/10 transition-all active:scale-95"
                   title="Open positions, pending orders, history"
                 >
                   Trades
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
+                </button>
+                <button
+                  type="button"
                   onClick={() => setMobileOrderTicket(true)}
-                  className="shrink-0 uppercase tracking-wide !text-xxs"
+                  className="shrink-0 px-3 h-[34px] rounded-xl bg-buy/10 text-buy border border-buy/30 text-[10px] font-extrabold uppercase tracking-wide hover:bg-buy/20 transition-all active:scale-95"
                   title="Full order ticket — market, limit, stop, SL/TP"
                 >
                   New order
-                </Button>
+                </button>
               </div>
               ) : null}
 
               {/* ── Full order ticket sheet (pending orders + SL/TP) ── */}
               {mobileOrderTicket && (
-                <div className="fixed inset-0 z-[95] flex flex-col bg-bg-base" role="dialog" aria-modal="true" aria-label="New order">
-                  <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-border-primary bg-bg-secondary">
+                <div className="fixed inset-0 z-[95] flex flex-col bg-bg-base">
+                  <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2.5 border-b border-border-glass bg-bg-secondary">
                     <span className="text-xs font-bold text-text-primary uppercase tracking-wider">New order</span>
-                    <Button
-                      variant="ghost"
-                      size="md"
-                      iconOnly
+                    <button
+                      type="button"
                       onClick={() => setMobileOrderTicket(false)}
                       aria-label="Close order ticket"
-                      className="-mr-1"
+                      className="p-2 -mr-1 rounded-lg text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
                     >
-                      <X className="w-5 h-5" aria-hidden />
-                    </Button>
+                      <X className="w-5 h-5" />
+                    </button>
                   </div>
                   <div className="flex-1 min-h-0 overflow-y-auto pb-[env(safe-area-inset-bottom,0px)]">
                     <OrderPanel onOrderPlaced={() => setMobileOrderTicket(false)} />
@@ -537,25 +536,60 @@ export default function TradingTerminalPage() {
                 </div>
               )}
 
+              {/* ── Exits / close review sheet ──
+                  Desktop shows this in the sidebar where the order ticket
+                  sits. Mobile has no sidebar, so without this sheet a level
+                  set from the chart had no Confirm button anywhere: the draft
+                  lived in client state only, never reached the server, never
+                  showed in Open Positions, and was lost on reload. It sits
+                  above the order-ticket sheet so a review always wins. */}
+              {chartReview && (
+                <div className="fixed inset-0 z-[96] flex flex-col bg-bg-base">
+                  <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2.5 border-b border-border-glass bg-bg-secondary">
+                    <span className="text-xs font-bold text-text-primary uppercase tracking-wider">Review</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const st = useTradingStore.getState();
+                        st.setChartExitsDraft(null);
+                        st.setChartCloseRequest(null);
+                        st.bumpChartLinesReset();
+                      }}
+                      aria-label="Discard review"
+                      className="p-2 -mr-1 rounded-lg text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-hidden pb-[env(safe-area-inset-bottom,0px)]">
+                    <ChartExitsPanel />
+                  </div>
+                </div>
+              )}
+
               {/* ── Mobile Symbol Search Overlay ── */}
               {mobileSymbolSearch && (
-                <div className="fixed inset-0 z-[90] flex flex-col bg-bg-base" role="dialog" aria-modal="true" aria-label="Search symbol">
+                <div className="fixed inset-0 z-[90] flex flex-col bg-bg-base">
                   {/* Search header */}
-                  <div className="shrink-0 flex items-center gap-2 px-3 py-3 border-b border-border-primary bg-bg-secondary">
-                    <div className="flex-1 min-w-0">
-                      <Input
+                  <div className="shrink-0 flex items-center gap-2 px-3 py-3 border-b border-border-glass bg-bg-secondary">
+                    <div className="relative flex-1 min-w-0">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-tertiary" />
+                      <input
                         ref={mobileSearchRef}
                         type="text"
-                        icon={<Search aria-hidden />}
                         value={mobileSearchQuery}
                         onChange={(e) => setMobileSearchQuery(e.target.value)}
                         placeholder="Search symbol..."
-                        aria-label="Search symbol"
+                        className="w-full pl-10 pr-3 py-2.5 text-sm rounded-xl border border-border-glass bg-bg-primary text-text-primary placeholder:text-text-tertiary outline-none focus:border-buy/50 focus:ring-1 focus:ring-buy/20"
                       />
                     </div>
-                    <Button variant="ghost" size="md" onClick={() => setMobileSymbolSearch(false)} className="shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setMobileSymbolSearch(false)}
+                      className="shrink-0 px-3 py-2.5 text-sm font-semibold text-text-secondary hover:text-text-primary transition-colors"
+                    >
                       Cancel
-                    </Button>
+                    </button>
                   </div>
 
                   {/* Filtered instrument list */}
@@ -567,11 +601,10 @@ export default function TradingTerminalPage() {
                       );
                       if (matched.length === 0 && q !== '') {
                         return (
-                          <EmptyState
-                            icon={<Search />}
-                            title="No symbols match"
-                            description={<>No symbols match &ldquo;{mobileSearchQuery}&rdquo;</>}
-                          />
+                          <div className="flex flex-col items-center justify-center py-20 gap-3">
+                            <Search className="w-10 h-10 text-text-tertiary/40" />
+                            <p className="text-sm text-text-tertiary">No symbols match &ldquo;{mobileSearchQuery}&rdquo;</p>
+                          </div>
                         );
                       }
                       return matched.map((inst: InstrumentInfo) => {
@@ -587,14 +620,14 @@ export default function TradingTerminalPage() {
                               setMobileSymbolSearch(false);
                             }}
                             className={clsx(
-                              'w-full flex items-center justify-between gap-3 px-4 py-3.5 text-left transition-colors border-b border-border-secondary',
-                              isInTabs ? 'bg-accent/10' : 'hover:bg-bg-hover active:bg-bg-active',
+                              'w-full flex items-center justify-between gap-3 px-4 py-3.5 text-left transition-colors',
+                              isInTabs ? 'bg-buy/[0.06]' : 'hover:bg-bg-hover active:bg-buy/5',
                             )}
                           >
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
                                 <span className="text-base font-bold text-text-primary font-mono">{inst.symbol}</span>
-                                {isInTabs && <Badge variant="accent" size="sm">Open</Badge>}
+                                {isInTabs && <span className="text-buy text-[10px] font-bold">OPEN</span>}
                               </div>
                               <p className="text-xs text-text-tertiary mt-0.5 truncate uppercase tracking-wide">
                                 {inst.segment || ''}
@@ -602,12 +635,10 @@ export default function TradingTerminalPage() {
                             </div>
                             <div className="shrink-0 flex items-center gap-3">
                               {tick ? (
-                                <span className="text-sm font-mono font-bold tabular-nums text-text-primary">
-                                  {tick.bid.toFixed(inst.digits ?? 5)}
-                                </span>
+                                <AnimatedPrice value={tick.bid} digits={inst.digits ?? 5} className="text-sm font-mono font-bold tabular-nums text-text-primary" />
                               ) : null}
                               {!isInTabs && (
-                                <span className="text-accent text-xs font-semibold">+ Open</span>
+                                <span className="text-buy text-xs font-semibold">+ Open</span>
                               )}
                             </div>
                           </button>
@@ -619,29 +650,29 @@ export default function TradingTerminalPage() {
               )}
 
               {!chartExpanded && activeAccount ? (
-                <div className="sm:hidden shrink-0 px-3 py-1.5 border-b border-border-primary bg-bg-secondary">
+                <div className="sm:hidden shrink-0 px-3 py-1.5 border-b border-border-glass bg-bg-secondary/40">
                   <ActiveAccountBadge account={activeAccount} variant="compact" />
                 </div>
               ) : null}
 
               <div
                 className={clsx(
-                  'flex flex-col flex-1 min-h-0 overflow-hidden bg-bg-base',
+                  'flex flex-col flex-1 min-h-0 overflow-hidden bg-bg-primary',
                   chartExpanded &&
                     'fixed inset-0 z-[100] h-[100dvh] pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)]',
                 )}
               >
                 {chartExpanded ? (
-                  <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-border-primary bg-bg-secondary">
-                    <span className="text-sm font-bold text-text-primary truncate font-mono">{selectedSymbol || 'Chart'}</span>
-                    <Button
-                      variant="outline"
-                      size="sm"
+                  <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-border-glass bg-bg-secondary">
+                    <span className="text-sm font-bold text-text-primary truncate">{selectedSymbol || 'Chart'}</span>
+                    <button
+                      type="button"
                       onClick={() => setChartExpanded(false)}
-                      leftIcon={<Minimize2 className="w-4 h-4 shrink-0" aria-hidden />}
+                      className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-text-secondary border border-border-glass hover:bg-bg-hover hover:text-text-primary"
                     >
+                      <Minimize2 className="w-4 h-4 shrink-0" aria-hidden />
                       Close
-                    </Button>
+                    </button>
                   </div>
                 ) : null}
                 <div className="flex-1 min-h-0 min-w-0 overflow-hidden relative">
@@ -649,84 +680,92 @@ export default function TradingTerminalPage() {
                     {/* The mobile terminal has its own fixed Sell/Lots/Buy bar
                         below the chart — the on-chart quick-trade widget would
                         duplicate it and overlap the OHLC legend at 390px. */}
-                    <TradingViewChart showTradeWidget={false} />
+                    <TradingViewChart theme={warmDark ? 'dark' : 'light'} showTradeWidget={false} />
                   </ChartErrorBoundary>
                 </div>
               </div>
 
               {/* Refined Quick Trade Bottom Bar */}
-              <div className="fixed bottom-0 left-0 right-0 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] bg-bg-glass backdrop-blur-glass border-t border-border-primary z-50">
+              <div className="fixed bottom-0 left-0 right-0 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] bg-bg-secondary/95 backdrop-blur-xl border-t border-border-glass z-50">
                 {!mobileMarketStatus.isOpen && (
-                  <div className="mb-2 flex items-center gap-2 px-3 py-1.5 rounded-md bg-danger/10 border border-danger/20">
-                    <span className="text-xxs font-bold text-danger uppercase tracking-wider">● CLOSED</span>
-                    <span className="text-xxs text-danger truncate">{mobileMarketStatus.reason}</span>
+                  <div className="mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-sell/10 border border-sell/20">
+                    <span className="text-[9px] font-bold text-sell uppercase tracking-wider">● CLOSED</span>
+                    <span className="text-[10px] text-sell/80 truncate">{mobileMarketStatus.reason}</span>
                   </div>
                 )}
                 <div className="flex items-center gap-2 mt-1 h-[52px]">
-                   {/* SELL button — two-line content (side + live bid), so
-                       the height is forced to fill the bar. */}
-                   <Button
-                     variant="sell"
-                     size="lg"
+                   {/* SELL button */}
+                   <button
+                     type="button"
                      disabled={!mobileMarketStatus.isOpen}
                      onClick={() => placeMarketOrder('sell')}
-                     className="flex-1 !h-full flex-col !gap-0 min-w-0 uppercase tracking-[0.05em] font-black"
+                     className="flex-1 h-full bg-sell rounded-xl flex flex-col items-center justify-center shadow-lg shadow-sell/20 active:scale-[0.96] transition-transform duration-75 disabled:opacity-50 disabled:pointer-events-none min-w-0"
                    >
-                     <span className="text-md leading-tight">Sell</span>
-                     <span className="text-xxs font-mono font-bold leading-tight opacity-70 normal-case tracking-normal">{price?.bid.toFixed(digits) || '--'}</span>
-                   </Button>
+                     <span className="text-white text-[14px] font-black uppercase tracking-[0.05em]">Sell</span>
+                     <AnimatedPrice value={price?.bid} digits={digits} flash={false} lockWidth placeholder="--" className="text-white/70 text-[10px] font-mono font-bold leading-tight" />
+                   </button>
 
                    {/* Lot size controls — center */}
                    <div className="shrink-0 flex flex-col items-center">
-                      <span className="text-xxs font-bold text-text-tertiary uppercase tracking-wider leading-none mb-1">Lots</span>
+                      <span className="text-[8px] font-bold text-text-tertiary uppercase tracking-wider leading-none mb-1">Lots</span>
                       <div className="flex items-center gap-1">
-                         <Button variant="secondary" size="sm" iconOnly onClick={() => handleLotChange(-0.01)} aria-label="Decrease lots">
-                            <Minus className="w-3.5 h-3.5" strokeWidth={3} aria-hidden />
-                         </Button>
-                         <div className="w-16">
-                           <Input
-                             type="text"
-                             inputMode="decimal"
-                             size="md"
-                             numeric
-                             value={lotSize}
-                             onChange={(e) => {
-                               const v = e.target.value;
-                               if (v === '' || /^\d*\.?\d{0,2}$/.test(v)) setLotSize(v);
-                             }}
-                             onBlur={() => {
-                               const n = parseFloat(lotSize);
-                               if (!Number.isFinite(n) || n <= 0) setLotSize('0.01');
-                               else setLotSize(n.toFixed(2));
-                             }}
-                             className="text-center font-bold !px-1"
-                             aria-label="Lot size"
-                           />
-                         </div>
-                         <Button variant="secondary" size="sm" iconOnly onClick={() => handleLotChange(0.01)} aria-label="Increase lots">
-                            <Plus className="w-3.5 h-3.5" strokeWidth={3} aria-hidden />
-                         </Button>
+                         <button
+                           onClick={() => handleLotChange(-0.01)}
+                           className="w-8 h-8 flex items-center justify-center rounded-lg bg-bg-primary border border-border-glass text-text-primary active:scale-90 transition-transform"
+                         >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12h14"/></svg>
+                         </button>
+                         <input
+                           type="text"
+                           inputMode="decimal"
+                           value={lotSize}
+                           onChange={(e) => {
+                             const v = e.target.value;
+                             if (v === '' || /^\d*\.?\d{0,2}$/.test(v)) setLotSize(v);
+                           }}
+                           onBlur={() => {
+                             const n = parseFloat(lotSize);
+                             if (!Number.isFinite(n) || n <= 0) setLotSize('0.01');
+                             else setLotSize(n.toFixed(2));
+                           }}
+                           className="w-16 h-9 text-[15px] font-black font-mono text-center bg-bg-primary border-2 border-border-glass rounded-lg text-text-primary outline-none"
+                         />
+                         <button
+                           onClick={() => handleLotChange(0.01)}
+                           className="w-8 h-8 flex items-center justify-center rounded-lg bg-bg-primary border border-border-glass text-text-primary active:scale-90 transition-transform"
+                         >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 5v14M5 12h14"/></svg>
+                         </button>
                       </div>
                    </div>
 
                    {/* BUY button */}
-                   <Button
-                     variant="buy"
-                     size="lg"
+                   <button
+                     type="button"
                      disabled={!mobileMarketStatus.isOpen}
                      onClick={() => placeMarketOrder('buy')}
-                     className="flex-1 !h-full flex-col !gap-0 min-w-0 uppercase tracking-[0.05em] font-black"
+                     className="flex-1 h-full bg-buy rounded-xl flex flex-col items-center justify-center shadow-lg shadow-buy/20 active:scale-[0.96] transition-transform duration-75 disabled:opacity-50 disabled:pointer-events-none min-w-0"
                    >
-                     <span className="text-md leading-tight">Buy</span>
-                     <span className="text-xxs font-mono font-bold leading-tight opacity-70 normal-case tracking-normal">{price?.ask.toFixed(digits) || '--'}</span>
-                   </Button>
+                     <span className="text-white text-[14px] font-black uppercase tracking-[0.05em]">Buy</span>
+                     <AnimatedPrice value={price?.ask} digits={digits} flash={false} lockWidth placeholder="--" className="text-white/70 text-[10px] font-mono font-bold leading-tight" />
+                   </button>
                 </div>
               </div>
             </div>
           )}
           {mobileView === 'order' && (
-            <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-bg-base">
-              {mobileViewHeader('Trades')}
+            <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-bg-primary">
+              <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-border-glass bg-bg-secondary">
+                <button
+                  type="button"
+                  onClick={() => router.push(tradingTerminalUrl(accountId, { view: 'chart' }))}
+                  className="text-xs font-semibold text-buy"
+                >
+                  ← Chart
+                </button>
+                <span className="text-xs font-bold text-text-primary uppercase tracking-wider">Trades</span>
+                <span className="w-14" aria-hidden />
+              </div>
               <div className="flex-1 min-h-0 overflow-auto">
                 <PositionsPanel />
               </div>
@@ -737,13 +776,21 @@ export default function TradingTerminalPage() {
     );
   }
 
-  // The right column now hosts ONLY the Markets / News / Risk-Calculator
-  // panels. When none is open it collapses so the chart is full-width; the
-  // order panel is no longer here (it's the floating DraggableOrderModal).
-  const rightPanelOpen = terminalMarketsOpen || terminalNewsOpen || terminalCalcOpen;
+  // Right sidebar: Markets (top) + Trade (bottom) always; News / Risk
+  // Calculator temporarily take over the sidebar when opened from the rail.
+  const sidebarVisible = sidebarOpen && !chartExpanded;
 
   return (
-    <div className="flex-1 flex overflow-hidden min-h-0 relative pt-[env(safe-area-inset-top,0px)] bg-bg-base">
+    <div
+      data-theme={warmDark ? 'dark' : 'light'}
+      className={clsx(
+        'theme-warm font-crextio flex-1 flex overflow-hidden min-h-0 relative pt-[env(safe-area-inset-top,0px)] bg-bg-base',
+        warmDark && 'theme-warm-dark',
+      )}
+    >
+      {/* Full-screen chart: the rail is unmounted so the chart truly owns the
+          viewport — only the "Normal view" button (or Esc) brings it back. */}
+      {!chartExpanded && (
       <TerminalLeftRail
         activeSpace={activeSpace}
         onSpaceChange={applySpace}
@@ -761,37 +808,67 @@ export default function TradingTerminalPage() {
         terminalCalcOpen={terminalCalcOpen}
         onPanelsSelectCalc={onPanelsSelectCalc}
       />
+      )}
       <div
         ref={centerColumnRef}
         className="flex-1 flex flex-col overflow-hidden min-w-0 min-h-0 relative z-0"
       >
-        {/* Slim toolbar — the price-ticker cards are gone; only the panel
-            controls remain, right-aligned. */}
-        <div className="w-full shrink-0 border-b border-border-primary bg-bg-base flex items-center justify-end gap-2 px-2 py-1.5">
-          {/* Markets — opens the instruments list (full-height panel on
-              the right); chart + positions shrink to the left. Toggle. */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onPanelsSelectMarkets}
-            aria-pressed={terminalMarketsOpen}
-            className={clsx(terminalMarketsOpen && '!border-accent/60 !bg-accent/10 text-accent')}
-            title="Browse instruments"
-            leftIcon={<List className="w-4 h-4" aria-hidden />}
-          >
-            <span className="hidden sm:inline">Markets</span>
-          </Button>
-          {/* Trade — pops the movable order window. */}
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={openOrderModal}
-            title="Open the order ticket"
-            leftIcon={<CandlestickChart className="w-4 h-4" aria-hidden />}
-          >
-            <span className="hidden sm:inline">Trade</span>
-          </Button>
-        </div>
+        <TerminalTicker
+          rightSlot={
+            <>
+              {/* Home / Deposit — quick exits back to the dashboard and wallet. */}
+              <button
+                type="button"
+                onClick={() => router.push('/dashboard')}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[13px] font-bold border border-border-primary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors whitespace-nowrap"
+                title="Back to dashboard"
+              >
+                <Home className="w-4 h-4" aria-hidden />
+                <span className="hidden md:inline">Home</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push('/wallet')}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[13px] font-bold border border-border-primary text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors whitespace-nowrap"
+                title="Deposit / withdraw"
+              >
+                <Wallet className="w-4 h-4" aria-hidden />
+                <span className="hidden md:inline">Deposit</span>
+              </button>
+              {/* Markets — opens the instruments list (full-height panel on
+                  the right); chart + positions shrink to the left. Toggle. */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (sidebarOpen && sidebarView === 'markets') { setSidebarOpen(false); return; }
+                  resetAllPanels();
+                  setSidebarView('markets');
+                  setSidebarOpen(true);
+                }}
+                className={clsx(
+                  'inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-[13px] font-bold border transition-colors whitespace-nowrap',
+                  sidebarOpen && sidebarView === 'markets'
+                    ? 'bg-accent/20 border-accent/60 text-accent'
+                    : 'bg-accent/10 border-accent/40 text-accent hover:bg-accent/15',
+                )}
+                title="Browse all instruments"
+              >
+                <List className="w-4 h-4" aria-hidden />
+                <span className="hidden sm:inline">Markets</span>
+              </button>
+              {/* Trade — ensures the sidebar (with the order panel) is open. */}
+              <button
+                type="button"
+                onClick={() => { resetAllPanels(); setSidebarView('trade'); setSidebarOpen(true); }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-[13px] font-bold text-white bg-accent border border-accent hover:bg-accent/90 transition-colors whitespace-nowrap"
+                title="Open the order panel"
+              >
+                <CandlestickChart className="w-4 h-4" aria-hidden />
+                <span className="hidden sm:inline">Trade</span>
+              </button>
+            </>
+          }
+        />
         <div className="flex-1 min-h-0 flex overflow-hidden">
           {/* LEFT: chart + positions stacked. When a right panel (Markets /
               News / Calc) opens, this whole stack shrinks to the left and the
@@ -810,15 +887,15 @@ export default function TradingTerminalPage() {
                 <span className="text-xs font-semibold text-text-primary truncate">
                   {selectedSymbol ? `Chart — ${selectedSymbol}` : 'Chart'}
                 </span>
-                <span className="text-xxs text-text-tertiary hidden sm:inline">Esc — normal view</span>
-                <Button
-                  variant="outline"
-                  size="xs"
+                <span className="text-[10px] text-text-tertiary hidden sm:inline">Esc — normal view</span>
+                <button
+                  type="button"
                   onClick={() => setChartExpanded(false)}
-                  leftIcon={<Minimize2 className="w-3.5 h-3.5 shrink-0" aria-hidden />}
+                  className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold text-text-secondary border border-border-primary hover:bg-bg-hover hover:text-text-primary"
                 >
+                  <Minimize2 className="w-3.5 h-3.5 shrink-0" aria-hidden />
                   Normal view
-                </Button>
+                </button>
               </div>
             ) : null}
             <div className="flex-1 min-w-0 min-h-0 overflow-hidden relative">
@@ -827,7 +904,7 @@ export default function TradingTerminalPage() {
                   chart's own buttons. Collapse is via the header's "Normal view"
                   button / Esc when expanded. */}
               <ChartErrorBoundary>
-                <TradingViewChart onRequestFullscreen={enterFullscreen} />
+                <TradingViewChart theme={warmDark ? 'dark' : 'light'} onRequestFullscreen={enterFullscreen} />
               </ChartErrorBoundary>
             </div>
           </div>
@@ -850,18 +927,10 @@ export default function TradingTerminalPage() {
           </div>
           </div>{/* LEFT column (chart + positions) close */}
 
-          {rightPanelOpen && (
-            <>
-          <PanelResizeHandle
-            axis="vertical"
-            hitSize={TERMINAL_RESIZE.handleHitPx}
-            onDragStart={snapshotLayout}
-            onDrag={onChartRailDrag}
-          />
-
-          <div
-            className="shrink-0 flex flex-col h-full min-h-0 overflow-hidden bg-bg-base border-l border-border-primary"
-            style={{ width: opW }}
+          {sidebarVisible && (
+          <aside
+            className="shrink-0 w-[380px] h-full min-h-0 flex flex-col overflow-hidden bg-bg-base border-l border-border-primary"
+            aria-label="Markets and trade sidebar"
           >
             {terminalCalcOpen && !terminalNewsOpen ? (
               <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -869,60 +938,46 @@ export default function TradingTerminalPage() {
               </div>
             ) : terminalNewsOpen ? (
               <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-border-primary bg-bg-secondary">
-                  <Button
-                    variant="outline"
-                    size="xs"
-                    onClick={() => {
-                      setTerminalNewsOpen(false);
-                      setTerminalMarketsOpen(true);
-                    }}
-                    className="uppercase tracking-wide"
+                <div className="shrink-0 flex items-center gap-2 px-3 py-2.5 border-b border-border-primary bg-bg-secondary">
+                  <button
+                    type="button"
+                    onClick={() => { setTerminalNewsOpen(false); setTerminalMarketsOpen(true); }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-border-primary bg-card text-[11px] font-bold uppercase tracking-wide text-accent hover:bg-accent/10 hover:border-accent/40 transition-colors"
                   >
                     ← Markets
-                  </Button>
-                  <span className="text-xxs font-bold uppercase tracking-[0.12em] text-text-tertiary">Live News</span>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => {
-                      setTerminalNewsOpen(false);
-                      setTerminalMarketsOpen(false);
-                    }}
-                    className="ml-auto"
+                  </button>
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-text-tertiary">Market News</span>
+                  <button
+                    type="button"
+                    onClick={() => { setTerminalNewsOpen(false); setTerminalMarketsOpen(false); }}
+                    className="ml-auto px-3 py-1.5 rounded-full border border-border-primary bg-card text-[11px] font-semibold text-text-secondary hover:text-text-primary hover:border-border-secondary transition-colors"
                   >
                     Close
-                  </Button>
+                  </button>
                 </div>
                 <div className="flex-1 min-h-0">
-                  <TradingViewNewsTimeline />
+                  <TerminalNewsPanel />
                 </div>
               </div>
             ) : (
-              <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                <InstrumentsTable
-                  onExitMarkets={() => {
-                    // Picking an instrument closes the markets panel and
-                    // pops the movable order window for that symbol.
-                    setTerminalMarketsOpen(false);
-                    setTerminalNewsOpen(false);
-                    openOrderModal();
-                  }}
-                  onViewNews={() => {
-                    setTerminalMarketsOpen(false);
-                    setTerminalNewsOpen(true);
-                  }}
-                />
-              </div>
+              sidebarView === 'markets' ? (
+                /* ── Markets: all instruments; picking one opens the Trade panel ── */
+                <section className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                  <Watchlist variant="terminalRail" onExitMarkets={() => setSidebarView('trade')} />
+                </section>
+              ) : (
+                /* ── Trade: the order ticket, pinned (not movable) — or the
+                      chart's Exits / Close review while one is in progress ── */
+                <section className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                  {chartReview ? <ChartExitsPanel /> : <OrderPanel />}
+                </section>
+              )
             )}
-          </div>
-            </>
+          </aside>
           )}
         </div>
       </div>
 
-      {/* Movable order window — replaces the old pinned right column. */}
-      {orderModalOpen && <DraggableOrderModal onClose={() => setOrderModalOpen(false)} />}
     </div>
   );
 }

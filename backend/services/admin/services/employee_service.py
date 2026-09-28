@@ -268,16 +268,21 @@ async def login_as_employee(
     if not user:
         raise HTTPException(status_code=404, detail="Employee user not found")
 
-    # Mint through the shared helper so the impersonation token carries
-    # the issuer + password fingerprint that get_current_admin now
-    # requires (a hand-rolled JWT here would be rejected on first use).
-    # Local import: auth_service imports dependencies, which this module
-    # also imports — importing lazily keeps module load order simple.
-    from services.auth_service import create_admin_token
-    token = create_admin_token(
-        str(user.id), user.role, user.password_hash,
-        extra_claims={"employee_role": employee.role, "impersonated_by": str(admin.id)},
-    )
+    import jwt
+    from packages.common.src.config import get_settings
+    settings = get_settings()
+
+    expire = datetime.utcnow() + timedelta(hours=8)
+    payload = {
+        "admin_id": str(user.id),
+        "role": user.role,
+        "type": "admin",
+        "employee_role": employee.role,
+        "impersonated_by": str(admin.id),
+        "exp": expire,
+        "iat": datetime.utcnow(),
+    }
+    token = jwt.encode(payload, settings.ADMIN_JWT_SECRET, algorithm=settings.ADMIN_JWT_ALGORITHM)
 
     await write_audit_log(
         db, admin.id, "login_as_employee", "employee", employee_id,

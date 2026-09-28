@@ -17,10 +17,11 @@ from packages.common.src.models import (
 from packages.common.src.admin_schemas import (
     PositionOut, OrderOut, TradeHistoryOut, PaginatedResponse,
     ModifyPositionRequest, ClosePositionRequest, CreateTradeRequest,
-    BulkCreateTradeRequest,
+    BulkCreateTradeRequest, ModifyHistoryRequest,
 )
 from packages.common.src.database import AsyncSessionLocal
 from packages.common.src.instrument_pricing import resolve_commission
+from packages.common.src.redis_client import publish_instrument_config_reload
 from dependencies import write_audit_log
 
 # Admin uses Redis db 1, but market ticks are on db 0 (gateway).
@@ -43,6 +44,7 @@ async def _get_live_price(symbol: str) -> dict | None:
 async def list_positions(
     page: int, per_page: int, status_filter: str, db: AsyncSession,
     user_id: uuid.UUID | None = None,
+    user_ids: list | None = None,
 ):
     # Exclude demo-account activity from admin views (demo trades are practice-only).
     query = (
@@ -55,6 +57,9 @@ async def list_positions(
     # directly) so this picks up every account the user owns.
     if user_id is not None:
         query = query.where(TradingAccount.user_id == user_id)
+    # White-label pool scoping (broker actors); None = unscoped.
+    if user_ids is not None:
+        query = query.where(TradingAccount.user_id.in_(user_ids))
     if status_filter == "open":
         query = query.where(Position.status == PositionStatus.OPEN.value)
     elif status_filter == "closed":
@@ -73,6 +78,7 @@ async def list_positions(
         acc = acc_q.scalar_one_or_none()
 
         user_email = None
+        user_id = None
         account_number = None
         book_type = None
         is_demo = False
@@ -83,6 +89,7 @@ async def list_positions(
             usr = user_q.scalar_one_or_none()
             if usr:
                 user_email = usr.email
+                user_id = str(usr.id)
                 book_type = (usr.book_type or "B").upper()
         # LP-forwarded when a LIVE account belongs to an A-book user —
         # demo trades always stay internal (b-book engine), never hit LP.
@@ -123,10 +130,15 @@ async def list_positions(
             commission=float(pos.commission or 0),
             profit=round(profit, 2),
             contract_size=float(inst.contract_size) if inst and inst.contract_size is not None else None,
+            pip_size=float(inst.pip_size) if inst and inst.pip_size is not None else None,
+            digits=int(inst.digits) if inst and inst.digits is not None else None,
+            spread_override=float(pos.spread_override) if pos.spread_override is not None else None,
+            spread_override_type=pos.spread_override_type,
             comment=pos.comment,
             is_admin_modified=pos.is_admin_modified or False,
             created_at=pos.created_at,
             user_email=user_email,
+            user_id=user_id,
             account_number=account_number,
             book_type=book_type,
             is_demo=is_demo,
@@ -138,12 +150,15 @@ async def list_positions(
 
 async def list_orders(
     page: int, per_page: int, status_filter: str, db: AsyncSession,
+    user_ids: list | None = None,
 ):
     query = (
         select(Order)
         .join(TradingAccount, Order.account_id == TradingAccount.id)
         .where(TradingAccount.is_demo == False)
     )
+    if user_ids is not None:
+        query = query.where(TradingAccount.user_id.in_(user_ids))
     if status_filter == "pending":
         query = query.where(Order.status == OrderStatus.PENDING)
     elif status_filter == "filled":
@@ -199,6 +214,7 @@ async def list_orders(
 async def list_trade_history(
     page: int, per_page: int, db: AsyncSession,
     user_id: uuid.UUID | None = None,
+    user_ids: list | None = None,
 ):
     query = (
         select(TradeHistory)
@@ -207,12 +223,26 @@ async def list_trade_history(
     )
     if user_id is not None:
         query = query.where(TradingAccount.user_id == user_id)
+    if user_ids is not None:
+        query = query.where(TradingAccount.user_id.in_(user_ids))
     count_q = select(func.count()).select_from(query.subquery())
     total = (await db.execute(count_q)).scalar() or 0
 
     query = query.order_by(TradeHistory.closed_at.desc()).offset((page - 1) * per_page).limit(per_page)
     result = await db.execute(query)
     trades = result.scalars().all()
+
+    # AI-originated positions on this page, in one batched lookup, so the
+    # admin can tell a strategy's trade from a hand-placed one. Previously
+    # the history view rendered every non-copy trade as "Manual".
+    ai_pos_ids: set = set()
+    _pos_ids = [t.position_id for t in trades if t.position_id is not None]
+    if _pos_ids:
+        from packages.common.src.models import AIStrategyTrade
+        ai_pos_ids = set((await db.execute(
+            select(AIStrategyTrade.position_id)
+            .where(AIStrategyTrade.position_id.in_(_pos_ids))
+        )).scalars().all())
 
     items = []
     for t in trades:
@@ -258,6 +288,7 @@ async def list_trade_history(
             commission=float(t.commission or 0),
             profit=float(t.profit or 0),
             close_reason=getattr(t, 'close_reason', None) or "manual",
+            is_ai=t.position_id in ai_pos_ids,
             opened_at=t.opened_at,
             closed_at=t.closed_at,
             user_email=user_email,
@@ -330,6 +361,19 @@ async def modify_position(
     if body.open_time is not None:
         pos.created_at = body.open_time
 
+    # Temporary per-trade spread override. Omitted-vs-null: present + null clears
+    # it (revert to config spread). Setting it makes THIS trade's live quote use
+    # this spread while it stays open; it drops the moment the trade closes.
+    spread_override_changed = False
+    if "spread_override" in fields_set:
+        if body.spread_override is not None:
+            pos.spread_override = Decimal(str(body.spread_override))
+            pos.spread_override_type = (body.spread_override_type or "pips").lower()
+        else:
+            pos.spread_override = None
+            pos.spread_override_type = None
+        spread_override_changed = True
+
     # Side flip — buy ↔ sell. The position object stores an enum so we
     # coerce the string from the body into OrderSide. We do NOT touch
     # the unrealized P&L here: it's computed from side + current price
@@ -394,6 +438,13 @@ async def modify_position(
         ip_address=ip_address,
     )
     await db.commit()
+    # An admin spread override on a running trade must show LIVE on the owner's
+    # /ws/prices stream (price + chart + P&L) at once, not on the 30s poll.
+    if spread_override_changed:
+        try:
+            await publish_instrument_config_reload()
+        except Exception:
+            pass
     return {"message": f"Position modified successfully. {updated_copies} copy trades updated."}
 
 
@@ -507,6 +558,137 @@ async def close_position(
     return {"message": "Position closed successfully", "profit": float(profit)}
 
 
+async def modify_trade_history(
+    history_id: uuid.UUID, body: ModifyHistoryRequest,
+    admin_id: uuid.UUID, ip_address: str | None, db: AsyncSession,
+) -> dict:
+    """Edit a CLOSED trade and reconcile the account balance.
+
+    A closed trade's `profit` was already credited to the balance at close
+    time (TradeHistory.profit == the amount added, no wallet Transaction row).
+    So editing it must move the balance by the P&L DELTA only, and must NOT
+    write a Transaction row — that mirrors how a normal close behaves and
+    keeps the change out of the trader's transaction list. P&L is recomputed
+    from the fields (never set directly), so the row's numbers always agree
+    with (close-open)*lots*contract_size.
+    """
+    from packages.common.src.trading_service import quote_to_account_pnl
+
+    def _sv(s) -> str:
+        return s.value if hasattr(s, "value") else str(s)
+
+    result = await db.execute(
+        select(TradeHistory).where(TradeHistory.id == history_id).with_for_update()
+    )
+    th = result.scalar_one_or_none()
+    if not th:
+        raise HTTPException(status_code=404, detail="Trade history record not found")
+
+    inst_q = await db.execute(select(Instrument).where(Instrument.id == th.instrument_id))
+    inst = inst_q.scalar_one_or_none()
+    contract_size = Decimal(str(inst.contract_size)) if inst and inst.contract_size else Decimal("100000")
+
+    old_profit = Decimal(str(th.profit or 0))
+    old_values = {
+        "open_price": float(th.open_price or 0),
+        "close_price": float(th.close_price or 0),
+        "lots": float(th.lots or 0),
+        "commission": float(th.commission or 0),
+        "swap": float(th.swap or 0),
+        "side": _sv(th.side) if th.side else None,
+        "opened_at": th.opened_at.isoformat() if th.opened_at else None,
+        "closed_at": th.closed_at.isoformat() if th.closed_at else None,
+        "profit": float(old_profit),
+    }
+
+    if body.open_price is not None:
+        th.open_price = Decimal(str(body.open_price))
+    if body.close_price is not None:
+        th.close_price = Decimal(str(body.close_price))
+    if body.lots is not None:
+        th.lots = Decimal(str(body.lots))
+    if body.commission is not None:
+        th.commission = Decimal(str(body.commission))
+    if body.swap is not None:
+        th.swap = Decimal(str(body.swap))
+    if body.side is not None:
+        s = body.side.strip().lower()
+        if s not in ("buy", "sell"):
+            raise HTTPException(status_code=400, detail="side must be 'buy' or 'sell'")
+        th.side = s
+    if body.opened_at is not None:
+        th.opened_at = body.opened_at
+    if body.closed_at is not None:
+        th.closed_at = body.closed_at
+
+    # Recompute realised P&L from the (possibly edited) fields, the same way
+    # the close path did — gross by side, then cross-rate adjusted to the
+    # account currency.
+    side_val = _sv(th.side)
+    open_p = Decimal(str(th.open_price or 0))
+    close_p = Decimal(str(th.close_price or 0))
+    lots = Decimal(str(th.lots or 0))
+    gross = (close_p - open_p) * lots * contract_size if side_val == "buy" \
+        else (open_p - close_p) * lots * contract_size
+    new_profit = quote_to_account_pnl(
+        gross,
+        getattr(inst, "base_currency", None),
+        getattr(inst, "quote_currency", None),
+        close_p,
+        symbol=getattr(inst, "symbol", None),
+    )
+    th.profit = new_profit
+
+    delta = Decimal(str(new_profit)) - old_profit
+
+    acc_q = await db.execute(
+        select(TradingAccount).where(TradingAccount.id == th.account_id).with_for_update()
+    )
+    acc = acc_q.scalar_one_or_none()
+    if acc and delta != 0:
+        acc.balance = (acc.balance or Decimal("0")) + delta
+        acc.equity = (acc.balance or Decimal("0")) + (acc.credit or Decimal("0"))
+        acc.free_margin = acc.equity - (acc.margin_used or Decimal("0"))
+        # H-ADMIN-3: any balance change from editing a closed trade must leave a
+        # ledger trail (previously silent), so the delta reconciles in reports
+        # and the trader's history.
+        db.add(Transaction(
+            user_id=acc.user_id,
+            account_id=acc.id,
+            type="adjustment",
+            amount=delta,
+            balance_after=acc.balance,
+            description=f"Admin edit of closed trade {history_id}"
+                        + (f": {body.reason}" if getattr(body, "reason", None) else ""),
+            created_by=admin_id,
+        ))
+
+    await write_audit_log(
+        db, admin_id, "modify_trade_history", "trade_history", history_id,
+        old_values=old_values,
+        new_values={
+            "open_price": float(th.open_price or 0),
+            "close_price": float(th.close_price or 0),
+            "lots": float(th.lots or 0),
+            "commission": float(th.commission or 0),
+            "swap": float(th.swap or 0),
+            "side": side_val,
+            "opened_at": th.opened_at.isoformat() if th.opened_at else None,
+            "closed_at": th.closed_at.isoformat() if th.closed_at else None,
+            "profit": float(new_profit),
+            "balance_delta": float(delta),
+            "reason": body.reason,
+        },
+        ip_address=ip_address,
+    )
+    await db.commit()
+    return {
+        "message": "Trade history updated",
+        "profit": float(new_profit),
+        "balance_delta": float(delta),
+    }
+
+
 async def list_instruments(search: str | None, db: AsyncSession) -> dict:
     query = select(Instrument).where(Instrument.is_active == True)
     if search:
@@ -521,6 +703,8 @@ async def list_instruments(search: str | None, db: AsyncSession) -> dict:
                 "symbol": i.symbol,
                 "display_name": i.display_name,
                 "segment": i.segment.name if i.segment else None,
+                "pip_size": float(i.pip_size) if i.pip_size is not None else None,
+                "digits": int(i.digits) if i.digits is not None else None,
             }
             for i in instruments
         ]

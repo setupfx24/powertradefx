@@ -4,7 +4,7 @@ host. The key difference is decimals: BEP-20 USDT is 18 decimals, not 6,
 so the engine passes `expected_value` already scaled accordingly.
 
 This module also exposes `verify_bsc_vault_deposit` and
-`verify_bsc_vault_withdraw` for the PowerTradeFXVaultV1 contract path.
+`verify_bsc_vault_withdraw` for the SwissCrestaVaultV1 contract path.
 When a deposit is sent via `vault.deposit(amount)` the on-chain tx is
 NOT a USDT.transfer call — it's a vault.deposit call that the contract
 turns into an internal `safeTransferFrom` from user → vault. The
@@ -33,11 +33,11 @@ TRANSFER_SELECTOR = "0xa9059cbb"
 
 def _vault_event_topics() -> tuple[str, str]:
     """Return (deposit_topic, withdraw_topic) — keccak256 of the
-    PowerTradeFXVaultV1 event signatures.
+    SwissCrestaVaultV1 event signatures.
 
     Computed at runtime via eth_utils.keccak rather than hardcoded so we
     never accidentally drift from the deployed contract. If
-    `PowerTradeFXVaultV1.sol` ever changes an event signature, this updates
+    `SwissCrestaVaultV1.sol` ever changes an event signature, this updates
     automatically; if eth_utils isn't installed, the verifier raises a
     clear ImportError instead of silently using wrong topics.
     """
@@ -112,6 +112,7 @@ async def _fetch_head_block(client: httpx.AsyncClient, api_key: str) -> Optional
 async def verify_usdt_transfer(
     tx_hash: str, expected_to: str, expected_value: int, min_confs: int,
     *, contract_address: str,
+    expected_from: str | None = None,
     tolerance_bps: int = 50,
 ) -> dict:
     api_key = (get_settings().BSCSCAN_API_KEY or "").strip()
@@ -140,6 +141,14 @@ async def verify_usdt_transfer(
         if receipt.get("status") != "0x1":
             return {"ok": False, "confirmations": 0, "reason": "tx_reverted",
                     "final_failure": True}
+
+        # SECURITY: sender must be the depositing user's own wallet (prevents
+        # claiming someone else's transfer to the public admin address).
+        if expected_from:
+            from_addr = (tx.get("from") or "").lower()
+            if from_addr != expected_from.lower():
+                return {"ok": False, "confirmations": 0,
+                        "reason": f"wrong_sender:{from_addr}", "final_failure": True}
 
         to_addr = (tx.get("to") or "").lower()
         if to_addr != contract_lc:
@@ -206,7 +215,7 @@ async def verify_bsc_vault_deposit(
     tolerance_bps: int = 50,
 ) -> dict:
     """Verify that `tx_hash` contains a `Deposit(user, amount, ts)` log
-    emitted by the PowerTradeFXVaultV1 instance at `vault_address`, with
+    emitted by the SwissCrestaVaultV1 instance at `vault_address`, with
     `user == expected_user` and `amount` within ±tolerance_bps of
     `expected_value`. Result-shape mirrors `verify_usdt_transfer`.
 

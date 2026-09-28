@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 import api from '@/lib/api/client';
 
 export interface TickData {
@@ -13,9 +12,6 @@ export interface TickData {
   ts_ms?: number;
   // True when the quote is a stale-refresher republish (dead upstream feed).
   stale?: boolean;
-  // Epoch ms of the last REAL feed tick (only present on stale republishes),
-  // so the UI can say when the price was last updated.
-  last_live_ms?: number;
 }
 
 export interface Position {
@@ -95,6 +91,17 @@ export interface InstrumentInfo {
   quote_currency?: string | null;
 }
 
+/** Pending SL/TP edit made by dragging the chart's bracket lines. The chart
+ *  writes it on drag-release; the terminal sidebar shows it for review and
+ *  either PUTs (confirm) or asks the chart to snap the lines back (discard).
+ *  `undefined` = bracket untouched, `null` = remove bracket. `nonce` bumps on
+ *  discard so the chart effect re-syncs lines to the server values. */
+export type ChartExitsDraft = {
+  positionId: string;
+  takeProfit?: number | null;
+  stopLoss?: number | null;
+};
+
 /** One-shot prefill for order panel (clone from open position). */
 export type OrderFormCloneDraft = {
   symbol: string;
@@ -114,26 +121,33 @@ interface TradingState {
   prevPrices: Record<string, number>;
   watchlist: string[];
   instruments: InstrumentInfo[];
+  /** optimistic "optim-…" id → the real server UUID it already resolves to.
+   *  Populated by refreshPositions the moment a server row is matched, which
+   *  is almost immediate — independent of the 5s FRESH_OPTIM_WINDOW_MS grace
+   *  period that keeps the row DISPLAYED under its optimistic id to avoid a
+   *  list remount. Lets SL/TP/close target the real position right away
+   *  without waiting out that cosmetic delay. See resolvePositionId. */
+  optimisticIdMap: Record<string, string>;
 
   setActiveAccount: (a: TradingAccount | null) => void;
   setAccounts: (a: TradingAccount[]) => void;
   setPositions: (p: Position[]) => void;
   setPendingOrders: (o: PendingOrder[]) => void;
   setSelectedSymbol: (s: string) => void;
-  updatePrice: (t: TickData) => void;
-  /** Batch variant: ONE store commit (one render pass) per WS payload. */
+  /** Fold a whole WS payload into ONE store commit (one render pass). */
   updatePrices: (ticks: TickData[]) => void;
   addToWatchlist: (s: string) => void;
   removeFromWatchlist: (s: string) => void;
   setInstruments: (i: InstrumentInfo[]) => void;
   removePosition: (id: string) => void;
+  updatePosition: (id: string, patch: Partial<Position>) => void;
   removeAccount: (id: string) => void;
   refreshPositions: () => Promise<void>;
-  /** Re-fetch the account's resting (status=pending) orders. Called right
-   *  after a limit/stop is placed so the Pending tab reflects it at once,
-   *  and when the engine reports a fill so the row leaves the list. */
-  refreshPendingOrders: () => Promise<void>;
   refreshAccount: () => Promise<void>;
+  /** Real id to use for an API call against `id` — itself if already real,
+   *  else the server UUID from optimisticIdMap once known, else `id`
+   *  unchanged (still genuinely unresolved; caller should treat as pending). */
+  resolvePositionId: (id: string) => string;
   placeOrder: (data: {
     account_id: string;
     symbol: string;
@@ -148,6 +162,14 @@ interface TradingState {
 
   orderFormCloneDraft: OrderFormCloneDraft | null;
   setOrderFormCloneDraft: (d: OrderFormCloneDraft | null) => void;
+  /** Chart-driven review state shown in the terminal sidebar. */
+  chartExitsDraft: ChartExitsDraft | null;
+  setChartExitsDraft: (d: ChartExitsDraft | null) => void;
+  chartCloseRequest: string | null;
+  setChartCloseRequest: (positionId: string | null) => void;
+  /** Incremented whenever a draft is discarded — chart lines re-sync to server values. */
+  chartLinesResetNonce: number;
+  bumpChartLinesReset: () => void;
 }
 
 const DEFAULT_WATCHLIST = [
@@ -157,7 +179,7 @@ const DEFAULT_WATCHLIST = [
 ];
 
 const DEFAULT_SYMBOL = 'XAUUSD';
-const SYMBOL_STORAGE_KEY = 'powertradefx-selected-symbol';
+const SYMBOL_STORAGE_KEY = 'swisscresta-selected-symbol';
 
 function getPersistedSymbol(): string {
   if (typeof window === 'undefined') return DEFAULT_SYMBOL;
@@ -169,7 +191,7 @@ function getPersistedSymbol(): string {
 }
 
 // ── Tick application (pure) ─────────────────────────────────────────────────
-// Shared by updatePrice (single tick) and updatePrices (batched payload).
+// Called by updatePrices once per tick of a batched payload.
 // Returns the changed slices, or null when the tick is a no-op (bad symbol /
 // stale by server timestamp). Perf contract: the returned `positions` is the
 // SAME array reference unless a position actually trades this symbol, so
@@ -260,25 +282,6 @@ function applyTick(
   };
 }
 
-/** Wire → PendingOrder. The ONE mapper for GET /orders/ rows — used by the
- *  terminal bootstrap (trading/layout.tsx) and by refreshPendingOrders. */
-export function mapApiPendingOrder(row: unknown): PendingOrder {
-  const o = (row ?? {}) as Record<string, unknown>;
-  return {
-    id: String(o.id),
-    account_id: String(o.account_id),
-    symbol: String(o.symbol || (o.instrument as { symbol?: string })?.symbol || ''),
-    order_type: String(o.order_type),
-    side: o.side as 'buy' | 'sell',
-    status: String(o.status),
-    lots: Number(o.lots) || 0,
-    price: Number(o.price) || 0,
-    stop_loss: o.stop_loss != null ? Number(o.stop_loss) : undefined,
-    take_profit: o.take_profit != null ? Number(o.take_profit) : undefined,
-    created_at: String(o.created_at ?? ''),
-  };
-}
-
 export const useTradingStore = create<TradingState>()((set, get) => ({
   activeAccount: null,
   accounts: [],
@@ -289,7 +292,11 @@ export const useTradingStore = create<TradingState>()((set, get) => ({
   prevPrices: {},
   watchlist: DEFAULT_WATCHLIST,
   instruments: [],
+  optimisticIdMap: {},
   orderFormCloneDraft: null,
+  chartExitsDraft: null,
+  chartCloseRequest: null,
+  chartLinesResetNonce: 0,
 
   setActiveAccount: (a) => set({ activeAccount: a }),
   setAccounts: (a) => set({ accounts: a }),
@@ -301,7 +308,15 @@ export const useTradingStore = create<TradingState>()((set, get) => ({
   },
   setInstruments: (i) => set({ instruments: i }),
   setOrderFormCloneDraft: (d) => set({ orderFormCloneDraft: d }),
+  setChartExitsDraft: (d) => set({ chartExitsDraft: d }),
+  setChartCloseRequest: (positionId) => set({ chartCloseRequest: positionId }),
+  bumpChartLinesReset: () => set((s) => ({ chartLinesResetNonce: s.chartLinesResetNonce + 1 })),
   removePosition: (id) => set((s) => ({ positions: s.positions.filter((p) => p.id !== id) })),
+  // Optimistically patch one position (e.g. SL/TP just set from the chart) so
+  // the chart line + positions row update instantly, before the PUT round-trips.
+  updatePosition: (id, patch) => set((s) => ({
+    positions: s.positions.map((p) => (p.id === id ? { ...p, ...patch } : p)),
+  })),
 
   removeAccount: (id) =>
     set((s) => ({
@@ -343,6 +358,9 @@ export const useTradingStore = create<TradingState>()((set, get) => ({
         return Number.isFinite(t) && now - t < FRESH_OPTIM_WINDOW_MS;
       });
       const optimMatched = new Set<string>();
+      // optim id -> real id, for every match found THIS pass — independent
+      // of the freshness window, which only decides the DISPLAYED id.
+      const resolvedThisPass: Record<string, string> = {};
 
       const merged = list.map((p: Record<string, unknown>) => {
         const serverPos = {
@@ -372,6 +390,10 @@ export const useTradingStore = create<TradingState>()((set, get) => ({
         );
         if (candidate) {
           optimMatched.add(candidate.id);
+          // The row keeps showing `candidate.id` (no remount), but the real
+          // id is known NOW — record it so SL/TP/close can act immediately
+          // instead of waiting out the freshness window.
+          resolvedThisPass[candidate.id] = serverPos.id;
           return { ...serverPos, id: candidate.id };
         }
         return serverPos;
@@ -389,21 +411,26 @@ export const useTradingStore = create<TradingState>()((set, get) => ({
         ? [...orphanedOptimistic, ...merged]
         : merged;
 
-      set({ positions: finalPositions });
+      // Merge the newly-resolved ids into the map, and drop any entry whose
+      // optimistic key no longer appears in the live list at all — either it
+      // graduated to its real id (no longer needed) or the position closed
+      // before ever settling. Unbounded otherwise: a rejected/instantly-
+      // closed optimistic row would never be matched again to trigger its
+      // own removal.
+      const finalIds = new Set(finalPositions.map((p) => p.id));
+      const prevMap = get().optimisticIdMap;
+      const nextMap: Record<string, string> = { ...prevMap, ...resolvedThisPass };
+      for (const optimId of Object.keys(nextMap)) {
+        if (!finalIds.has(optimId)) delete nextMap[optimId];
+      }
+
+      set({ positions: finalPositions, optimisticIdMap: nextMap });
     } catch {}
   },
 
-  refreshPendingOrders: async () => {
-    const account = get().activeAccount;
-    if (!account) return;
-    try {
-      const orders = await api.get<unknown[]>('/orders/', { account_id: account.id, status: 'pending' });
-      // The account may have been switched (or cleared) while the request
-      // was in flight — never write another account's orders into the store.
-      if (get().activeAccount?.id !== account.id) return;
-      const list = Array.isArray(orders) ? orders : [];
-      set({ pendingOrders: list.map(mapApiPendingOrder) });
-    } catch {}
+  resolvePositionId: (id) => {
+    if (!id.startsWith('optim-')) return id;
+    return get().optimisticIdMap[id] ?? id;
   },
 
   refreshAccount: async () => {
@@ -432,8 +459,6 @@ export const useTradingStore = create<TradingState>()((set, get) => ({
       }
     } catch {}
   },
-
-  updatePrice: (tick) => set((state) => applyTick(state, tick) ?? state),
 
   updatePrices: (ticks) => set((state) => {
     // Fold every tick of the payload into ONE partial-state commit — the old
@@ -535,14 +560,8 @@ export const useTradingStore = create<TradingState>()((set, get) => ({
       }
 
       // Still reconcile in the background for server-authoritative numbers
-      // (margin, equity, swap) — but the UI no longer waits on it. A resting
-      // limit/stop has no position to reconcile, but it must show up in the
-      // Pending tab immediately — there is no background poll for orders.
-      Promise.all([
-        get().refreshPositions(),
-        get().refreshAccount(),
-        data.order_type !== 'market' ? get().refreshPendingOrders() : Promise.resolve(),
-      ]).catch(() => {});
+      // (margin, equity, swap) — but the UI no longer waits on it.
+      Promise.all([get().refreshPositions(), get().refreshAccount()]).catch(() => {});
 
       return res;
     } catch (err) {

@@ -1,17 +1,13 @@
 'use client';
 
-import { useState, useMemo, useRef, useEffect, type ReactNode } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
+import { clsx } from 'clsx';
 import { Info, Calculator, Search, ChevronDown, X } from 'lucide-react';
 import DashboardShell from '@/components/layout/DashboardShell';
 import { useTradingStore, type InstrumentInfo, type TradingAccount } from '@/stores/tradingStore';
 import api from '@/lib/api/client';
-import { cn } from '@/lib/utils';
-import {
-  Badge, Button, Card, CardHeader, Input, PageHeader, Segmented, Select, StatCard, Tabs,
-} from '@/components/ui';
 
 type CalcTab = 'margin' | 'pnl' | 'lotsize' | 'swap';
-type Side = 'buy' | 'sell';
 
 const TABS: { id: CalcTab; label: string }[] = [
   { id: 'margin', label: 'Margin Calculator' },
@@ -57,54 +53,50 @@ function InstrumentPicker({
 
   return (
     <div className="relative" ref={ref}>
-      <Button
+      <button
         type="button"
-        variant="outline"
-        fullWidth
         onClick={() => { setOpen(!open); setSearch(''); }}
-        className="justify-between font-medium"
-        rightIcon={<ChevronDown size={14} className={cn('text-text-tertiary shrink-0 transition-transform', open && 'rotate-180')} />}
+        className="w-full flex items-center justify-between rounded-lg border border-border-primary bg-bg-primary px-3 py-2.5 text-sm font-medium text-text-primary cursor-pointer hover:border-accent/40 transition-colors"
       >
         <span className="truncate">{current ? `${current.symbol} — ${current.display_name}` : 'Select Instrument'}</span>
-      </Button>
+        <ChevronDown size={14} className={clsx('text-text-tertiary shrink-0 transition-transform', open && 'rotate-180')} />
+      </button>
       {open && (
-        <div className="absolute top-full left-0 z-50 w-full mt-1 rounded-lg border border-border-primary bg-card shadow-lg overflow-hidden animate-fade-in">
-          <div className="p-2 border-b border-border-primary">
-            <Input
+        <div className="absolute top-full left-0 z-50 w-full mt-1 rounded-xl border border-border-primary bg-bg-secondary shadow-2xl overflow-hidden">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-border-primary bg-bg-primary">
+            <Search size={14} className="text-text-tertiary shrink-0" />
+            <input
               ref={inputRef}
               type="text"
-              size="sm"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search instrument..."
-              icon={<Search />}
-              suffix={search ? (
-                <Button type="button" variant="ghost" size="xs" iconOnly aria-label="Clear search" onClick={() => setSearch('')}>
-                  <X size={13} />
-                </Button>
-              ) : undefined}
+              className="flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-tertiary"
             />
+            {search && (
+              <button type="button" onClick={() => setSearch('')} className="text-text-tertiary hover:text-text-primary">
+                <X size={13} />
+              </button>
+            )}
           </div>
-          <div className="max-h-[240px] overflow-y-auto">
-            {filtered.length > 0 ? filtered.map((inst) => {
-              const on = inst.symbol === value;
-              return (
-                <Button
-                  key={inst.symbol}
-                  type="button"
-                  variant="ghost"
-                  fullWidth
-                  onClick={() => { onChange(inst.symbol); setOpen(false); setSearch(''); }}
-                  className={cn('h-auto justify-between rounded-none px-3 py-2 font-normal', on && 'bg-accent/10 text-accent hover:bg-accent/15 hover:text-accent')}
-                >
-                  <span className="flex flex-col items-start text-left">
-                    <span className="text-base font-semibold">{inst.symbol}</span>
-                    <span className="text-xxs text-text-tertiary">{inst.display_name}</span>
-                  </span>
-                  <Badge variant="neutral" size="sm" tone="outline">{inst.segment}</Badge>
-                </Button>
-              );
-            }) : (
+          <div className="max-h-[240px] overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+            {filtered.length > 0 ? filtered.map((inst) => (
+              <button
+                key={inst.symbol}
+                type="button"
+                onClick={() => { onChange(inst.symbol); setOpen(false); setSearch(''); }}
+                className={clsx(
+                  'w-full flex items-center justify-between px-3 py-2 text-left text-sm transition-colors',
+                  inst.symbol === value ? 'bg-accent/10 text-accent' : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary',
+                )}
+              >
+                <div className="flex flex-col">
+                  <span className="font-semibold text-[13px]">{inst.symbol}</span>
+                  <span className="text-[10px] text-text-tertiary">{inst.display_name}</span>
+                </div>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-primary text-text-tertiary border border-border-primary">{inst.segment}</span>
+              </button>
+            )) : (
               <div className="px-3 py-4 text-center text-xs text-text-tertiary">No instruments found</div>
             )}
           </div>
@@ -117,44 +109,110 @@ function InstrumentPicker({
 /* ─── Tooltip icon ─── */
 function Tip({ text }: { text: string }) {
   return (
-    <span className="relative group cursor-help ml-1 inline-flex align-middle" title={text}>
+    <span className="relative group cursor-help ml-1 inline-flex" title={text}>
       <Info size={13} className="text-text-tertiary group-hover:text-accent transition-colors" />
     </span>
   );
 }
 
-/** Label + optional tooltip, for the primitives' `label` slot. */
-function FieldLabel({ text, tip }: { text: string; tip?: string }) {
+/* ─── Select field ─── */
+function SelectField({
+  label,
+  tip,
+  value,
+  onChange,
+  options,
+  placeholder,
+}: {
+  label: string;
+  tip?: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  placeholder?: string;
+}) {
   return (
-    <span className="inline-flex items-center">
-      {text}
-      {tip && <Tip text={tip} />}
-    </span>
+    <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-4">
+      <label className="text-[13px] font-medium text-text-secondary whitespace-nowrap sm:w-[180px] shrink-0 flex items-center">
+        {label}
+        {tip && <Tip text={tip} />}
+      </label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="flex-1 rounded-lg border border-border-primary bg-bg-primary px-3 py-2.5 text-sm text-text-primary outline-none appearance-none cursor-pointer font-medium"
+      >
+        {placeholder && <option value="">{placeholder}</option>}
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    </div>
   );
 }
 
-/* ─── Result panel: one hero StatCard + a grid of detail StatCards ─── */
-function ResultPanel({
+/* ─── Input field ─── */
+function InputField({
   label,
+  tip,
   value,
-  tone,
-  details,
+  onChange,
+  placeholder,
+  suffix,
+  type = 'number',
 }: {
   label: string;
+  tip?: string;
   value: string;
-  tone?: 'success' | 'danger';
-  details?: { l: string; v: string }[];
+  onChange: (v: string) => void;
+  placeholder?: string;
+  suffix?: string;
+  type?: string;
 }) {
-  const valueNode: ReactNode = (
-    <span className={cn('text-2xl', tone === 'success' && 'text-success', tone === 'danger' && 'text-danger')}>{value}</span>
-  );
   return (
-    <div className="w-full space-y-4">
-      <StatCard label={label} value={valueNode} />
+    <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-4">
+      <label className="text-[13px] font-medium text-text-secondary whitespace-nowrap sm:w-[180px] shrink-0 flex items-center">
+        {label}
+        {tip && <Tip text={tip} />}
+      </label>
+      <div className="flex-1 flex items-center rounded-lg border border-border-primary bg-bg-primary overflow-hidden">
+        <input
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="flex-1 bg-transparent px-3 py-2.5 text-sm font-mono text-text-primary outline-none w-0 min-w-0 placeholder:text-text-tertiary"
+        />
+        {suffix && (
+          <span className="pr-3 text-[11px] font-semibold text-text-tertiary shrink-0">{suffix}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Result panel ─── */
+function EmptyResult({ message }: { message: string }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-border-primary/60 bg-bg-secondary/30 flex flex-col items-center justify-center p-6 sm:p-8 min-h-[220px] text-center">
+      <Calculator size={22} className="text-text-tertiary mb-3" />
+      <span className="text-sm text-text-tertiary max-w-[220px]">{message}</span>
+    </div>
+  );
+}
+
+function ResultPanel({ label, value, details }: { label: string; value: string; details?: { l: string; v: string }[] }) {
+  return (
+    <div className="rounded-2xl border border-accent/20 bg-gradient-to-br from-accent/10 via-accent/5 to-transparent flex flex-col items-center justify-center p-6 sm:p-8 min-h-[220px]">
+      <span className="text-sm font-semibold text-text-secondary mb-2">{label}</span>
+      <span className="text-3xl sm:text-4xl font-black font-mono text-accent">{value}</span>
       {details && details.length > 0 && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="mt-4 w-full space-y-1.5 max-w-[260px]">
           {details.map((d) => (
-            <StatCard key={d.l} label={d.l} value={<span className="text-md">{d.v}</span>} />
+            <div key={d.l} className="flex items-center justify-between text-[11px]">
+              <span className="text-text-tertiary">{d.l}</span>
+              <span className="font-mono font-semibold text-text-secondary">{d.v}</span>
+            </div>
           ))}
         </div>
       )}
@@ -246,7 +304,7 @@ export default function RiskCalculatorPage() {
   // ── Shared state ──
   const [selectedAccountId, setSelectedAccountId] = useState(activeAccount?.id ?? '');
   const [symbol, setSymbol] = useState(selectedSymbol || 'EURUSD');
-  const [side, setSide] = useState<Side>('buy');
+  const [side, setSide] = useState('buy');
   const [lots, setLots] = useState('0.01');
   const [entryPrice, setEntryPrice] = useState('');
   const [exitPrice, setExitPrice] = useState('');
@@ -316,207 +374,219 @@ export default function RiskCalculatorPage() {
     return { dailySwap, totalSwap, days };
   }, [lots, daysHeld, tick, pipSize, contractSize]);
 
-  const handleCalculate = () => {
-    // Auto-fill entry from live if empty
-    if (!entryPrice && tick) {
-      setEntryPrice((side === 'buy' ? tick.ask : tick.bid).toFixed(digits));
-    }
-  };
+  // ── Calculate gating ──────────────────────────────────────────────
+  // The four results above are pure derivations, so they recompute on every
+  // keystroke. Rendering them straight away made the Calculate button look
+  // broken — the number appeared before it was pressed, and a stale figure
+  // sat next to inputs the user had since changed. We therefore remember
+  // WHICH inputs were calculated and only show a result while the form
+  // still matches; touching any field hides it until Calculate is pressed
+  // again. (Signature, not a boolean, so no effect can race the auto-fill.)
+  const inputSignature = (entry: string) =>
+    [tab, selectedAccountId, symbol, side, lots, entry, exitPrice, riskPercent, stopLoss, daysHeld].join('|');
 
-  const activeLabel = TABS.find((t) => t.id === tab)?.label ?? '';
+  const [calculatedSig, setCalculatedSig] = useState<string | null>(null);
+  const showResult = calculatedSig !== null && calculatedSig === inputSignature(entryPrice);
+
+  const handleCalculate = () => {
+    // Auto-fill entry from live if empty, and sign against the value we
+    // actually used so the fill itself doesn't invalidate the result.
+    let entry = entryPrice;
+    if (!entry && tick) {
+      entry = (side === 'buy' ? tick.ask : tick.bid).toFixed(digits);
+      setEntryPrice(entry);
+    }
+    setCalculatedSig(inputSignature(entry));
+  };
 
   return (
     <DashboardShell>
-      <div className="w-full space-y-4 md:space-y-5">
-        <PageHeader
-          eyebrow="Tools"
-          title="Risk Management"
-          description="Calculate margin, profit/loss, lot size, and swap before placing a trade"
-        >
-          <Tabs
-            variant="underline"
-            aria-label="Calculator"
-            tabs={TABS}
-            active={tab}
-            onChange={(id) => setTab(id as CalcTab)}
-            className="overflow-x-auto"
-          />
-        </PageHeader>
+      <div className="w-full space-y-5">
+        {/* Page header */}
+        <div>
+          <h1 className="text-xl sm:text-2xl font-extrabold text-text-primary flex items-center gap-2">
+            <Calculator size={22} className="text-accent" />
+            Risk Management
+          </h1>
+          <p className="text-xs sm:text-sm text-text-tertiary mt-1">
+            Calculate margin, profit/loss, lot size, and swap before placing a trade
+          </p>
+        </div>
+
+        {/* ── Tab bar ── */}
+        <div className="flex items-center rounded-full border border-border-primary bg-bg-secondary p-1 overflow-x-auto scrollbar-none">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTab(t.id)}
+              className={clsx(
+                'flex-1 sm:flex-none px-4 sm:px-6 py-2.5 rounded-full text-xs sm:text-sm font-semibold transition-all whitespace-nowrap',
+                tab === t.id
+                  ? 'bg-accent text-white shadow-lg shadow-accent/20'
+                  : 'text-text-secondary hover:text-text-primary',
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
 
         {/* ── Calculator card ── */}
-        <Card padding="none" className="overflow-hidden">
+        <div className="rounded-2xl border border-border-primary bg-bg-secondary overflow-hidden">
           <div className="grid grid-cols-1 lg:grid-cols-5">
 
             {/* LEFT — Form fields */}
-            <div className="lg:col-span-3 p-4 md:p-5 space-y-4 border-b lg:border-b-0 lg:border-r border-border-primary">
-              <CardHeader title={activeLabel} description="Inputs" className="mb-0" />
+            <div className="lg:col-span-3 p-5 sm:p-6 space-y-4 border-b lg:border-b-0 lg:border-r border-border-primary">
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Select
-                  label={<FieldLabel text="Account" tip="Select your trading account" />}
-                  value={selectedAccountId}
-                  onChange={(e) => setSelectedAccountId(e.target.value)}
-                >
-                  <option value="">Select Account</option>
-                  {accountOpts.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </Select>
+              <SelectField
+                label="Account"
+                tip="Select your trading account"
+                value={selectedAccountId}
+                onChange={setSelectedAccountId}
+                options={accountOpts}
+                placeholder="Select Account"
+              />
 
-                {(tab === 'margin' || tab === 'pnl') && (
-                  <div className="flex flex-col gap-1.5 min-w-0">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-                      <FieldLabel text="Direction" tip="Buy or Sell" />
-                    </span>
-                    <Segmented<Side>
-                      aria-label="Direction"
-                      size="md"
-                      fullWidth
-                      value={side}
-                      onChange={setSide}
-                      options={[
-                        { value: 'buy', label: 'Buy', tone: 'buy' },
-                        { value: 'sell', label: 'Sell', tone: 'sell' },
-                      ]}
-                    />
+              {(tab === 'margin' || tab === 'pnl') && (
+                <SelectField
+                  label="Direction"
+                  tip="Buy or Sell"
+                  value={side}
+                  onChange={setSide}
+                  options={[{ value: 'buy', label: 'Buy' }, { value: 'sell', label: 'Sell' }]}
+                />
+              )}
+
+              {tab === 'lotsize' && (
+                <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-4">
+                  <label className="text-[13px] font-medium text-text-secondary whitespace-nowrap sm:w-[180px] shrink-0 flex items-center">
+                    Account Balance
+                    <Tip text="Your trading account balance" />
+                  </label>
+                  <div className="flex-1 rounded-lg border border-border-primary bg-bg-primary px-3 py-2.5 text-sm font-mono font-bold text-accent">
+                    ${balance.toFixed(2)}
                   </div>
-                )}
+                </div>
+              )}
 
-                {tab === 'lotsize' && (
-                  <Input
-                    label={<FieldLabel text="Account Balance" tip="Your trading account balance" />}
-                    value={`$${balance.toFixed(2)}`}
-                    readOnly
-                    numeric
-                    className="font-semibold text-accent"
-                  />
-                )}
-
-                <div className="flex flex-col gap-1.5 min-w-0 sm:col-span-2">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-                    <FieldLabel text="Instrument" tip="Search and select a trading instrument" />
-                  </span>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-4">
+                <label className="text-[13px] font-medium text-text-secondary whitespace-nowrap sm:w-[180px] shrink-0 flex items-center">
+                  Instrument
+                  <Tip text="Search and select a trading instrument" />
+                </label>
+                <div className="flex-1">
                   <InstrumentPicker value={symbol} onChange={setSymbol} instruments={instruments} />
                 </div>
-
-                <Input
-                  type="number"
-                  numeric
-                  label={<FieldLabel text="Entry Price" tip="Enter your entry price" />}
-                  value={entryPrice}
-                  onChange={(e) => setEntryPrice(e.target.value)}
-                  placeholder="Enter Entry Price"
-                />
-
-                {tab === 'pnl' && (
-                  <Input
-                    type="number"
-                    numeric
-                    label={<FieldLabel text="Exit Price" tip="Enter your exit / take profit price" />}
-                    value={exitPrice}
-                    onChange={(e) => setExitPrice(e.target.value)}
-                    placeholder="Enter Exit Price"
-                  />
-                )}
-
-                {tab === 'margin' && (
-                  <>
-                    <Input
-                      label={<FieldLabel text="Leverage" tip="Account leverage ratio" />}
-                      value={`1:${accountLeverage}`}
-                      readOnly
-                      numeric
-                      className="font-semibold"
-                    />
-                    <Input
-                      type="number"
-                      numeric
-                      label={<FieldLabel text="Lot Size" tip="Position size in lots" />}
-                      value={lots}
-                      onChange={(e) => setLots(e.target.value)}
-                      placeholder="Enter Size"
-                      suffix="lots"
-                    />
-                  </>
-                )}
-
-                {tab === 'pnl' && (
-                  <Input
-                    type="number"
-                    numeric
-                    label={<FieldLabel text="Lot Size" tip="Position size in lots" />}
-                    value={lots}
-                    onChange={(e) => setLots(e.target.value)}
-                    placeholder="Enter Size"
-                    suffix="lots"
-                  />
-                )}
-
-                {tab === 'lotsize' && (
-                  <>
-                    <Input
-                      type="number"
-                      numeric
-                      label={<FieldLabel text="Risk %" tip="Percentage of balance to risk" />}
-                      value={riskPercent}
-                      onChange={(e) => setRiskPercent(e.target.value)}
-                      placeholder="1"
-                      suffix="%"
-                    />
-                    <Input
-                      type="number"
-                      numeric
-                      label={<FieldLabel text="Stop Loss Price" tip="Your stop loss level" />}
-                      value={stopLoss}
-                      onChange={(e) => setStopLoss(e.target.value)}
-                      placeholder="Enter SL price"
-                    />
-                  </>
-                )}
-
-                {tab === 'swap' && (
-                  <>
-                    <Input
-                      type="number"
-                      numeric
-                      label={<FieldLabel text="Lot Size" tip="Position size in lots" />}
-                      value={lots}
-                      onChange={(e) => setLots(e.target.value)}
-                      placeholder="Enter Size"
-                      suffix="lots"
-                    />
-                    <Input
-                      type="number"
-                      numeric
-                      label={<FieldLabel text="Days Held" tip="Number of days position is open" />}
-                      value={daysHeld}
-                      onChange={(e) => setDaysHeld(e.target.value)}
-                      placeholder="1"
-                      suffix="days"
-                    />
-                  </>
-                )}
               </div>
+
+              <InputField
+                label="Entry Price"
+                tip="Enter your entry price"
+                value={entryPrice}
+                onChange={setEntryPrice}
+                placeholder="Enter Entry Price"
+              />
+
+              {tab === 'pnl' && (
+                <InputField
+                  label="Exit Price"
+                  tip="Enter your exit / take profit price"
+                  value={exitPrice}
+                  onChange={setExitPrice}
+                  placeholder="Enter Exit Price"
+                />
+              )}
+
+              {tab === 'margin' && (
+                <>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-4">
+                    <label className="text-[13px] font-medium text-text-secondary whitespace-nowrap sm:w-[180px] shrink-0 flex items-center">
+                      Leverage
+                      <Tip text="Account leverage ratio" />
+                    </label>
+                    <div className="flex-1 rounded-lg border border-border-primary bg-bg-primary px-3 py-2.5 text-sm font-mono font-bold text-text-primary">
+                      1:{accountLeverage}
+                    </div>
+                  </div>
+                  <InputField
+                    label="Lot Size"
+                    tip="Position size in lots"
+                    value={lots}
+                    onChange={setLots}
+                    placeholder="Enter Size"
+                  />
+                </>
+              )}
+
+              {tab === 'pnl' && (
+                <>
+                  <InputField
+                    label="Lot Size"
+                    tip="Position size in lots"
+                    value={lots}
+                    onChange={setLots}
+                    placeholder="Enter Size"
+                  />
+                </>
+              )}
+
+              {tab === 'lotsize' && (
+                <>
+                  <InputField
+                    label="Risk %"
+                    tip="Percentage of balance to risk"
+                    value={riskPercent}
+                    onChange={setRiskPercent}
+                    placeholder="1"
+                    suffix="%"
+                  />
+                  <InputField
+                    label="Stop Loss Price"
+                    tip="Your stop loss level"
+                    value={stopLoss}
+                    onChange={setStopLoss}
+                    placeholder="Enter SL price"
+                  />
+                </>
+              )}
+
+              {tab === 'swap' && (
+                <>
+                  <InputField
+                    label="Lot Size"
+                    tip="Position size in lots"
+                    value={lots}
+                    onChange={setLots}
+                    placeholder="Enter Size"
+                  />
+                  <InputField
+                    label="Days Held"
+                    tip="Number of days position is open"
+                    value={daysHeld}
+                    onChange={setDaysHeld}
+                    placeholder="1"
+                    suffix="days"
+                  />
+                </>
+              )}
 
               {/* Calculate button */}
               <div className="pt-2">
-                <Button
+                <button
                   type="button"
-                  variant="primary"
-                  size="lg"
                   onClick={handleCalculate}
-                  leftIcon={<Calculator size={16} />}
-                  className="w-full sm:w-auto"
+                  className="w-full sm:w-auto px-8 py-3 rounded-xl bg-accent/80 hover:bg-accent text-white text-sm font-bold transition-all active:scale-[0.98] shadow-lg shadow-accent/15"
                 >
                   Calculate
-                </Button>
+                </button>
               </div>
             </div>
 
             {/* RIGHT — Result */}
-            <div className="lg:col-span-2 flex items-stretch bg-card-nested">
-              <div className="flex-1 flex items-center justify-center p-4 md:p-5">
-                {tab === 'margin' && marginResult && (
+            <div className="lg:col-span-2 flex items-stretch">
+              <div className="flex-1 flex items-center justify-center p-5 sm:p-6">
+                {showResult && tab === 'margin' && marginResult && (
                   <ResultPanel
                     label="Required Margin"
                     value={`$${marginResult.margin.toFixed(2)}`}
@@ -528,10 +598,9 @@ export default function RiskCalculatorPage() {
                     ]}
                   />
                 )}
-                {tab === 'pnl' && pnlResult && (
+                {showResult && tab === 'pnl' && pnlResult && (
                   <ResultPanel
                     label={pnlResult.pnl >= 0 ? 'Profit' : 'Loss'}
-                    tone={pnlResult.pnl >= 0 ? 'success' : 'danger'}
                     value={`${pnlResult.pnl >= 0 ? '+' : '-'}$${Math.abs(pnlResult.pnl).toFixed(2)}`}
                     details={[
                       { l: 'Pips', v: pnlResult.pips.toFixed(1) },
@@ -540,7 +609,7 @@ export default function RiskCalculatorPage() {
                     ]}
                   />
                 )}
-                {tab === 'lotsize' && lotResult && (
+                {showResult && tab === 'lotsize' && lotResult && (
                   <ResultPanel
                     label="Recommended Lot Size"
                     value={lotResult.lotSize.toFixed(2)}
@@ -551,7 +620,7 @@ export default function RiskCalculatorPage() {
                     ]}
                   />
                 )}
-                {tab === 'swap' && swapResult && (
+                {showResult && tab === 'swap' && swapResult && (
                   <ResultPanel
                     label="Estimated Swap"
                     value={`$${swapResult.totalSwap.toFixed(2)}`}
@@ -562,17 +631,32 @@ export default function RiskCalculatorPage() {
                     ]}
                   />
                 )}
-                {!marginResult && tab === 'margin' && <ResultPanel label="Result" value="$0.00" />}
-                {!pnlResult && tab === 'pnl' && <ResultPanel label="Result" value="$0.00" />}
-                {!lotResult && tab === 'lotsize' && <ResultPanel label="Result" value="0.00" />}
-                {!swapResult && tab === 'swap' && <ResultPanel label="Result" value="$0.00" />}
+                {/* Nothing to show yet. A "$0.00" panel here read as a
+                    computed answer and was the other half of the confusion —
+                    say what the user needs to do instead. */}
+                {(() => {
+                  const result = tab === 'margin' ? marginResult
+                    : tab === 'pnl' ? pnlResult
+                    : tab === 'lotsize' ? lotResult
+                    : swapResult;
+                  if (showResult && result) return null;
+                  return (
+                    <EmptyResult
+                      message={
+                        !result
+                          ? 'Fill in the fields to calculate'
+                          : 'Press Calculate to see your result'
+                      }
+                    />
+                  );
+                })()}
               </div>
             </div>
           </div>
-        </Card>
+        </div>
 
         {/* Disclaimer */}
-        <p className="text-xs text-text-tertiary text-center leading-relaxed">
+        <p className="text-[10px] text-text-tertiary text-center leading-relaxed">
           Results are approximate. Actual values may vary based on market conditions, currency pair, and account currency.
         </p>
       </div>

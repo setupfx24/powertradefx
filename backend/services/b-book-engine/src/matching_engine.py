@@ -23,8 +23,10 @@ from packages.common.src.models import (
 )
 from packages.common.src.redis_client import redis_client, PriceChannel, is_tick_stale
 from packages.common.src.instrument_pricing import resolve_commission
-from packages.common.src.ib_commission import distribute_ib_commission, settle_ib_commissions
-from packages.common.src.pending_orders import evaluate_trigger
+from packages.common.src.ib_commission import distribute_ib_commission
+from packages.common.src.market_hours import is_market_open
+from packages.common.src.settings_store import get_bool_setting
+from packages.common.src.trading_service import quote_to_account_pnl, cross_rate_for
 
 logger = logging.getLogger("b-book-engine")
 
@@ -46,24 +48,7 @@ class MatchingEngine:
     async def start(self):
         self._running = True
         logger.info("B-Book Matching Engine started")
-        await asyncio.gather(self._monitor_pending_orders(), self._settle_ib_loop())
-
-    async def _settle_ib_loop(self) -> None:
-        """Pay out IB accruals whose source trade has closed (every 10 s).
-
-        Lives here rather than on every close path (manual, SL/TP, stop-out,
-        copy, algo) so ONE loop is the single place money moves to an IB,
-        whatever closed the trade."""
-        while self._running:
-            try:
-                async with AsyncSessionLocal() as db:
-                    n = await settle_ib_commissions(db)
-                    await db.commit()
-                    if n:
-                        logger.info("IB settlement: %d commission(s) paid", n)
-            except Exception as e:
-                logger.error(f"IB settlement error: {e}")
-            await asyncio.sleep(10.0)
+        await self._monitor_pending_orders()
 
     async def stop(self):
         self._running = False
@@ -85,24 +70,20 @@ class MatchingEngine:
         while self._running:
             try:
                 async with AsyncSessionLocal() as db:
-                    # SKIP LOCKED for the same reason the gateway's sltp_engine
-                    # uses it: a second replica of this service (or a manual
-                    # cancel/modify in the gateway holding the row) must not
-                    # process the same pending order twice. Without it, two
-                    # replicas each opened a Position for every trigger.
+                    # H-TRADE-9: lock the pending rows with SKIP LOCKED so that
+                    # with multiple engine workers each row is processed by
+                    # exactly one worker — rows another worker already holds are
+                    # skipped this pass instead of being double-filled.
                     result = await db.execute(
-                        select(Order)
-                        .where(Order.status == OrderStatus.PENDING)
+                        select(Order).where(Order.status == OrderStatus.PENDING)
                         .with_for_update(skip_locked=True)
                     )
                     pending_orders = result.scalars().all()
 
                     for order in pending_orders:
                         if order.expires_at and datetime.now(timezone.utc) > order.expires_at:
-                            # No per-order commit here — committing mid-loop
-                            # releases the FOR UPDATE locks on every row still
-                            # being iterated. The single commit below covers it.
                             order.status = OrderStatus.EXPIRED
+                            await db.commit()
                             continue
 
                         price_data = await self._get_price(order.instrument.symbol)
@@ -110,23 +91,30 @@ class MatchingEngine:
                             continue
 
                         bid, ask = price_data
-                        decision = evaluate_trigger(
-                            order.order_type, order.side, order.price,
-                            order.stop_limit_price, bid, ask,
-                        )
-                        if decision.convert_to_limit is not None:
-                            # Stop leg of a stop-limit hit: it now rests as a
-                            # plain limit at the limit price (MT5 semantics).
-                            # stop_limit_price is kept on the row for audit.
-                            order.order_type = OrderType.LIMIT
-                            order.price = decision.convert_to_limit
-                            logger.info(
-                                "Stop-limit %s triggered: now a %s limit @ %s",
-                                order.id, order.side.value, order.price,
-                            )
-                            continue
-                        if decision.triggered:
-                            await self._execute_pending_order(order, decision.fill_price, db)
+                        triggered = False
+
+                        if order.order_type == OrderType.LIMIT:
+                            if order.side == OrderSide.BUY and ask <= order.price:
+                                triggered = True
+                            elif order.side == OrderSide.SELL and bid >= order.price:
+                                triggered = True
+
+                        elif order.order_type == OrderType.STOP:
+                            if order.side == OrderSide.BUY and ask >= order.price:
+                                triggered = True
+                            elif order.side == OrderSide.SELL and bid <= order.price:
+                                triggered = True
+
+                        elif order.order_type == OrderType.STOP_LIMIT:
+                            if order.side == OrderSide.BUY and ask >= order.price:
+                                if order.stop_limit_price and ask <= order.stop_limit_price:
+                                    triggered = True
+                            elif order.side == OrderSide.SELL and bid <= order.price:
+                                if order.stop_limit_price and bid >= order.stop_limit_price:
+                                    triggered = True
+
+                        if triggered:
+                            await self._execute_pending_order(order, bid, ask, db)
 
                     await db.commit()
 
@@ -135,19 +123,94 @@ class MatchingEngine:
 
             await asyncio.sleep(0.1)
 
-    async def _execute_pending_order(self, order: Order, fill_price: Decimal, db: AsyncSession):
-        """Open the position for a triggered pending order at `fill_price`
-        (limit price for limits, market for stops — see pending_orders)."""
-        account = await db.get(TradingAccount, order.account_id)
+    async def _execute_pending_order(self, order: Order, bid: Decimal, ask: Decimal, db: AsyncSession):
+        # Maintenance mode blocks pending fills exactly like it blocks
+        # market orders in the gateway. The order stays pending and will
+        # fill on the first tick after maintenance ends (if still valid).
+        if await get_bool_setting("maintenance_mode", False):
+            return
+
+        # H-TRADE-9: re-check status before filling. The row is held under the
+        # monitor's SKIP LOCKED lock, but this guards against a status change
+        # applied earlier in the same batch (expiry) or a stale in-memory copy.
+        if order.status != OrderStatus.PENDING:
+            return
+
+        # Lock the account row: a pending fill races concurrent gateway
+        # market orders on the same account, and both paths read + rewrite
+        # margin_used/balance. The gateway's place_order takes the same
+        # FOR UPDATE lock, so the two serialize instead of double-spending
+        # the margin pool. Released at the outer loop's commit.
+        locked_q = await db.execute(
+            select(TradingAccount)
+            .where(TradingAccount.id == order.account_id)
+            .with_for_update()
+        )
+        account = locked_q.scalar_one_or_none()
         if not account or not account.is_active:
             order.status = OrderStatus.REJECTED
             return
 
         instrument = await db.get(Instrument, order.instrument_id)
-        fill_price = Decimal(str(fill_price))
+
+        # Never fill into a closed market (mirrors the gateway's market-order
+        # check). Ticks shouldn't arrive while closed, but the stale-quote
+        # refresher and crypto side-feeds make this worth an explicit guard.
+        segment_name = instrument.segment.name if instrument.segment else ""
+        market_open, _closed_reason = is_market_open(
+            instrument.symbol, segment_name, instrument.trading_hours
+        )
+        if not market_open:
+            return
+
+        # Redis quotes already include platform spread (symmetric).
+        fill_price = ask if order.side == OrderSide.BUY else bid
         margin = (order.lots * instrument.contract_size * fill_price) / Decimal(str(account.leverage))
 
-        if margin > account.free_margin:
+        # Margin check against RECOMPUTED values, not the stored
+        # account.free_margin — the exact figure the gateway's place_order
+        # deliberately distrusts (it drifts/sticks over many trades). Same
+        # recipe: open margin re-summed from open positions, unrealized P&L
+        # from live ticks with cross-rate conversion.
+        open_pos_q = await db.execute(
+            select(Position).where(
+                Position.account_id == account.id,
+                Position.status == PositionStatus.OPEN,
+            )
+        )
+        open_positions = open_pos_q.scalars().all()
+        open_margin = Decimal("0")
+        unrealized_pnl = Decimal("0")
+        for pos in open_positions:
+            p_inst = pos.instrument
+            cs = (p_inst.contract_size if p_inst else None) or Decimal("100000")
+            open_margin += (pos.lots * cs * pos.open_price) / Decimal(str(account.leverage))
+            if not p_inst:
+                continue
+            tick_data = await redis_client.get(PriceChannel.tick_key(p_inst.symbol))
+            if not tick_data:
+                continue
+            tick = json.loads(tick_data)
+            if is_tick_stale(tick):
+                continue
+            sv = pos.side.value if hasattr(pos.side, "value") else str(pos.side)
+            cp = Decimal(str(tick["bid"])) if sv == "buy" else Decimal(str(tick["ask"]))
+            if sv == "buy":
+                pos_pnl = (cp - pos.open_price) * pos.lots * cs
+            else:
+                pos_pnl = (pos.open_price - cp) * pos.lots * cs
+            unrealized_pnl += quote_to_account_pnl(
+                pos_pnl,
+                getattr(p_inst, "base_currency", None),
+                getattr(p_inst, "quote_currency", None),
+                cp,
+                symbol=p_inst.symbol,
+                cross_rate=await cross_rate_for(p_inst),
+            )
+
+        real_equity = (account.balance or Decimal("0")) + (account.credit or Decimal("0")) + unrealized_pnl
+        real_free_margin = real_equity - open_margin
+        if margin > real_free_margin:
             order.status = OrderStatus.REJECTED
             return
 

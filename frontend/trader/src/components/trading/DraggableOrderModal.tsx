@@ -13,7 +13,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { GripHorizontal, X } from 'lucide-react';
-import { Button } from '@/components/ui';
 import OrderPanel from './OrderPanel';
 
 const WIDTH = 400;
@@ -77,7 +76,7 @@ export default function DraggableOrderModal({ onClose }: { onClose: () => void }
   return (
     <div
       ref={ref}
-      className="fixed z-[120] flex flex-col overflow-hidden rounded-lg border border-border-primary bg-card shadow-lg"
+      className="fixed z-[120] flex flex-col overflow-hidden rounded-xl border border-border-primary bg-bg-base shadow-2xl"
       // Height follows the order panel's content (no fixed height => no empty
       // gap), capped so it never runs off a short viewport.
       style={style}
@@ -91,22 +90,21 @@ export default function DraggableOrderModal({ onClose }: { onClose: () => void }
         onPointerUp={onPointerUp}
         className="flex shrink-0 cursor-move touch-none select-none items-center justify-between gap-2 border-b border-border-primary bg-bg-secondary px-2.5 py-1.5"
       >
-        <span className="inline-flex items-center gap-1.5 text-xxs font-bold uppercase tracking-[0.12em] text-text-tertiary">
+        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-text-tertiary">
           <GripHorizontal size={14} aria-hidden />
           Order
         </span>
-        <Button
-          variant="ghost"
-          size="xs"
-          iconOnly
+        <button
+          type="button"
           // Stop the drag bar's pointer-capture from swallowing this click —
           // without this, pressing X started a drag and the close never fired.
           onPointerDown={(e) => e.stopPropagation()}
           onClick={onClose}
           aria-label="Close order ticket"
+          className="inline-flex h-6 w-6 items-center justify-center rounded-md text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary"
         >
-          <X size={14} aria-hidden />
-        </Button>
+          <X size={14} />
+        </button>
       </div>
 
       {/* The order panel sizes the window to its content (scrolls only if it

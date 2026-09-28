@@ -1,13 +1,14 @@
 'use client';
 
 /**
- * Multi-step onboarding gate that runs AFTER ProfileCompleteGate.
+ * Post-signup onboarding gate — email verification only.
  *
  * Current sequence (post wallet-integration purge):
- *   1. profile_complete  →  ProfileCompleteGate handles this. If still
- *      false we render nothing here and let that gate own the screen.
- *   2. email_verified    →  email/password users who never went through
+ *   1. email_verified    →  email/password users who never went through
  *      the post-signup OTP must do so before they can use the platform.
+ *   2. profile details   →  NOT handled here anymore. ProfileCompleteGate
+ *      mounts on the /kyc page and only asks for personal details when
+ *      the user applies for KYC.
  *
  * The wallet-link step is gone — `WalletLinkStep` was deleted with the
  * rest of the SIWE / wallet-connect UX. Backend's
@@ -89,7 +90,7 @@ export default function OnboardingGate() {
       aria-labelledby="onboarding-gate-title"
     >
       <div
-        className="relative w-full max-w-lg my-auto rounded-2xl border border-accent/40 bg-bg-secondary shadow-2xl"
+        className="relative w-full max-w-lg my-auto rounded-2xl border border-[#E94E1B]/40 bg-bg-secondary shadow-2xl"
         // Stop clicks inside the card from closing the page-level UI.
         onClick={(e) => e.stopPropagation()}
       >
@@ -102,7 +103,7 @@ export default function OnboardingGate() {
           >
             <X size={16} />
           </button>
-          <div className="flex items-center gap-2 text-accent mb-2">
+          <div className="flex items-center gap-2 text-[#E94E1B] mb-2">
             <ShieldCheck size={16} />
             <span className="text-[10px] uppercase tracking-wider font-semibold">
               Account setup required

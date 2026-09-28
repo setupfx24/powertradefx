@@ -29,6 +29,7 @@ jobs:
             'sqlalchemy[asyncio]>=2.0.30' \
             'pydantic>=2.7.0' \
             'pydantic[email]>=2.7.0' \
+            'pydantic-settings>=2.0.0' \
             'asyncpg>=0.29.0' \
             'fastapi>=0.111.0'
 
@@ -75,9 +76,6 @@ jobs:
               MasterAccount, InvestorAllocation, CopyTrade,
               SupportTicket, TicketMessage, Notification, Banner,
               SystemSetting, BonusOffer, UserBonus,
-              InsurancePolicy, InsuranceClaim,
-              RewardsUserState, RewardsMission, RewardsUserMissionProgress,
-              RewardStoreItem, RewardsTransaction,
               SharedTrade,
           )
           from packages.common.src.schemas import (
@@ -94,9 +92,6 @@ jobs:
               TickData, OHLCVBar, InstrumentResponse,
               AdminFundAdjustment, AdminTradeCreate, AdminModifyTrade,
               PaginationParams, PaginatedResponse,
-              InsuranceQuoteRequest, InsuranceTierQuote,
-              InsuranceActivateRequest, InsuranceActivateResponse,
-              InsurancePolicyOut, InsuranceClaimOut,
           )
           # Confirm SQLAlchemy registered every ORM table.
           tables = sorted(Base.metadata.tables.keys())
@@ -104,6 +99,128 @@ jobs:
           for t in tables:
               print(f'  - {t}')
           PY
+
+  migrations:
+    name: Migrations — alembic upgrade head on throwaway Postgres
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: swisscresta
+          POSTGRES_PASSWORD: swisscresta_ci
+          POSTGRES_DB: swisscresta
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U swisscresta -d swisscresta"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install migration deps
+        # Mirrors the compose `migrate` one-off runner: the common package
+        # (env.py imports packages.common.src.models for target_metadata)
+        # plus alembic + the async driver.
+        working-directory: backend
+        run: |
+          pip install -e packages/common
+          pip install 'alembic>=1.13.0' 'sqlalchemy[asyncio]>=2.0.30' 'asyncpg>=0.29.0'
+
+      - name: Run every migration against the throwaway DB
+        # env.py requires DATABASE_URL (async driver — it builds an
+        # AsyncEngine, so the +asyncpg scheme is mandatory). alembic.ini
+        # lives at infra/migrations/ and expects to run from backend/.
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://swisscresta:swisscresta_ci@localhost:5432/swisscresta
+          # H-INF-8: provide a strong admin credential so any bootstrap/seed the
+          # migration path touches doesn't fall back to a weak default.
+          ADMIN_EMAIL: ci-admin@swisscresta.local
+          ADMIN_PASSWORD: ci-$RANDOM-$RANDOM-Str0ng!pw
+        run: alembic -c infra/migrations/alembic.ini upgrade head
+
+  backend-tests:
+    name: Backend — pytest (Postgres + Redis)
+    runs-on: ubuntu-latest
+    # H-INF-8: run the backend test suite with real Postgres + Redis services
+    # available, so DB/Redis-backed tests can be added without infra changes.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: swisscresta
+          POSTGRES_PASSWORD: swisscresta_ci
+          POSTGRES_DB: swisscresta
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U swisscresta -d swisscresta"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install backend + test deps
+        working-directory: backend
+        run: |
+          pip install -e packages/common
+          pip install -r services/gateway/requirements.txt
+          pip install slowapi pytest
+
+      - name: Run pytest
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+          DATABASE_URL: postgresql+asyncpg://swisscresta:swisscresta_ci@localhost:5432/swisscresta
+          TIMESCALE_URL: postgresql+asyncpg://swisscresta:swisscresta_ci@localhost:5432/swisscresta
+          REDIS_URL: redis://localhost:6379/0
+          ENVIRONMENT: development
+          JWT_SECRET: ci-stub-secret-1234567890123456789012
+          USER_JWT_SECRET: ci-stub-secret-1234567890123456789012
+          ADMIN_JWT_SECRET: ci-stub-secret-1234567890123456789012
+        run: python -m pytest tests -q
+
+  contracts:
+    name: Contracts — forge test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install Solidity dependencies
+        # lib/ is not vendored in the repo (deps live on the deploy machine).
+        # remappings.txt maps @openzeppelin/contracts/ -> lib/openzeppelin-contracts/contracts/
+        # and forge-std/ -> lib/forge-std/src/, so install exactly those two.
+        # Source imports use the OZ v5 layout (utils/Pausable.sol), hence v5.x.
+        working-directory: backend/contracts
+        run: forge install foundry-rs/forge-std@v1.9.6 OpenZeppelin/openzeppelin-contracts@v5.2.0
+
+      - name: forge test
+        working-directory: backend/contracts
+        run: forge test -vvv
 
   frontend:
     name: Frontend — typecheck + lint + build
@@ -130,10 +247,12 @@ jobs:
       # `continue-on-error: true` because the trader app has ~85 pre-existing
       # warnings under the new flat ESLint config that are tracked as Batch G
       # backlog. Remove the flag once the warning count is back to 0.
+      # H-INF-8: lint is a HARD gate for the admin app; the trader app keeps
+      # continue-on-error until its pre-existing warning backlog is cleared.
       - name: Lint
         working-directory: frontend/${{ matrix.app }}
         run: npm run lint
-        continue-on-error: true
+        continue-on-error: ${{ matrix.app == 'trader' }}
       # Build verifies the route manifest + bundle generation. Matches what
       # the Dockerfile does (sans the standalone flag — that's set at Docker
       # build time, not in CI).
@@ -142,6 +261,10 @@ jobs:
         run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: '1'
+          # The trader app is large (marketing site + charting + 3D hero);
+          # the default Node old-space (~2 GB) OOMs mid-build on CI runners.
+          # Match the local/Docker build which raises the heap to 4 GB.
+          NODE_OPTIONS: --max-old-space-size=4096
           # Build-time NEXT_PUBLIC_* values — CI uses dummies so the build
           # completes deterministically without leaking real prod URLs.
           NEXT_PUBLIC_APP_VERSION: ci-${{ github.sha }}

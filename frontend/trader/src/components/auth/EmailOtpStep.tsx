@@ -14,11 +14,10 @@
  * (the gate then unmounts itself because email_verified flips to true).
  */
 import { useEffect, useRef, useState } from 'react';
-import { Mail, ArrowRight, RotateCcw, Check, Pencil } from 'lucide-react';
+import { Loader2, Mail, ArrowRight, RotateCcw, Check, Pencil } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '@/lib/api/client';
 import { getErrorMessage } from '@/lib/errors';
-import { Button, Input } from '@/components/ui';
 
 const RESEND_COOLDOWN_SECONDS = 60;
 
@@ -122,85 +121,95 @@ export default function EmailOtpStep({
     <div className="space-y-3">
       {phase === 'enter-email' ? (
         <>
-          <Input
-            label="Email address"
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            icon={<Mail aria-hidden />}
-            error={error}
-            autoFocus
-          />
-          <Button
-            variant="primary"
-            fullWidth
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Email address</label>
+            <div className="relative">
+              <Mail
+                size={14}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary pointer-events-none"
+              />
+              <input
+                type="email"
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="w-full pl-9 pr-3 py-2.5 rounded-lg bg-bg-base border border-border-primary text-sm text-text-primary placeholder:text-text-tertiary focus:border-[#E94E1B] focus:outline-none"
+                autoFocus
+              />
+            </div>
+          </div>
+          {error && <p className="text-xs text-red-400">{error}</p>}
+          <button
+            type="button"
             onClick={() => void sendCode()}
             disabled={busy || !email.trim()}
-            loading={busy}
-            leftIcon={<ArrowRight size={14} aria-hidden />}
+            className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg bg-[#E94E1B] text-bg-base text-sm font-bold hover:brightness-110 disabled:opacity-60 transition-colors"
           >
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />}
             Send code
-          </Button>
+          </button>
         </>
       ) : (
         <>
           <p className="text-xs text-text-secondary leading-relaxed">
             We sent a 6-digit code to{' '}
             <span className="font-semibold text-text-primary tabular-nums">{email.trim().toLowerCase()}</span>
-            <Button
-              variant="link"
-              size="xs"
+            <button
+              type="button"
               onClick={editEmail}
-              className="ml-1 align-middle gap-0.5"
+              className="ml-1 inline-flex items-center gap-0.5 align-middle text-[#E94E1B] hover:underline"
               aria-label="Edit email address"
-              leftIcon={<Pencil size={11} aria-hidden />}
             >
+              <Pencil size={11} />
               Edit
-            </Button>
+            </button>
             . It expires in 10 minutes.
           </p>
-          <Input
-            label="Verification code"
-            type="text"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            maxLength={6}
-            value={otp}
-            onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-            onKeyDown={(e) => { if (e.key === 'Enter') void verifyCode(); }}
-            placeholder="••••••"
-            size="lg"
-            numeric
-            className="text-center text-xl tracking-[0.5em]"
-            error={error}
-            autoFocus
-          />
-          <Button
-            variant="primary"
-            fullWidth
-            onClick={() => void verifyCode()}
-            disabled={busy || otp.length !== 6}
-            loading={busy}
-            leftIcon={<Check size={14} aria-hidden />}
-          >
-            Verify
-          </Button>
-          <div className="flex items-center justify-between text-xs text-text-tertiary">
-            <Button variant="ghost" size="xs" onClick={editEmail} className="-ml-2.5">
+          <div>
+            <label className="block text-xs font-medium text-text-secondary mb-1.5">Verification code</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              value={otp}
+              onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              onKeyDown={(e) => { if (e.key === 'Enter') void verifyCode(); }}
+              placeholder="••••••"
+              className="w-full px-3 py-3 rounded-lg bg-bg-base border border-border-primary text-center text-xl tracking-[0.5em] font-mono text-text-primary placeholder:text-text-tertiary focus:border-[#E94E1B] focus:outline-none"
+              autoFocus
+            />
+          </div>
+          {error && <p className="text-xs text-red-400">{error}</p>}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void verifyCode()}
+              disabled={busy || otp.length !== 6}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg bg-[#E94E1B] text-bg-base text-sm font-bold hover:brightness-110 disabled:opacity-60 transition-colors"
+            >
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              Verify
+            </button>
+          </div>
+          <div className="flex items-center justify-between text-[11px] text-text-tertiary">
+            <button
+              type="button"
+              onClick={editEmail}
+              className="hover:text-text-primary"
+            >
               Use a different email
-            </Button>
-            <Button
-              variant="ghost"
-              size="xs"
+            </button>
+            <button
+              type="button"
               onClick={() => { if (resendIn === 0) void sendCode(); }}
               disabled={resendIn > 0 || busy}
-              className="-mr-2.5"
-              leftIcon={<RotateCcw size={10} aria-hidden />}
+              className="inline-flex items-center gap-1 hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
             >
+              <RotateCcw size={10} />
               {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}
-            </Button>
+            </button>
           </div>
         </>
       )}

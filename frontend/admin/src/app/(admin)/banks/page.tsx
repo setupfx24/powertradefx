@@ -186,7 +186,18 @@ export default function BanksPage() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const data = await adminApi.postForm<{ url?: string }>('/banks/upload-qr', formData);
+      const authToken = adminApi.getToken() || '';
+      const uploadUrl = `${getAdminApiBase()}/banks/upload-qr`;
+      const res = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}` },
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Upload failed' }));
+        throw new Error(err.detail || 'Upload failed');
+      }
+      const data = await res.json();
       const rel = typeof data.url === 'string' ? data.url : '';
       const qrUrl = rel.startsWith('http') ? rel : `${getAdminApiBase()}${rel.startsWith('/') ? rel : `/${rel}`}`;
       updateField('qr_code_url', qrUrl);
@@ -351,7 +362,7 @@ export default function BanksPage() {
                   {
                     key: 'account_holder',
                     label: 'Account Holder',
-                    placeholder: 'e.g. PowerTradeFX Pvt Ltd',
+                    placeholder: 'e.g. SwissCresta Pvt Ltd',
                   },
                   {
                     key: 'account_number',

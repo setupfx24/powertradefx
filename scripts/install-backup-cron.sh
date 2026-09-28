@@ -1,30 +1,28 @@
 #!/usr/bin/env bash
 #
-# PowerTradeFX — install the daily backup cron entry for the current user.
+# SwissCresta — install the daily backup cron entry for the current user.
 #
-# Idempotent: re-runs replace any prior powertradefx backup line in the
+# Idempotent: re-runs replace any prior swisscresta backup line in the
 # crontab so multiple invocations don't stack up duplicate jobs.
 #
 # Run once per server (typically as root, since `docker compose` and
 # /var/log writes need root on a default Docker install).
 set -euo pipefail
 
-COMPOSE_DIR="${POWERTRADEFX_DIR:-/opt/powertradefx}"
+COMPOSE_DIR="${SWISSCRESTA_DIR:-/opt/swisscresta}"
 SCRIPT="$COMPOSE_DIR/scripts/backup.sh"
-LOG="/var/log/powertradefx-backup.log"
+LOG="/var/log/swisscresta-backup.log"
 
 [[ -x "$SCRIPT" ]] || { echo "[install] $SCRIPT not executable — chmod +x scripts/*.sh"; exit 1; }
 [[ -f "$COMPOSE_DIR/.env" ]] || { echo "[install] $COMPOSE_DIR/.env missing"; exit 1; }
 
-# 03:00 server time, daily. Source .env so BACKUP_* + POSTGRES_USER are
-# visible to the script. Append output to a rotated log so cron failures
-# are diagnosable.
-# NOTE: cron runs jobs with /bin/sh (dash on Debian/Ubuntu), where
-# `source` is not a builtin — wrap in an explicit bash -c and use the
-# POSIX `.` so the job doesn't die before backup.sh even starts.
-LINE="0 3 * * * /bin/bash -c 'set -a; . $COMPOSE_DIR/.env; set +a; $SCRIPT' >> $LOG 2>&1"
+# 03:00 server time, daily. H-INF-2: the cron line no longer `source`s .env
+# (which would execute any command substitution in a value). backup.sh now loads
+# .env itself with a strict KEY=VALUE parser. Append output to a rotated log so
+# cron failures are diagnosable.
+LINE="0 3 * * * $SCRIPT >> $LOG 2>&1"
 
-# Strip any prior powertradefx line, then append the new one.
+# Strip any prior swisscresta line, then append the new one.
 ( crontab -l 2>/dev/null | grep -v -F "$SCRIPT"; echo "$LINE" ) | crontab -
 
 # Ensure the log file exists and is writable so the first run doesn't

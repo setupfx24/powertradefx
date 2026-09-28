@@ -4,10 +4,10 @@
 # recreates every object in the target database. Requires explicit YES.
 #
 # Usage:
-#   deploy/scripts/restore-db.sh /opt/powertradefx/backups/db/daily/powertradefx-YYYYMMDD-HHMMSS.dump
+#   deploy/scripts/restore-db.sh /opt/swisscresta/backups/db/daily/swisscresta-YYYYMMDD-HHMMSS.dump
 set -euo pipefail
 
-REPO_DIR="${REPO_DIR:-/opt/powertradefx}"
+REPO_DIR="${REPO_DIR:-/opt/swisscresta}"
 COMPOSE="docker compose -f $REPO_DIR/docker-compose.yml -f $REPO_DIR/docker-compose.prod.yml"
 
 FILE="${1:-}"

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import Image from 'next/image';
+import { SwissCrestaWordmark } from '@/components/layout/SwissCrestaWordmark';
 import {
   Search,
   LayoutTemplate,
@@ -9,7 +9,6 @@ import {
   MessageCircle,
   Settings,
   Calculator,
-  UserRound,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -41,14 +40,6 @@ interface TerminalLeftRailProps {
   onPanelsSelectCalc?: () => void;
 }
 
-/** Square icon control shared by the rail's buttons and links: idle
- *  secondary text, hover surface, accent tint when the panel is active. */
-const RAIL_ITEM =
-  'w-10 h-10 rounded-lg flex items-center justify-center shrink-0 transition-colors duration-150 ' +
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45';
-const RAIL_IDLE = 'text-text-secondary hover:text-text-primary hover:bg-bg-hover';
-const RAIL_ACTIVE = 'bg-accent/10 text-accent';
-
 function RailBtn({
   active,
   title,
@@ -67,7 +58,12 @@ function RailBtn({
       aria-label={title}
       aria-pressed={active}
       onClick={onClick}
-      className={clsx(RAIL_ITEM, active ? RAIL_ACTIVE : RAIL_IDLE)}
+      className={clsx(
+        'w-9 h-9 rounded-md flex items-center justify-center transition-colors shrink-0',
+        active
+          ? 'bg-accent/15 text-accent shadow-[inset_0_0_0_1px_rgba(99,102,241,0.25)]'
+          : 'text-text-tertiary hover:text-text-primary hover:bg-bg-hover',
+      )}
     >
       {children}
     </button>
@@ -93,37 +89,33 @@ export default function TerminalLeftRail({
 
   return (
     <aside
-      className="shrink-0 w-16 flex flex-col items-center border-r border-border-primary bg-bg-secondary z-[5]"
+      className="shrink-0 w-[52px] flex flex-col items-stretch border-r border-border-primary bg-bg-secondary z-[5]"
       aria-label="Terminal toolbar"
     >
-      <div className="flex flex-col items-center gap-1.5 pt-4 pb-3 border-b border-border-primary w-full">
-        <Link
-          href="/accounts"
-          title="Accounts"
-          className={clsx(RAIL_ITEM, 'bg-accent/10 hover:bg-accent/20 mb-2')}
-        >
-          <Image src="/marketing/powertradefx_fevicon.png" alt="PowerTradeFX" width={28} height={28} className="w-7 h-7 object-contain rounded-md" />
-        </Link>
+      <div className="flex flex-col items-center gap-0.5 pt-2 pb-1 px-1.5 border-b border-border-primary">
+        <div className="mb-1 flex justify-center w-full">
+          <SwissCrestaWordmark href="/accounts" variant="rail" />
+        </div>
         {/* Search — opens the Markets panel with the instrument search focused. */}
         <RailBtn title="Search symbols" onClick={onFocusSymbolSearch}>
-          <Search size={19} strokeWidth={1.75} />
+          <Search size={17} strokeWidth={1.75} />
         </RailBtn>
       </div>
 
-      <div className="flex-1 flex flex-col items-center overflow-y-auto overflow-x-hidden min-h-0 py-3 gap-2">
+      <div className="flex-1 flex flex-col items-center px-1.5 overflow-y-auto overflow-x-hidden min-h-0 py-1.5 gap-0.5">
         <RailBtn
           title="Panels — buy / sell order panel"
           active={panelsActive}
           onClick={onPanelsSelectOrder}
         >
-          <LayoutTemplate size={19} strokeWidth={1.75} />
+          <LayoutTemplate size={17} strokeWidth={1.75} />
         </RailBtn>
         <RailBtn
-          title="Live news — TradingView timeline"
+          title="Market news & economic calendar"
           active={terminalNewsOpen && !chartExpanded}
           onClick={onPanelsSelectNews}
         >
-          <Newspaper size={19} strokeWidth={1.75} />
+          <Newspaper size={17} strokeWidth={1.75} />
         </RailBtn>
         {onPanelsSelectCalc && (
           <RailBtn
@@ -131,25 +123,25 @@ export default function TerminalLeftRail({
             active={!!terminalCalcOpen && !chartExpanded && !terminalNewsOpen}
             onClick={onPanelsSelectCalc}
           >
-            <Calculator size={19} strokeWidth={1.75} />
+            <Calculator size={17} strokeWidth={1.75} />
           </RailBtn>
         )}
-        <div className="h-px w-8 bg-border-primary my-1" />
-        <Link href="/support" title="Support chat" className={clsx(RAIL_ITEM, RAIL_IDLE)}>
-          <MessageCircle size={19} strokeWidth={1.75} />
-        </Link>
-        <Link href="/profile" title="Settings" className={clsx(RAIL_ITEM, RAIL_IDLE)}>
-          <Settings size={19} strokeWidth={1.75} />
-        </Link>
       </div>
 
-      <div className="pb-[max(1rem,env(safe-area-inset-bottom,0px))] pt-2">
+      <div className="flex flex-col items-center gap-0.5 px-1.5 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] border-t border-border-primary">
+        <Link
+          href="/support"
+          title="Support chat"
+          className="w-9 h-9 rounded-md flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors"
+        >
+          <MessageCircle size={17} strokeWidth={1.75} />
+        </Link>
         <Link
           href="/profile"
-          title="Your profile"
-          className="w-10 h-10 rounded-full border-2 border-border-primary hover:border-accent transition-colors flex items-center justify-center text-text-secondary hover:text-accent"
+          title="Settings"
+          className="w-9 h-9 rounded-md flex items-center justify-center text-text-tertiary hover:text-text-primary hover:bg-bg-hover transition-colors"
         >
-          <UserRound size={19} strokeWidth={1.75} />
+          <Settings size={17} strokeWidth={1.75} />
         </Link>
       </div>
     </aside>

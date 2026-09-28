@@ -7,7 +7,7 @@ phone clients can read it without opening — most users prefer that.
 """
 from __future__ import annotations
 
-from .base import render_layout
+from .base import render_layout, platform_name
 
 
 def render_email_otp(
@@ -15,7 +15,7 @@ def render_email_otp(
     first_name: str | None,
     code: str,
     ttl_minutes: int = 10,
-    trader_app_url: str = "https://trade.powertradefx.com",
+    trader_app_url: str = "https://trade.swisscresta.com",
 ) -> tuple[str, str, str]:
     name = (first_name or "trader").strip() or "trader"
     base = trader_app_url.rstrip("/")
@@ -38,21 +38,22 @@ def render_email_otp(
     </p>
     """
 
-    subject = f"PowerTradeFX verification code: {code}"
+    pn = platform_name()
+    subject = f"{pn} verification code: {code}"
     html = render_layout(
         title="Verify your email",
-        intro=f"Hi {name}, here's your one-time code to confirm this email on PowerTradeFX.",
+        intro=f"Hi {name}, here's your one-time code to confirm this email on {pn}.",
         body_html=body,
         footer_note=(
             "This code is valid for one verification only. Do not share it "
-            "with anyone — PowerTradeFX staff will never ask you for it."
+            f"with anyone — {pn} staff will never ask you for it."
         ),
     )
 
     text_lines = [
         f"Hi {name},",
         "",
-        "Here's your PowerTradeFX email verification code:",
+        f"Here's your {pn} email verification code:",
         "",
         f"   {code}",
         "",
@@ -60,6 +61,6 @@ def render_email_otp(
         "",
         "If you didn't ask for this code, ignore this email.",
         "",
-        f"— PowerTradeFX team    {base}",
+        f"— {pn} team    {base}",
     ]
     return subject, html, "\n".join(text_lines)

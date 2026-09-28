@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.common.src.database import get_db
 from dependencies import require_permission
 from packages.common.src.models import User
-from packages.common.src.rate_limit import client_ip_for_inet
 from services import social_service
 
 router = APIRouter(prefix="/social", tags=["Social Trading"])
@@ -53,7 +52,7 @@ async def approve_master_request(
         max_investors=body.max_investors,
         master_type=body.master_type,
         admin_id=admin.id,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
 
 
@@ -68,7 +67,7 @@ async def reject_master_request(
     return await social_service.reject_master_request(
         master_id=master_id, reason=body.reason,
         admin_id=admin.id,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
 
 
@@ -95,7 +94,7 @@ async def update_master_settings(
         admin_commission_pct=body.admin_commission_pct,
         max_investors=body.max_investors,
         admin_id=admin.id,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
 
 
@@ -108,7 +107,7 @@ async def delete_master(
 ):
     return await social_service.delete_master(
         master_id=master_id, admin_id=admin.id,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )
 
 
@@ -118,15 +117,12 @@ async def master_transactions(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     filter_type: str = Query("all"),
-    date_from: str | None = Query(None, description="Inclusive start date (YYYY-MM-DD)"),
-    date_to: str | None = Query(None, description="Inclusive end date (YYYY-MM-DD)"),
     admin: User = Depends(require_permission("social.view")),
     db: AsyncSession = Depends(get_db),
 ):
     return await social_service.master_transactions(
         master_id=master_id, db=db,
         page=page, per_page=per_page, filter_type=filter_type,
-        date_from=date_from, date_to=date_to,
     )
 
 
@@ -147,5 +143,5 @@ async def distribute_pamm_profit(
 ):
     return await social_service.distribute_pamm_profit(
         master_id=master_id, admin_id=admin.id,
-        ip_address=client_ip_for_inet(request), db=db,
+        ip_address=request.client.host if request.client else None, db=db,
     )

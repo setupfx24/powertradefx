@@ -22,7 +22,7 @@ canonical reference (Deposit → User → tagged TradingAccount, all with
 import logging
 import uuid as uuid_lib
 from pathlib import Path
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from uuid import UUID
 from datetime import datetime
 
@@ -31,12 +31,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.models import (
-    BankAccount, BonusOffer, Deposit, InvestorAllocation, Transaction,
-    TradingAccount, User, UserBonus, Withdrawal,
+    BankAccount, BonusOffer, Deposit, Transaction, TradingAccount, User,
+    UserBonus, Withdrawal,
 )
 from packages.common.src.notify import create_notification
 from packages.common.src.config import get_settings
 from packages.common.src.path_safety import PathTraversalError, safe_join_under_base
+from packages.common.src.email_branding import apply_email_brand
+from packages.common.src.withdrawal_limits import available_to_withdraw
+from packages.common.src.bonus_service import apply_deposit_bonus, outstanding_bonus
 from . import oxapay_service, razorpay_service
 
 logger = logging.getLogger("wallet_service")
@@ -183,6 +186,7 @@ async def send_withdrawal_requested_email(
                 destination_str = f"Bank ****{str(acct)[-4:]}"
             elif upi:
                 destination_str = f"UPI {upi}"
+        await apply_email_brand(db, user_row)
         subject, html, text = render_withdrawal_requested(
             first_name=user_row.first_name,
             amount=withdrawal.amount,
@@ -190,7 +194,7 @@ async def send_withdrawal_requested_email(
             method=method_label or withdrawal.method or "manual",
             destination=destination_str,
             request_id=str(withdrawal.id),
-            trader_app_url=(_gs().TRADER_APP_URL or "https://trade.powertradefx.com"),
+            trader_app_url=(_gs().TRADER_APP_URL or "https://trade.swisscresta.com"),
         )
         fire_and_forget(send_email(user_row.email, subject, html, text=text))
     except Exception as _e:
@@ -238,7 +242,7 @@ def _send_bonus_emails_for_user(
             return
         from packages.common.src.email_templates import render_bonus_credited
         st = get_settings()
-        app_url = (getattr(st, "TRADER_APP_URL", None) or "https://trade.powertradefx.com")
+        app_url = (getattr(st, "TRADER_APP_URL", None) or "https://trade.swisscresta.com")
         for offer_name, bonus_amount in applied_bonuses:
             subject, html, text = render_bonus_credited(
                 first_name=user_row.first_name,
@@ -270,7 +274,7 @@ def _send_deposit_failed_email(
             return
         from packages.common.src.email_templates import render_deposit_failed
         st = get_settings()
-        app_url = (getattr(st, "TRADER_APP_URL", None) or "https://trade.powertradefx.com")
+        app_url = (getattr(st, "TRADER_APP_URL", None) or "https://trade.swisscresta.com")
         subject, html, text = render_deposit_failed(
             first_name=user_row.first_name,
             amount=deposit.amount,
@@ -283,6 +287,28 @@ def _send_deposit_failed_email(
         fire_and_forget(send_email(user_row.email, subject, html, text=text))
     except Exception as _e:
         logger.warning("deposit failed email send failed: %s", _e)
+
+
+def _safe_stored_upload(stored: str | None) -> str | None:
+    """C-ADMIN-1 (write-time): only persist a screenshot/proof path we can
+    confine to the uploads tree. The generic create_deposit accepts a
+    client-supplied screenshot_url; a crafted absolute or ``..`` value would
+    later be handed to the admin download endpoint. Drop anything we can't
+    confine (server-written upload paths always pass)."""
+    if not stored:
+        return None
+    raw = get_settings().WALLET_UPLOAD_ROOT.strip() or "uploads/wallet"
+    base = Path(raw)
+    if not base.is_absolute():
+        base = Path.cwd() / base
+    base = base.resolve().parent
+    try:
+        p = Path(stored)
+        rel = p.resolve().relative_to(base) if p.is_absolute() else Path(stored)
+        safe_join_under_base(base, *rel.parts)
+    except (ValueError, PathTraversalError):
+        return None
+    return stored
 
 
 def _wallet_upload_root() -> Path:
@@ -375,7 +401,7 @@ async def create_deposit(req, user_id: UUID, db: AsyncSession) -> dict:
         amount=req.amount,
         method=db_method,
         transaction_id=req.transaction_id,
-        screenshot_url=req.screenshot_url,
+        screenshot_url=_safe_stored_upload(req.screenshot_url),
         crypto_tx_hash=getattr(req, "crypto_tx_hash", None),
         crypto_address=getattr(req, "crypto_address", None),
         bank_account_id=bank.id if bank else None,
@@ -393,7 +419,7 @@ async def create_deposit(req, user_id: UUID, db: AsyncSession) -> dict:
                 amount=req.amount,
                 crypto_currency=crypto_currency,
                 order_id=str(deposit.id),
-                description=f"PowerTradeFX deposit ${float(req.amount):,.2f}",
+                description=f"SwissCresta deposit ${float(req.amount):,.2f}",
             )
             deposit.transaction_id = ox["track_id"]
             payment_url = ox["payment_url"]
@@ -601,6 +627,32 @@ async def handle_oxapay_webhook(
         return
 
     if oxapay_status == "paid":
+        # Phase 3 (OxaPay amount binding): the credited amount is always the
+        # recorded deposit.amount, never a client value. As a tamper check, if
+        # the callback echoes a USD invoice amount that does NOT match our
+        # record, do not auto-credit — route to manual review. (OxaPay only
+        # sends 'paid' on full settlement; underpayment arrives as a different
+        # status and is not credited here.)
+        _cb_amount = None
+        for _k in ("amount", "price_amount", "priceAmount"):
+            if payload.get(_k) is not None:
+                try:
+                    _cb_amount = Decimal(str(payload.get(_k)))
+                    break
+                except (InvalidOperation, ValueError, TypeError):
+                    continue
+        if _cb_amount is not None and abs(_cb_amount - (deposit.amount or Decimal("0"))) > Decimal("0.01"):
+            deposit.status = "manual_review"
+            deposit.rejection_reason = (
+                f"oxapay_amount_mismatch callback={_cb_amount} expected={deposit.amount}"
+            )
+            await db.commit()
+            logger.error(
+                "OxaPay webhook: amount mismatch deposit=%s callback=%s expected=%s → manual_review",
+                order_id, _cb_amount, deposit.amount,
+            )
+            return
+
         deposit.status = "auto_approved"
         deposit.approved_at = datetime.utcnow()
 
@@ -646,42 +698,11 @@ async def handle_oxapay_webhook(
                 description="Deposit to main wallet - oxapay (auto)",
             ))
 
-        # Apply bonus offers (mirrors admin approve_deposit logic)
-        bonus_msg = ""
-        applied_bonuses: list[tuple[str, Decimal]] = []
-        now = datetime.utcnow()
-        offers_q = await db.execute(
-            select(BonusOffer).where(
-                BonusOffer.is_active == True,
-                BonusOffer.bonus_type.in_(["deposit", "welcome"]),
-                BonusOffer.min_deposit <= deposit.amount,
-            )
+        # H-MONEY-2: single, dedup-guarded bonus application (was an inline copy).
+        applied_bonuses = await apply_deposit_bonus(db, user_row, deposit)
+        bonus_msg = "".join(
+            f" + ${float(a):.2f} bonus ({n})" for n, a in applied_bonuses
         )
-        for offer in offers_q.scalars().all():
-            if offer.starts_at and offer.starts_at > now:
-                continue
-            if offer.expires_at and offer.expires_at < now:
-                continue
-            if offer.percentage and offer.percentage > 0:
-                bonus_amount = deposit.amount * offer.percentage / Decimal("100")
-            elif offer.fixed_amount and offer.fixed_amount > 0:
-                bonus_amount = offer.fixed_amount
-            else:
-                continue
-            if offer.max_bonus and bonus_amount > offer.max_bonus:
-                bonus_amount = offer.max_bonus
-
-            user_row.main_wallet_balance = (user_row.main_wallet_balance or Decimal("0")) + bonus_amount
-            db.add(Transaction(
-                user_id=deposit.user_id,
-                account_id=None,
-                type="bonus",
-                amount=bonus_amount,
-                balance_after=user_row.main_wallet_balance,
-                description=f"Bonus: {offer.name} ({offer.percentage or 0}%)",
-            ))
-            bonus_msg = f" + ${float(bonus_amount):.2f} bonus ({offer.name})"
-            applied_bonuses.append((offer.name, bonus_amount))
 
         await create_notification(
             db, deposit.user_id,
@@ -697,6 +718,7 @@ async def handle_oxapay_webhook(
             )
             from packages.common.src.email_templates import render_deposit_confirmed
             from packages.common.src.config import get_settings as _gs
+            await apply_email_brand(db, user_row)
             if smtp_configured() and user_row.email:
                 subject, html, text = render_deposit_confirmed(
                     first_name=user_row.first_name,
@@ -705,7 +727,7 @@ async def handle_oxapay_webhook(
                     method="Crypto (OxaPay)",
                     reference=str(deposit.id),
                     new_balance=user_row.main_wallet_balance,
-                    trader_app_url=(_gs().TRADER_APP_URL or "https://trade.powertradefx.com"),
+                    trader_app_url=(_gs().TRADER_APP_URL or "https://trade.swisscresta.com"),
                 )
                 fire_and_forget(send_email(user_row.email, subject, html, text=text))
                 _send_bonus_emails_for_user(user_row, applied_bonuses)
@@ -731,6 +753,7 @@ async def handle_oxapay_webhook(
             )
             fail_user = fail_user_q.scalar_one_or_none()
             if fail_user:
+                await apply_email_brand(db, fail_user)
                 _send_deposit_failed_email(
                     fail_user, deposit, oxapay_status, method_label="Crypto (OxaPay)",
                 )
@@ -764,9 +787,9 @@ async def create_local_banking_request(
     marks the deposit 'approved' with the actual paid amount, crediting
     the main wallet through the standard manual-approval flow.
 
-    KYC is required: card / UPI / bank rails contractually need a verified
-    identity behind every payout. The same gate that used to sit on the
-    Razorpay popup now sits here.
+    No KYC gate here — platform policy is deposit/trade freely, verify
+    identity at withdrawal time (assert_kyc_approved_for_withdrawal).
+    Admin still reviews each request manually before sharing payment rails.
     """
     from packages.common.src.settings_store import get_bool_setting
 
@@ -780,15 +803,11 @@ async def create_local_banking_request(
     if amount < 0:
         raise HTTPException(status_code=400, detail="Invalid amount")
 
-    # KYC gate — same semantics as the old Razorpay path.
     user_row = (
         await db.execute(select(User).where(User.id == user_id))
     ).scalar_one_or_none()
     if user_row is None:
         raise HTTPException(status_code=404, detail="User not found")
-    kyc = (user_row.kyc_status or "").lower()
-    if kyc not in ("approved", "verified"):
-        raise HTTPException(status_code=403, detail="KYC_REQUIRED")
 
     deposit = Deposit(
         user_id=user_id,
@@ -881,7 +900,7 @@ async def _email_admins_local_banking_event(
     if not admins:
         return
 
-    admin_app_url = (_gs().ADMIN_APP_URL or "https://admin.powertradefx.com").rstrip("/")
+    admin_app_url = (_gs().ADMIN_APP_URL or "https://admin.swisscresta.com").rstrip("/")
     body_html = (
         "<p>" + "</p><p>".join(body_lines) + "</p>"
     )
@@ -1080,18 +1099,13 @@ async def create_razorpay_deposit(
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid amount")
 
-    # KYC gate (Razorpay-only). Verified identity is contractually required to
-    # process card / UPI payments, so this is the one path where we hard-block
-    # unverified users. Every other deposit / withdraw / trade method runs
-    # without this check.
+    # No KYC gate on deposits — platform policy is deposit/trade freely,
+    # verify identity at withdrawal time (assert_kyc_approved_for_withdrawal).
     user_row = (
         await db.execute(select(User).where(User.id == user_id))
     ).scalar_one_or_none()
     if user_row is None:
         raise HTTPException(status_code=404, detail="User not found")
-    kyc = (user_row.kyc_status or "").lower()
-    if kyc not in ("approved", "verified"):
-        raise HTTPException(status_code=403, detail="KYC_REQUIRED")
 
     # Honour the user's chosen credit target (wallet-bound account vs main
     # wallet). Stored on the row so the webhook/verify path credits the
@@ -1140,7 +1154,7 @@ async def create_razorpay_deposit(
         "amount_paise": order["amount_paise"],
         "amount_inr": order["amount_inr"],
         "currency": order["currency"],
-        "name": "PowerTradeFX",
+        "name": "SwissCresta",
         "description": "Wallet deposit",
     }
 
@@ -1208,43 +1222,11 @@ async def _credit_razorpay_deposit_locked(
             description="Deposit to main wallet - razorpay (auto)",
         ))
 
-    # Apply active bonus offers — mirrors the OxaPay/NOWPayments path so promo
-    # behaviour is identical regardless of provider.
-    bonus_msg = ""
-    applied_bonuses: list[tuple[str, Decimal]] = []
-    now = datetime.utcnow()
-    offers_q = await db.execute(
-        select(BonusOffer).where(
-            BonusOffer.is_active == True,
-            BonusOffer.bonus_type.in_(["deposit", "welcome"]),
-            BonusOffer.min_deposit <= deposit.amount,
-        )
+    # H-MONEY-2: single, dedup-guarded bonus application (was an inline copy).
+    applied_bonuses = await apply_deposit_bonus(db, user_row, deposit)
+    bonus_msg = "".join(
+        f" + ${float(a):.2f} bonus ({n})" for n, a in applied_bonuses
     )
-    for offer in offers_q.scalars().all():
-        if offer.starts_at and offer.starts_at > now:
-            continue
-        if offer.expires_at and offer.expires_at < now:
-            continue
-        if offer.percentage and offer.percentage > 0:
-            bonus_amount = deposit.amount * offer.percentage / Decimal("100")
-        elif offer.fixed_amount and offer.fixed_amount > 0:
-            bonus_amount = offer.fixed_amount
-        else:
-            continue
-        if offer.max_bonus and bonus_amount > offer.max_bonus:
-            bonus_amount = offer.max_bonus
-
-        user_row.main_wallet_balance = (user_row.main_wallet_balance or Decimal("0")) + bonus_amount
-        db.add(Transaction(
-            user_id=deposit.user_id,
-            account_id=None,
-            type="bonus",
-            amount=bonus_amount,
-            balance_after=user_row.main_wallet_balance,
-            description=f"Bonus: {offer.name} ({offer.percentage or 0}%)",
-        ))
-        bonus_msg = f" + ${float(bonus_amount):.2f} bonus ({offer.name})"
-        applied_bonuses.append((offer.name, bonus_amount))
 
     await create_notification(
         db, deposit.user_id,
@@ -1260,6 +1242,7 @@ async def _credit_razorpay_deposit_locked(
         )
         from packages.common.src.email_templates import render_deposit_confirmed
         from packages.common.src.config import get_settings as _gs
+        await apply_email_brand(db, user_row)
         if smtp_configured() and user_row.email:
             subject, html, text = render_deposit_confirmed(
                 first_name=user_row.first_name,
@@ -1268,7 +1251,7 @@ async def _credit_razorpay_deposit_locked(
                 method="Card / UPI (Razorpay)",
                 reference=str(deposit.id),
                 new_balance=user_row.main_wallet_balance,
-                trader_app_url=(_gs().TRADER_APP_URL or "https://trade.powertradefx.com"),
+                trader_app_url=(_gs().TRADER_APP_URL or "https://trade.swisscresta.com"),
             )
             fire_and_forget(send_email(user_row.email, subject, html, text=text))
             _send_bonus_emails_for_user(user_row, applied_bonuses)
@@ -1442,6 +1425,24 @@ async def release_bonuses_after_trade(
 
 # ─── Withdrawals ──────────────────────────────────────────────────────────
 
+async def assert_kyc_approved_for_withdrawal(db: AsyncSession, user_id: UUID) -> None:
+    """Withdrawal-time KYC gate — the ONLY hard KYC block on the platform.
+
+    Policy: users can register, deposit, and trade without KYC; identity is
+    verified the moment money leaves the platform. Every withdrawal-creation
+    path (standard, manual UPI/QR, on-chain) must call this before touching
+    balances. 403 detail "KYC_REQUIRED" is a contract with the trader UI,
+    which routes the user to /kyc on that exact string.
+    """
+    row = (
+        await db.execute(select(User.kyc_status).where(User.id == user_id))
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if (row or "").lower() not in ("approved", "verified"):
+        raise HTTPException(status_code=403, detail="KYC_REQUIRED")
+
+
 async def create_withdrawal(req, user_id: UUID, db: AsyncSession) -> dict:
     from packages.common.src.settings_store import get_bool_setting
     if await get_bool_setting("maintenance_mode", False):
@@ -1453,16 +1454,31 @@ async def create_withdrawal(req, user_id: UUID, db: AsyncSession) -> dict:
     user_row = user_q.scalar_one_or_none()
     if not user_row:
         raise HTTPException(status_code=404, detail="User not found")
+    if (user_row.kyc_status or "").lower() not in ("approved", "verified"):
+        raise HTTPException(status_code=403, detail="KYC_REQUIRED")
 
     # Resolve debit source — honor explicit user choice if provided
     # (`req.source`), else auto-route (wallet-bound when present, else
     # main_wallet). Balance check uses whichever source is authoritative.
     pref = getattr(req, "source", None)
     source_kind, source_row = await _resolve_debit_source(db, user_id, preference=pref)
+    # C-MONEY-3 / H-MONEY-1: for a trading account, only funds NOT backing open
+    # positions are withdrawable — never the raw balance (which includes margin
+    # locked in live trades). Routed through the shared helper so every
+    # withdrawal path agrees.
     if source_kind == "trading":
-        available = source_row.balance or Decimal("0")
+        available = available_to_withdraw(
+            "trading",
+            balance=source_row.balance,
+            margin_used=source_row.margin_used,
+            free_margin=source_row.free_margin,
+        )
     else:
-        available = source_row.main_wallet_balance if source_row else Decimal("0")
+        available = available_to_withdraw(
+            "main",
+            main_wallet_balance=source_row.main_wallet_balance if source_row else None,
+            outstanding_bonus=await outstanding_bonus(db, user_id),  # H-MONEY-2
+        )
     if available < req.amount:
         if source_kind == "trading":
             detail = (
@@ -1554,6 +1570,8 @@ async def create_manual_withdrawal(
     if not await get_bool_setting("allow_withdrawals", True):
         raise HTTPException(status_code=403, detail="Withdrawals are currently disabled")
 
+    await assert_kyc_approved_for_withdrawal(db, user_id)
+
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid amount")
 
@@ -1598,10 +1616,21 @@ async def create_manual_withdrawal(
 
     # Resolve debit source — same logic as create_withdrawal.
     source_kind, source_row = await _resolve_debit_source(db, user_id)
+    # C-MONEY-3 / H-MONEY-1: trading-account withdrawals exclude margin-backed
+    # funds via the shared helper (see create_withdrawal).
     if source_kind == "trading":
-        available = source_row.balance or Decimal("0")
+        available = available_to_withdraw(
+            "trading",
+            balance=source_row.balance,
+            margin_used=source_row.margin_used,
+            free_margin=source_row.free_margin,
+        )
     else:
-        available = source_row.main_wallet_balance if source_row else Decimal("0")
+        available = available_to_withdraw(
+            "main",
+            main_wallet_balance=source_row.main_wallet_balance if source_row else None,
+            outstanding_bonus=await outstanding_bonus(db, user_id),  # H-MONEY-2
+        )
     if available < amount:
         if source_kind == "trading":
             raise HTTPException(
@@ -1674,30 +1703,6 @@ async def create_manual_withdrawal(
 
 # ─── Transfers ────────────────────────────────────────────────────────────
 
-async def _assert_not_managed(db: AsyncSession, *account_ids: UUID) -> None:
-    """Copy/MAM sub-accounts are settled by their own flows (stop copy /
-    managed withdrawal). Letting the generic transfer endpoints drain them
-    while the allocation is live paid users twice — once via the transfer,
-    once via the settlement refund."""
-    ids = [a for a in account_ids if a is not None]
-    if not ids:
-        return
-    q = await db.execute(
-        select(InvestorAllocation.id).where(
-            InvestorAllocation.investor_account_id.in_(ids),
-            InvestorAllocation.status.in_(["active", "pending", "paused_drawdown"]),
-        ).limit(1)
-    )
-    if q.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "This account is managed by an active copy/MAM subscription. "
-                "Stop the subscription (or withdraw the investment) to settle "
-                "its funds to your wallet."
-            ),
-        )
-
 async def internal_wallet_transfer(req, user_id: UUID, db: AsyncSession) -> dict:
     if req.from_account_id == req.to_account_id:
         raise HTTPException(status_code=400, detail="Choose two different accounts")
@@ -1725,8 +1730,6 @@ async def internal_wallet_transfer(req, user_id: UUID, db: AsyncSession) -> dict
     to_a = locked.get(req.to_account_id)
     if not from_a or not to_a:
         raise HTTPException(status_code=404, detail="Account not found")
-
-    await _assert_not_managed(db, from_a.id, to_a.id)
 
     free = (from_a.balance or Decimal("0")) - (from_a.margin_used or Decimal("0"))
     if free < amt:
@@ -1791,8 +1794,6 @@ async def transfer_trading_to_main(req, user_id: UUID, db: AsyncSession) -> dict
     if not account:
         raise HTTPException(status_code=404, detail="Trading account not found")
 
-    await _assert_not_managed(db, account.id)
-
     free = (account.balance or Decimal("0")) - (account.margin_used or Decimal("0"))
     if free < amt:
         raise HTTPException(
@@ -1842,11 +1843,18 @@ async def transfer_main_to_trading(req, user_id: UUID, db: AsyncSession) -> dict
     if not user_row:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # H-MONEY-2: bonus credit is non-withdrawable, and moving it to a trading
+    # account would launder it into withdrawable balance (trading withdrawals
+    # ignore bonus). Only the real (non-bonus) main balance may be transferred.
     main_bal = user_row.main_wallet_balance or Decimal("0")
-    if main_bal < amt:
+    available = available_to_withdraw(
+        "main", main_wallet_balance=main_bal,
+        outstanding_bonus=await outstanding_bonus(db, user_id),
+    )
+    if available < amt:
         raise HTTPException(
             status_code=400,
-            detail=f"Insufficient main wallet balance. Available: ${float(main_bal):.2f}",
+            detail=f"Insufficient transferable main wallet balance. Available: ${float(available):.2f}",
         )
 
     acc_q = await db.execute(
@@ -2016,8 +2024,7 @@ async def wallet_summary(user_id: UUID, account_id: UUID | None, db: AsyncSessio
     wd_glob = await db.execute(
         select(func.coalesce(func.sum(Withdrawal.amount), 0)).where(
             Withdrawal.user_id == user_id,
-            # "paid" is the terminal state the admin's mark-paid action writes.
-            Withdrawal.status.in_(["approved", "completed", "paid"]),
+            Withdrawal.status.in_(["approved", "completed"]),
         )
     )
     total_withdrawn = float(wd_glob.scalar() or 0)
