@@ -139,4 +139,11 @@ services:
       - "127.0.0.1:3013:3001"
     environment:
       ADMIN_API_PROXY_TARGET: http://admin-api:8001
+      # CSRF allowlist for the /admin-api proxy. Explicit in production:
+      # mutations whose Origin is neither listed here nor the origin the
+      # request was addressed to (nginx-set Host) are refused, so a script on
+      # any other powertradefx.com host (same site, so SameSite=strict does not
+      # help) cannot ride the admin session cookie. White-label tenant admin
+      # hosts (admin.<broker-domain>) are same-origin and need no entry.
+      ADMIN_ALLOWED_ORIGINS: https://admin.powertradefx.com
     restart: always

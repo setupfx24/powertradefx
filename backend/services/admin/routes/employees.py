@@ -8,6 +8,7 @@ from dependencies import require_super_admin, EMPLOYEE_ROLE_PERMISSIONS
 from routes.auth import _set_admin_cookie
 from packages.common.src.models import User
 from packages.common.src.admin_schemas import EmployeeIn, EmployeeUpdate
+from packages.common.src.rate_limit import client_ip_for_inet
 from services import employee_service
 
 router = APIRouter(prefix="/employees", tags=["Employees"])
@@ -48,7 +49,7 @@ async def create_employee(
 ):
     return await employee_service.create_employee(
         body=body, admin=admin,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -62,7 +63,7 @@ async def update_employee(
 ):
     return await employee_service.update_employee(
         employee_id=employee_id, body=body, admin=admin,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -75,7 +76,7 @@ async def delete_employee(
 ):
     return await employee_service.delete_employee(
         employee_id=employee_id, admin=admin,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -124,7 +125,7 @@ async def update_employee_permissions(
         raise HTTPException(status_code=400, detail="extra_permissions must be a list of strings")
     return await employee_service.update_employee_permissions(
         employee_id=employee_id, extra_permissions=perms, admin=admin,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -138,7 +139,7 @@ async def login_as_employee(
 ):
     result = await employee_service.login_as_employee(
         employee_id=employee_id, admin=admin,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
     # The admin session lives in an HttpOnly cookie and get_current_admin
     # reads the cookie BEFORE any Bearer header — without swapping the

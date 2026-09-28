@@ -6,6 +6,8 @@ pydantic>=2.5.0
 pydantic-settings>=2.1.0
 PyJWT>=2.8.0
 # bcrypt via packages/common (admin auth uses packages.common.src.auth, not passlib)
+# TOTP verification for admin login MFA (same pin as the gateway).
+pyotp>=2.9.0
 redis>=5.0.0
 python-multipart>=0.0.18
 sentry-sdk[fastapi]>=2.0.0

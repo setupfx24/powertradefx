@@ -23,7 +23,8 @@ from packages.common.src.models import (
 )
 from packages.common.src.redis_client import redis_client, PriceChannel, is_tick_stale
 from packages.common.src.instrument_pricing import resolve_commission
-from packages.common.src.ib_commission import distribute_ib_commission
+from packages.common.src.ib_commission import distribute_ib_commission, settle_ib_commissions
+from packages.common.src.pending_orders import evaluate_trigger
 from packages.common.src.market_hours import is_market_open
 from packages.common.src.settings_store import get_bool_setting
 from packages.common.src.trading_service import quote_to_account_pnl, cross_rate_for
@@ -48,7 +49,25 @@ class MatchingEngine:
     async def start(self):
         self._running = True
         logger.info("B-Book Matching Engine started")
-        await self._monitor_pending_orders()
+        await asyncio.gather(self._monitor_pending_orders(), self._settle_ib_loop())
+
+    async def _settle_ib_loop(self) -> None:
+        """Release IB accruals whose source trade has closed (every 10 s).
+
+        Lives here rather than on every close path (manual, SL/TP, stop-out,
+        copy, algo) so ONE loop is the single place an accrual becomes a
+        payable commission, whatever closed the trade. Money still only
+        moves when an admin approves the payout (business_service)."""
+        while self._running:
+            try:
+                async with AsyncSessionLocal() as db:
+                    n = await settle_ib_commissions(db)
+                    await db.commit()
+                    if n:
+                        logger.info("IB settlement: %d commission(s) released to pending payout", n)
+            except Exception as e:
+                logger.error(f"IB settlement error: {e}")
+            await asyncio.sleep(10.0)
 
     async def stop(self):
         self._running = False
@@ -91,30 +110,23 @@ class MatchingEngine:
                             continue
 
                         bid, ask = price_data
-                        triggered = False
-
-                        if order.order_type == OrderType.LIMIT:
-                            if order.side == OrderSide.BUY and ask <= order.price:
-                                triggered = True
-                            elif order.side == OrderSide.SELL and bid >= order.price:
-                                triggered = True
-
-                        elif order.order_type == OrderType.STOP:
-                            if order.side == OrderSide.BUY and ask >= order.price:
-                                triggered = True
-                            elif order.side == OrderSide.SELL and bid <= order.price:
-                                triggered = True
-
-                        elif order.order_type == OrderType.STOP_LIMIT:
-                            if order.side == OrderSide.BUY and ask >= order.price:
-                                if order.stop_limit_price and ask <= order.stop_limit_price:
-                                    triggered = True
-                            elif order.side == OrderSide.SELL and bid <= order.price:
-                                if order.stop_limit_price and bid >= order.stop_limit_price:
-                                    triggered = True
-
-                        if triggered:
-                            await self._execute_pending_order(order, bid, ask, db)
+                        decision = evaluate_trigger(
+                            order.order_type, order.side, order.price,
+                            order.stop_limit_price, bid, ask,
+                        )
+                        if decision.convert_to_limit is not None:
+                            # Stop leg of a stop-limit hit: it now rests as a
+                            # plain limit at the limit price (MT5 semantics).
+                            # stop_limit_price is kept on the row for audit.
+                            order.order_type = OrderType.LIMIT
+                            order.price = decision.convert_to_limit
+                            logger.info(
+                                "Stop-limit %s triggered: now a %s limit @ %s",
+                                order.id, order.side.value, order.price,
+                            )
+                            continue
+                        if decision.triggered:
+                            await self._execute_pending_order(order, decision.fill_price, db)
 
                     await db.commit()
 
@@ -123,7 +135,9 @@ class MatchingEngine:
 
             await asyncio.sleep(0.1)
 
-    async def _execute_pending_order(self, order: Order, bid: Decimal, ask: Decimal, db: AsyncSession):
+    async def _execute_pending_order(self, order: Order, fill_price: Decimal, db: AsyncSession):
+        """Open the position for a triggered pending order at fill_price
+        (limit price for limits, market for stops — see pending_orders)."""
         # Maintenance mode blocks pending fills exactly like it blocks
         # market orders in the gateway. The order stays pending and will
         # fill on the first tick after maintenance ends (if still valid).
@@ -163,8 +177,7 @@ class MatchingEngine:
         if not market_open:
             return
 
-        # Redis quotes already include platform spread (symmetric).
-        fill_price = ask if order.side == OrderSide.BUY else bid
+        fill_price = Decimal(str(fill_price))
         margin = (order.lots * instrument.contract_size * fill_price) / Decimal(str(account.leverage))
 
         # Margin check against RECOMPUTED values, not the stored

@@ -5,6 +5,7 @@ from packages.common.src.database import get_db
 from dependencies import require_super_admin
 from packages.common.src.models import User
 from packages.common.src.admin_schemas import SystemSettingUpdate
+from packages.common.src.rate_limit import client_ip_for_inet
 from services import settings_service
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
@@ -28,6 +29,6 @@ async def update_settings(
     return await settings_service.update_settings(
         body=body,
         admin_id=admin.id,
-        ip_address=request.client.host if request.client else None,
+        ip_address=client_ip_for_inet(request),
         db=db,
     )

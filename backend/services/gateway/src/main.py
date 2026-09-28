@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.config import get_settings
 from packages.common.src.database import get_db, AsyncSessionLocal
-from packages.common.src.redis_client import redis_client, PriceChannel, BARS_UPDATES_CHANNEL, CONFIG_INSTRUMENTS_RELOAD_CHANNEL
+from packages.common.src.redis_client import redis_client, PriceChannel, BARS_UPDATES_CHANNEL, CONFIG_INSTRUMENTS_RELOAD_CHANNEL, FEED_STATUS_KEY
 from packages.common.src.price_cache import price_cache
 from packages.common.src.kafka_client import close_producer
 from packages.common.src.auth import decode_token, require_onboarded
@@ -348,7 +348,27 @@ app.include_router(ai_strategies.router, prefix="/api/v1/ai-strategies", tags=["
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "gateway"}
+    """Liveness + price-feed state.
+
+    `status` is "degraded" (still HTTP 200 — the gateway itself is fine)
+    when market-data reports the primary feed down during market hours, so
+    uptime monitors can alert on the body instead of a client noticing that
+    gold is three weeks old. `feed` is the raw market-data heartbeat, or
+    None if market-data has not written one in the last two minutes.
+    """
+    feed = None
+    try:
+        raw = await redis_client.get(FEED_STATUS_KEY)
+        if raw:
+            feed = json.loads(raw)
+    except Exception:
+        feed = None
+    degraded = feed is None or bool(feed.get("degraded"))
+    return {
+        "status": "degraded" if degraded else "ok",
+        "service": "gateway",
+        "feed": feed,
+    }
 
 
 # ============================================

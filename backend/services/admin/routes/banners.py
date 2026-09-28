@@ -7,6 +7,7 @@ from packages.common.src.database import get_db
 from dependencies import require_permission
 from packages.common.src.models import User
 from packages.common.src.admin_schemas import BannerIn
+from packages.common.src.rate_limit import client_ip_for_inet
 from services import banner_service
 
 router = APIRouter(prefix="/banners", tags=["Banners"])
@@ -43,7 +44,7 @@ async def create_banner(
 ):
     return await banner_service.create_banner(
         body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -57,7 +58,7 @@ async def update_banner(
 ):
     return await banner_service.update_banner(
         banner_id=banner_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -70,5 +71,5 @@ async def delete_banner(
 ):
     return await banner_service.delete_banner(
         banner_id=banner_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )

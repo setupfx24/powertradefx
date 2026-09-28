@@ -45,7 +45,7 @@ async def get_current_price(symbol: str) -> tuple[Decimal, Decimal]:
     # SL/TP engine and pending-order matcher already apply.
     if is_tick_stale(tick):
         raise TradingServiceError(
-            f"No live price for {symbol} right now — market data is reconnecting. Please try again in a few seconds."
+            f"No live price for {symbol} — the price feed is offline, so trading on it is paused until it recovers."
         )
     return Decimal(str(tick["bid"])), Decimal(str(tick["ask"]))
 

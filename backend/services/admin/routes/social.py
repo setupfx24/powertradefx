@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.common.src.database import get_db
 from dependencies import require_permission
 from packages.common.src.models import User
+from packages.common.src.rate_limit import client_ip_for_inet
 from services import social_service
 
 router = APIRouter(prefix="/social", tags=["Social Trading"])
@@ -52,7 +53,7 @@ async def approve_master_request(
         max_investors=body.max_investors,
         master_type=body.master_type,
         admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -67,7 +68,7 @@ async def reject_master_request(
     return await social_service.reject_master_request(
         master_id=master_id, reason=body.reason,
         admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -94,7 +95,7 @@ async def update_master_settings(
         admin_commission_pct=body.admin_commission_pct,
         max_investors=body.max_investors,
         admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -107,7 +108,7 @@ async def delete_master(
 ):
     return await social_service.delete_master(
         master_id=master_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -143,5 +144,5 @@ async def distribute_pamm_profit(
 ):
     return await social_service.distribute_pamm_profit(
         master_id=master_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )

@@ -54,9 +54,24 @@ class _DB:
         return None
 
 
-def _token(admin_id, delta_seconds, sid=None):
-    exp = datetime.now(timezone.utc) + timedelta(seconds=delta_seconds)
-    payload = {"admin_id": str(admin_id), "type": "admin", "exp": exp}
+_PWD_HASH = "$2b$12$dummyhashfortests000000000000000000000000000000000000"
+
+
+def _admin(admin_id, role):
+    return SimpleNamespace(
+        id=admin_id, role=role, first_name="A", last_name="B", status="active",
+        password_hash=_PWD_HASH,
+    )
+
+
+def _token(admin_id, delta_seconds, sid=None, pwd_hash=_PWD_HASH):
+    now = datetime.now(timezone.utc)
+    exp = now + timedelta(seconds=delta_seconds)
+    payload = {
+        "admin_id": str(admin_id), "type": "admin", "exp": exp, "iat": now,
+        "iss": auth_service.ADMIN_JWT_ISSUER,
+        "pwd": auth_service.password_fingerprint(pwd_hash),
+    }
     if sid is not None:
         payload["sid"] = str(sid)
     return jwt.encode(payload, S.ADMIN_JWT_SECRET, algorithm=S.ADMIN_JWT_ALGORITHM)
@@ -64,25 +79,50 @@ def _token(admin_id, delta_seconds, sid=None):
 
 class AdminRefreshTests(unittest.TestCase):
     def test_expired_token_rejected(self):
-        body = SimpleNamespace(access_token=_token(uuid4(), -3600))  # expired 1h ago
+        token = _token(uuid4(), -3600)  # expired 1h ago
         with self.assertRaises(HTTPException) as ctx:
-            asyncio.run(auth_service.admin_refresh(body, _DB(None)))
+            asyncio.run(auth_service.admin_refresh(token, _DB(None)))
+        self.assertEqual(ctx.exception.status_code, 401)
+
+    def test_missing_token_rejected(self):
+        with self.assertRaises(HTTPException) as ctx:
+            asyncio.run(auth_service.admin_refresh(None, _DB(None)))
+        self.assertEqual(ctx.exception.status_code, 401)
+
+    def test_wrong_issuer_rejected(self):
+        admin_id = uuid4()
+        now = datetime.now(timezone.utc)
+        payload = {"admin_id": str(admin_id), "type": "admin", "iat": now,
+                   "exp": now + timedelta(hours=1), "iss": "someone-else",
+                   "pwd": auth_service.password_fingerprint(_PWD_HASH)}
+        token = jwt.encode(payload, S.ADMIN_JWT_SECRET, algorithm=S.ADMIN_JWT_ALGORITHM)
+        with self.assertRaises(HTTPException) as ctx:
+            asyncio.run(auth_service.admin_refresh(token, _DB(_admin(admin_id, "admin"))))
+        self.assertEqual(ctx.exception.status_code, 401)
+
+    def test_password_rotation_rejects_old_token(self):
+        # Token fingerprinted against the OLD hash must not refresh once the
+        # stored hash changed.
+        admin_id = uuid4()
+        token = _token(admin_id, 3600, pwd_hash="$2b$12$oldhash")
+        with self.assertRaises(HTTPException) as ctx:
+            asyncio.run(auth_service.admin_refresh(token, _DB(_admin(admin_id, "admin"))))
         self.assertEqual(ctx.exception.status_code, 401)
 
     def test_valid_token_refreshes(self):
         # No sid → grandfathered token; refresh upgrades it to a revocable session.
         admin_id = uuid4()
-        admin = SimpleNamespace(id=admin_id, role="super_admin", first_name="A", last_name="B", status="active")
-        body = SimpleNamespace(access_token=_token(admin_id, 3600))  # valid 1h
-        out = asyncio.run(auth_service.admin_refresh(body, _DB(admin)))
+        admin = _admin(admin_id, "super_admin")
+        token = _token(admin_id, 3600)  # valid 1h
+        out = asyncio.run(auth_service.admin_refresh(token, _DB(admin)))
         self.assertTrue(out.access_token)
         self.assertEqual(out.role, "super_admin")
 
     def test_revoked_session_cannot_refresh(self):
         # A token with a sid whose session was revoked must NOT be refreshable.
         admin_id, sid = uuid4(), uuid4()
-        admin = SimpleNamespace(id=admin_id, role="admin", first_name="A", last_name="B", status="active")
-        body = SimpleNamespace(access_token=_token(admin_id, 3600, sid=sid))
+        admin = _admin(admin_id, "admin")
+        token = _token(admin_id, 3600, sid=sid)
         orig = auth_service._session_is_active
 
         async def _revoked(_sid):
@@ -91,15 +131,15 @@ class AdminRefreshTests(unittest.TestCase):
         auth_service._session_is_active = _revoked
         try:
             with self.assertRaises(HTTPException) as ctx:
-                asyncio.run(auth_service.admin_refresh(body, _DB(admin)))
+                asyncio.run(auth_service.admin_refresh(token, _DB(admin)))
             self.assertEqual(ctx.exception.status_code, 401)
         finally:
             auth_service._session_is_active = orig
 
     def test_active_session_refreshes_and_keeps_sid(self):
         admin_id, sid = uuid4(), uuid4()
-        admin = SimpleNamespace(id=admin_id, role="admin", first_name="A", last_name="B", status="active")
-        body = SimpleNamespace(access_token=_token(admin_id, 3600, sid=sid))
+        admin = _admin(admin_id, "admin")
+        token = _token(admin_id, 3600, sid=sid)
         orig = auth_service._session_is_active
 
         async def _active(_sid):
@@ -107,12 +147,18 @@ class AdminRefreshTests(unittest.TestCase):
 
         auth_service._session_is_active = _active
         try:
-            out = asyncio.run(auth_service.admin_refresh(body, _DB(admin)))
+            out = asyncio.run(auth_service.admin_refresh(token, _DB(admin)))
         finally:
             auth_service._session_is_active = orig
         # The reissued token must carry the SAME sid (session reused, still revocable).
-        decoded = jwt.decode(out.access_token, S.ADMIN_JWT_SECRET, algorithms=[S.ADMIN_JWT_ALGORITHM])
+        decoded = jwt.decode(
+            out.access_token, S.ADMIN_JWT_SECRET, algorithms=[S.ADMIN_JWT_ALGORITHM],
+            issuer=auth_service.ADMIN_JWT_ISSUER,
+        )
         self.assertEqual(decoded.get("sid"), str(sid))
+        self.assertEqual(decoded.get("iss"), auth_service.ADMIN_JWT_ISSUER)
+        self.assertTrue(decoded.get("jti"))
+        self.assertEqual(decoded.get("pwd"), auth_service.password_fingerprint(_PWD_HASH))
 
 
 if __name__ == "__main__":

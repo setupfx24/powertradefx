@@ -72,8 +72,10 @@ class IBCommission(Base):
     commission_type = Column(String(30))
     amount = Column(Numeric(18, 8), nullable=False)
     mlm_level = Column(Integer, default=1)
-    # pending → an admin has not released it yet (the engine only ever writes
-    # this) | paid → released and credited | rejected → voided, never credited.
+    # accrued → earned at fill on a trade that is still OPEN (not owed yet;
+    # ib_commission.settle_ib_commissions releases it once the position is
+    # closed) | pending → releasable, an admin has not approved it yet |
+    # paid → released and credited | rejected → voided, never credited.
     status = Column(String(20), default="pending")
     # Stamped when an admin releases the payout, not when the commission was
     # earned. NULL on rows that predate the approval flow (alembic 0065).

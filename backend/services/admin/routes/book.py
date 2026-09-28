@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.database import get_db
 from packages.common.src.models import User
+from packages.common.src.rate_limit import client_ip_for_inet
 from dependencies import require_platform_permission
 from services import book_service
 
@@ -57,7 +58,7 @@ async def bulk_change(
     admin: User = Depends(require_platform_permission("trades.manage")),
     db: AsyncSession = Depends(get_db),
 ):
-    ip = request.headers.get("x-forwarded-for") or request.client.host if request.client else None
+    ip = client_ip_for_inet(request)
     return await book_service.bulk_change_book_type(body.user_ids, body.book_type, admin.id, ip, db)
 
 
@@ -69,7 +70,7 @@ async def change_book_type(
     admin: User = Depends(require_platform_permission("trades.manage")),
     db: AsyncSession = Depends(get_db),
 ):
-    ip = request.headers.get("x-forwarded-for") or request.client.host if request.client else None
+    ip = client_ip_for_inet(request)
     return await book_service.change_user_book_type(user_id, body.book_type, admin.id, ip, db)
 
 
@@ -98,7 +99,7 @@ async def save_lp_settings(
     admin: User = Depends(require_platform_permission("trades.manage")),
     db: AsyncSession = Depends(get_db),
 ):
-    ip = request.headers.get("x-forwarded-for") or request.client.host if request.client else None
+    ip = client_ip_for_inet(request)
     return await book_service.save_lp_settings(body.api_url, body.ws_url, body.api_key, body.api_secret, admin.id, ip, db)
 
 

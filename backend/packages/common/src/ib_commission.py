@@ -1,40 +1,60 @@
-"""IB Commission distribution — shared by the gateway (market orders, copy
-trades) and the b-book engine (pending-order fills) so every filled trade
-from a referred user pays the IB chain identically.
+"""IB Commission — shared by the gateway (market orders, algo, copy trades)
+and the b-book engine (pending-order fills) so every trade from a referred
+user is treated identically.
 
-When a referred user's trade is filled:
-1. Find the referrer IB via the Referral table
-2. Resolve the per-lot rate (IB custom override > plan > nothing)
-3. Distribute up the MLM chain using the plan/global mlm_distribution
-4. Create PENDING IBCommission records and add to each IB's pending_payout
+Three phases, deliberately separated:
 
-Nothing is credited here. Commissions used to be written status="paid" and
-moved into the IB's trading account in the same transaction as the fill,
-with no one approving the payout. An admin now releases them (see the admin
-business_service.approve_ib_payout), which is also the only place money
-moves.
+ACCRUE (``distribute_ib_commission``, called at fill)
+  1. Find the referrer IB via the Referral table
+  2. Resolve the per-lot rate (IB custom override > plan > nothing)
+  3. Cap the pool at the commission the trader actually paid on this order —
+     the house never pays the chain more than it collected, so a referred
+     second account cannot be farmed for the difference
+  4. Split up the MLM chain and write IBCommission rows with status
+     ``accrued``. Nothing is owed yet: the source trade is still open.
 
-The function only does ``db.add`` + attribute mutations on the passed
-session — it never commits. The caller owns the transaction (the gateway
+RELEASE (``settle_ib_commissions``, run by the b-book engine every 10 s)
+  Every accrued row whose source position is CLOSED flips to ``pending``
+  and is added to IBProfile.pending_payout (atomic SQL). A trade that is
+  still open keeps its accrual, so an IB cannot cash out on a position
+  that was only just opened.
+
+PAY OUT (admin ``business_service.approve_ib_payout``)
+  Pending rows are credited to the IB's live trading account and marked
+  ``paid``. This is the ONLY place money moves — commissions used to be
+  written status="paid" and credited in the same transaction as the fill,
+  with no one approving the payout.
+
+Guards on the accrue path (audit 2026-09-28, before any IB plan existed in
+production): demo accounts never earn anyone real money; one accrual set
+per order however many fill paths retry; an IB never earns on their own
+trades (self-referral / multi-account farming) — that level is skipped.
+
+Neither function commits; the caller owns the transaction (the gateway
 wraps it in a background session it commits; the b-book engine relies on
-its monitor loop's commit).
+its loop's commit).
 """
 import json
 import logging
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
     Referral, IBProfile, IBCommission, IBCommissionPlan,
-    SystemSetting,
+    SystemSetting, Order, Position, PositionStatus, TradingAccount,
 )
 
 logger = logging.getLogger("ib-engine")
 
 DEFAULT_MLM_DISTRIBUTION = [40, 25, 15, 10, 10]
+
+# IBCommission.status written at fill time: earned on an OPEN trade, not yet
+# owed. settle_ib_commissions flips it to "pending" once the position is
+# closed; the admin payout flow only ever sees "pending".
+STATUS_ACCRUED = "accrued"
 
 
 async def get_mlm_distribution(db: AsyncSession) -> list[int]:
@@ -61,7 +81,33 @@ async def distribute_ib_commission(
     lots: Decimal,
     instrument_symbol: str,
 ):
-    """Called after an order is filled. Distributes commission to the IB chain."""
+    """Called after an order is filled. Accrues commission for the IB chain.
+
+    Guards (audit 2026-09-28, before any IB plan existed in production):
+      * demo accounts never earn real IB money — a demo fill is play money on
+        one side and a withdrawable credit on the other;
+      * one accrual per order — every fill path (market, pending, algo, copy)
+        calls this best-effort, so a retry must not pay the chain twice;
+      * an IB never earns from their own trading (self-referral / multi-
+        account farming): that level is skipped, the chain continues above.
+    """
+    # Idempotency: already accrued for this order → nothing to do.
+    paid_q = await db.execute(
+        select(IBCommission.id).where(IBCommission.source_trade_id == order_id).limit(1)
+    )
+    if paid_q.scalar_one_or_none() is not None:
+        return
+
+    # Demo guard: resolve the order's account.
+    acct_q = await db.execute(
+        select(TradingAccount.is_demo)
+        .join(Order, Order.account_id == TradingAccount.id)
+        .where(Order.id == order_id)
+    )
+    is_demo = acct_q.scalar_one_or_none()
+    if is_demo is None or is_demo:
+        return
+
     referral_q = await db.execute(
         select(Referral).where(Referral.referred_id == trader_user_id)
     )
@@ -120,6 +166,29 @@ async def distribute_ib_commission(
     if total_commission <= 0:
         return
 
+    # Cap at what this order earned the house. Commission is the only per-
+    # trade revenue that is recorded on the order (spreads are configurable
+    # and can be zero), so it is the safe ceiling: payout <= collected.
+    cap_q = await db.execute(
+        select(Order.commission, Position.commission)
+        .outerjoin(Position, Position.order_id == Order.id)
+        .where(Order.id == order_id)
+        .limit(1)
+    )
+    cap_row = cap_q.first()
+    if cap_row is not None:
+        collected = cap_row[0] if cap_row[0] is not None else cap_row[1]
+        if collected is not None:
+            collected = Decimal(str(collected))
+            if total_commission > collected:
+                logger.warning(
+                    "IB pool %.4f for order %s exceeds trader commission %.4f — capped",
+                    total_commission, order_id, collected,
+                )
+                total_commission = collected
+    if total_commission <= 0:
+        return
+
     # Prefer plan's MLM distribution; fall back to global SystemSetting; then default.
     mlm_dist: list[int] | None = None
     if plan and plan.mlm_distribution:
@@ -134,21 +203,35 @@ async def distribute_ib_commission(
     if mlm_dist is None:
         mlm_dist = await get_mlm_distribution(db)
 
+    # The chain can never receive more than 100% of the per-lot pool, whatever
+    # an admin typed into the plan. Negative levels pay nothing.
+    mlm_dist = [max(0, int(x)) for x in mlm_dist]
+    dist_total = sum(mlm_dist)
+    if dist_total > 100:
+        logger.warning("IB mlm_distribution sums to %d%% — scaling to 100%%", dist_total)
+        mlm_dist = [x * 100 // dist_total for x in mlm_dist]
+
     current_ib = direct_ib
     for level, pct in enumerate(mlm_dist, start=1):
         if current_ib is None:
             break
+
+        # An IB never earns on their own trades (self-referral). Skip the
+        # level, keep walking up so genuine uplines are still paid.
+        if current_ib.user_id == trader_user_id:
+            logger.warning("IB %s is the trader — self-referral level skipped", current_ib.referral_code)
+            current_ib = await _get_parent_ib(current_ib, db)
+            continue
 
         share = total_commission * Decimal(str(pct)) / Decimal("100")
         if share <= 0:
             current_ib = await _get_parent_ib(current_ib, db)
             continue
 
-        # Accrued as PENDING and never self-credited. This used to write
-        # status="paid" and move money into the IB's trading account in the
-        # same breath, with no one approving it — an automatic payout path
-        # straight out of the platform. It now lands on pending_payout and
-        # waits for an admin to release it (see approve_ib_payout).
+        # Accrue only. The row becomes a pending (approvable) commission once
+        # the trade closes (settle_ib_commissions), and money moves only when
+        # an admin releases the payout (approve_ib_payout). Nothing here
+        # touches pending_payout or a balance.
         db.add(IBCommission(
             ib_id=current_ib.id,
             source_user_id=trader_user_id,
@@ -156,14 +239,61 @@ async def distribute_ib_commission(
             commission_type="trade",
             amount=share,
             mlm_level=level,
-            status="pending",
+            status=STATUS_ACCRUED,
         ))
-
-        current_ib.pending_payout = (current_ib.pending_payout or Decimal("0")) + share
-
-        logger.info(f"IB commission L{level}: ${share:.2f} accrued (pending) to {current_ib.referral_code} ({instrument_symbol} {lots} lots)")
+        logger.info(
+            "IB commission L%d accrued: $%.2f to %s (%s %s lots, order %s) — releases when the trade closes",
+            level, share, current_ib.referral_code, instrument_symbol, lots, order_id,
+        )
 
         current_ib = await _get_parent_ib(current_ib, db)
+
+
+async def settle_ib_commissions(db: AsyncSession, limit: int = 200) -> int:
+    """Release every accrued commission whose source trade has CLOSED.
+
+    Flips the row to ``pending`` and adds it to IBProfile.pending_payout
+    with an atomic SQL increment (two engine replicas / two rows for the
+    same IB never lose an update). Locks the rows it releases (FOR UPDATE
+    SKIP LOCKED) so two replicas never release the same accrual twice.
+    Returns the number released. The caller commits. Money is credited
+    later by the admin payout approval, never here.
+    """
+    rows_q = await db.execute(
+        select(IBCommission)
+        .join(Position, Position.order_id == IBCommission.source_trade_id)
+        .where(
+            IBCommission.status == STATUS_ACCRUED,
+            Position.status == PositionStatus.CLOSED,
+        )
+        .order_by(IBCommission.created_at.asc())
+        .limit(limit)
+        .with_for_update(of=IBCommission, skip_locked=True)
+    )
+    accrued = rows_q.scalars().all()
+    released = 0
+    for c in accrued:
+        amount = Decimal(str(c.amount or 0))
+        if amount <= 0:
+            c.status = "rejected"
+            continue
+        ib_q = await db.execute(select(IBProfile.id, IBProfile.referral_code).where(IBProfile.id == c.ib_id))
+        ib = ib_q.first()
+        if ib is None:
+            c.status = "rejected"
+            continue
+        await db.execute(
+            update(IBProfile)
+            .where(IBProfile.id == c.ib_id)
+            .values(pending_payout=IBProfile.pending_payout + amount)
+        )
+        c.status = "pending"
+        released += 1
+        logger.info(
+            "IB commission released to pending payout: $%.2f to %s (L%d, order %s, trade closed)",
+            amount, ib[1], c.mlm_level, c.source_trade_id,
+        )
+    return released
 
 
 

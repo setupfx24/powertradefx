@@ -8,6 +8,7 @@ from packages.common.src.database import get_db
 from dependencies import require_permission
 from packages.common.src.models import User
 from packages.common.src.admin_schemas import AccountTypeIn
+from packages.common.src.rate_limit import client_ip_for_inet
 from services import account_type_service
 
 router = APIRouter(prefix="/account-types", tags=["Account Types"])
@@ -30,7 +31,7 @@ async def create_account_type(
 ):
     return await account_type_service.create_account_type(
         body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -44,7 +45,7 @@ async def update_account_type(
 ):
     return await account_type_service.update_account_type(
         group_id=group_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -57,5 +58,5 @@ async def deactivate_account_type(
 ):
     return await account_type_service.deactivate_account_type(
         group_id=group_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )

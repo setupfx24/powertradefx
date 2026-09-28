@@ -7,6 +7,7 @@ from packages.common.src.database import get_db
 from dependencies import require_permission
 from packages.common.src.models import User
 from packages.common.src.admin_schemas import BulkChargeUpdate, BulkSpreadUpdate, BulkSwapUpdate
+from packages.common.src.rate_limit import client_ip_for_inet
 from services import config_service
 
 router = APIRouter(prefix="/config", tags=["Configuration"])
@@ -36,7 +37,7 @@ async def update_instrument_config(
     """Save charge, spread, swap, price impact (instrument_configs + engine sync)."""
     return await config_service.update_instrument_config(
         instrument_id=instrument_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -57,7 +58,7 @@ async def update_charges(
 ):
     return await config_service.update_charges(
         body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -78,7 +79,7 @@ async def update_spreads(
 ):
     return await config_service.update_spreads(
         body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -99,5 +100,5 @@ async def update_swaps(
 ):
     return await config_service.update_swaps(
         body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )

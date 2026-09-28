@@ -56,6 +56,17 @@ class Settings(BaseSettings):
     ADMIN_JWT_SECRET: str = "admin-secret-change-in-production"
     ADMIN_JWT_ALGORITHM: str = "HS256"
     ADMIN_JWT_EXPIRY_HOURS: int = 8
+    # Master switch for the second factor at admin sign-in. Off by default
+    # until the flow has been tested end to end on the live stack: while
+    # False, /auth/login never asks for a TOTP / backup code even for
+    # accounts that have two_factor_enabled. Set true to start challenging.
+    ADMIN_MFA_ENABLED: bool = False
+    # Only meaningful when ADMIN_MFA_ENABLED is true: every admin/super_admin
+    # must have TOTP enrolled (users.two_factor_enabled) before /auth/login
+    # will issue a session; un-enrolled accounts get 403
+    # {"code": "mfa_enrolment_required"}. Default False so operators can
+    # enrol one by one.
+    ADMIN_MFA_REQUIRED: bool = False
 
     ADMIN_EMAIL: str = "admin@powertradefx.com"
     # Initial seed password for the super-admin row created by the

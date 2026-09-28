@@ -9,6 +9,12 @@ from pydantic import BaseModel, EmailStr, Field
 class AdminLoginRequest(BaseModel):
     email: str
     password: str
+    # Second factor for accounts with two_factor_enabled: either the
+    # 6-digit authenticator TOTP or a one-time backup code (XXXXX-XXXXX).
+    # Spaces / dashes are tolerated and stripped server-side. Omitted on
+    # the first request; the server answers 403 {"code": "mfa_required"}
+    # once the password is right, and the client re-posts with this set.
+    totp_code: Optional[str] = None
 
 
 class AdminLoginResponse(BaseModel):
@@ -21,7 +27,10 @@ class AdminLoginResponse(BaseModel):
 
 
 class AdminRefreshRequest(BaseModel):
-    access_token: str
+    # Optional: the cookie-only SPA sends no body and the server reads
+    # the fx_admin cookie instead. Legacy script clients may still post
+    # the token explicitly.
+    access_token: Optional[str] = None
 
 
 class DashboardStats(BaseModel):

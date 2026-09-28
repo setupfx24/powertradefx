@@ -10,6 +10,18 @@ import { ActiveAccountBadge } from '@/components/trading/ActiveAccountBadge';
 import api from '@/lib/api/client';
 import { ArrowUpDown, ChevronRight, Search, Settings, Star, TrendingUp } from 'lucide-react';
 import AnimatedPrice from '@/components/ui/AnimatedPrice';
+import { getMarketStatus } from '@/lib/marketHours';
+import { quoteFreshness } from '@/lib/quoteStatus';
+
+/** Market open but no live tick for this symbol — the feed is down, not the market. */
+function isFeedStale(symbol: string, tick: Parameters<typeof quoteFreshness>[0]): boolean {
+  const inst = useTradingStore.getState().instruments.find((i) => i.symbol === symbol) as
+    | { segment?: string }
+    | undefined;
+  return quoteFreshness(tick, getMarketStatus(symbol, inst?.segment).isOpen) === 'stale';
+}
+
+const STALE_TITLE = 'Live price unavailable — feed reconnecting';
 
 type Trend = 'up' | 'down' | 'neutral';
 
@@ -421,6 +433,8 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
                 const af = askFlash[sym];
                 const fmt = (v: number) => v.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
                 const tint = (f?: Trend) => (f === 'up' ? 'text-buy' : f === 'down' ? 'text-sell' : 'text-text-primary');
+                // Market open but no live tick → feed down; grey the quote and say so.
+                const stale = isFeedStale(sym, tick);
                 return (
                   <div
                     key={sym}
@@ -444,15 +458,22 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
                         <Star size={15} strokeWidth={2} className={clsx(fav && 'fill-amber-400 text-amber-400')} />
                       </button>
                       <span className="min-w-0">
-                        <span className="block truncate text-[13px] font-bold leading-tight text-text-primary">{sym}</span>
+                        <span className="block truncate text-[13px] font-bold leading-tight text-text-primary">
+                          {sym}
+                          {stale && (
+                            <span className="ml-1 rounded px-1 align-middle text-[9px] font-bold uppercase tracking-wide text-amber-500 bg-amber-500/10" title={STALE_TITLE}>
+                              Stale
+                            </span>
+                          )}
+                        </span>
                         {showNames && name ? <span className="block truncate text-[11px] leading-tight text-text-tertiary">{name}</span> : null}
                       </span>
                     </span>
-                    <AnimatedPrice value={tick?.bid} digits={digits} className={clsx('text-right text-[13px] font-medium tabular-nums', tint(bf))} />
+                    <AnimatedPrice value={tick?.bid} digits={digits} className={clsx('text-right text-[13px] font-medium tabular-nums', stale ? 'text-text-tertiary' : tint(bf))} />
                     <span className="text-center text-[11px] tabular-nums text-text-tertiary">
                       {showSpread && tick ? Math.abs(spreadInPips(sym, tick.bid, tick.ask, instruments)) : ''}
                     </span>
-                    <AnimatedPrice value={tick?.ask} digits={digits} className={clsx('text-right text-[13px] font-medium tabular-nums', tint(af))} />
+                    <AnimatedPrice value={tick?.ask} digits={digits} className={clsx('text-right text-[13px] font-medium tabular-nums', stale ? 'text-text-tertiary' : tint(af))} />
                     <span className={clsx('text-right text-[12px] font-semibold tabular-nums', !Number.isFinite(pct) ? 'text-text-tertiary' : pct >= 0 ? 'text-emerald-500' : 'text-[#E5484D]')}>
                       {Number.isFinite(pct) ? `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` : '—'}
                     </span>
@@ -567,6 +588,7 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
                 const segLabel = meta?.segment || terminalGroup(symbol, instruments);
                 const sessionOpen = sessionOpenRef.current[symbol] ?? tick?.bid ?? 0;
                 const isUp = tick ? tick.bid >= sessionOpen : true;
+                const stale = isFeedStale(symbol, tick);
 
                 const toggleFav = (e: React.MouseEvent) => {
                   e.preventDefault();
@@ -631,10 +653,16 @@ export default function Watchlist({ variant = 'default', onExitMarkets }: Watchl
                         onClick={() => handleRowClick(symbol)}
                         className="shrink-0 text-right"
                       >
-                        <AnimatedPrice value={tick.bid} digits={digits} className="block text-sm font-mono font-bold tabular-nums text-text-primary" />
-                        <span className={clsx('block text-[10px] font-bold tabular-nums', isUp ? 'text-buy' : 'text-sell')}>
-                          {isUp ? '▲' : '▼'} {Math.abs(spreadInPips(symbol, tick.bid, tick.ask, instruments))} pip
-                        </span>
+                        <AnimatedPrice value={tick.bid} digits={digits} className={clsx('block text-sm font-mono font-bold tabular-nums', stale ? 'text-text-tertiary' : 'text-text-primary')} />
+                        {stale ? (
+                          <span className="block text-[10px] font-bold uppercase tracking-wide text-amber-500" title={STALE_TITLE}>
+                            Stale
+                          </span>
+                        ) : (
+                          <span className={clsx('block text-[10px] font-bold tabular-nums', isUp ? 'text-buy' : 'text-sell')}>
+                            {isUp ? '▲' : '▼'} {Math.abs(spreadInPips(symbol, tick.bid, tick.ask, instruments))} pip
+                          </span>
+                        )}
                       </button>
                     ) : (
                       <span className="shrink-0 text-xs text-text-tertiary">—</span>

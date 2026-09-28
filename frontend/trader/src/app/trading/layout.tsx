@@ -26,6 +26,7 @@ function TradingSession({ children }: { children: React.ReactNode }) {
   const setPendingOrders = useTradingStore((s) => s.setPendingOrders);
   const setInstruments = useTradingStore((s) => s.setInstruments);
   const refreshPositions = useTradingStore((s) => s.refreshPositions);
+  const refreshPendingOrders = useTradingStore((s) => s.refreshPendingOrders);
   const refreshAccount = useTradingStore((s) => s.refreshAccount);
   const accounts = useTradingStore((s) => s.accounts);
 
@@ -120,10 +121,14 @@ function TradingSession({ children }: { children: React.ReactNode }) {
     // Close sounds now come ONCE from the event-driven sources: the trade WS
     // (SL/TP hit, stop-out) and the manual-close response (PositionsPanel) —
     // both instant, neither on a timer.
+    let pollTick = 0;
     const positionPoll = setInterval(async () => {
       if (document.hidden) return;
       await refreshPositions();
       await refreshAccount();
+      // Pending orders change rarely (place / fill / cancel all refresh them
+      // directly); a slow background reconcile every ~6 s catches the rest.
+      if (++pollTick % 4 === 0) await refreshPendingOrders();
     }, 1500);
 
     // Returning to a hidden tab: reconcile immediately instead of waiting for
@@ -132,6 +137,7 @@ function TradingSession({ children }: { children: React.ReactNode }) {
       if (document.hidden) return;
       void pollPricesFromApi();
       void refreshPositions();
+      void refreshPendingOrders();
       void refreshAccount();
     };
     document.addEventListener('visibilitychange', onVisible);
@@ -144,7 +150,7 @@ function TradingSession({ children }: { children: React.ReactNode }) {
       clearInterval(positionPoll);
       clearInterval(pricePoll);
     };
-  }, [setAccounts, setInstruments, updatePrices, refreshPositions, refreshAccount]);
+  }, [setAccounts, setInstruments, updatePrices, refreshPositions, refreshPendingOrders, refreshAccount]);
 
   /* Picker vs terminal: active account + positions. */
   useEffect(() => {
@@ -176,12 +182,16 @@ function TradingSession({ children }: { children: React.ReactNode }) {
 
     setActiveAccount(acc);
 
+    // Pending orders load through the store (single mapper, same call the
+    // order ticket uses right after placing a limit/stop). It guards on the
+    // active account id itself, so it needs no `cancelled` check here.
+    void refreshPendingOrders();
+
     (async () => {
       try {
-        const [positions, orders] = await Promise.all([
-          api.get<unknown[]>(`/positions/`, { account_id: acc.id, status: 'open' }).catch(() => []),
-          api.get<unknown[]>(`/orders/`, { account_id: acc.id, status: 'pending' }).catch(() => []),
-        ]);
+        const positions = await api
+          .get<unknown[]>(`/positions/`, { account_id: acc.id, status: 'open' })
+          .catch(() => []);
         if (cancelled) return;
 
         const posList = Array.isArray(positions) ? positions : [];
@@ -206,26 +216,6 @@ function TradingSession({ children }: { children: React.ReactNode }) {
             };
           }),
         );
-
-        const ordList = Array.isArray(orders) ? orders : [];
-        setPendingOrders(
-          ordList.map((row) => {
-            const o = row as Record<string, unknown>;
-            return {
-            id: String(o.id),
-            account_id: String(o.account_id),
-            symbol: String(o.symbol || (o.instrument as { symbol?: string })?.symbol || ''),
-            order_type: String(o.order_type),
-            side: o.side as 'buy' | 'sell',
-            status: String(o.status),
-            lots: Number(o.lots) || 0,
-            price: Number(o.price) || 0,
-            stop_loss: o.stop_loss != null ? Number(o.stop_loss) : undefined,
-            take_profit: o.take_profit != null ? Number(o.take_profit) : undefined,
-            created_at: String(o.created_at ?? ''),
-            };
-          }),
-        );
       } catch {
         /* ignore */
       }
@@ -234,7 +224,7 @@ function TradingSession({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [pathname, accountQueryId, accounts, setActiveAccount, setPositions, setPendingOrders]);
+  }, [pathname, accountQueryId, accounts, setActiveAccount, setPositions, setPendingOrders, refreshPendingOrders]);
 
   /* Trade-event WebSocket. Subscribes to /ws/trades/{accountId} which
    * forwards Redis pub/sub events from the SL/TP engine. Previously the
@@ -265,9 +255,12 @@ function TradingSession({ children }: { children: React.ReactNode }) {
       }
       // A pending order filled (limit/stop triggered by the b-book engine):
       // the fill creates a position, so pull it in so its chart line + row
-      // appear live, and refresh balance/margin.
+      // appear live, drop the order from the Pending tab (a filled limit
+      // would otherwise sit there looking unfilled until the slow poll),
+      // and refresh balance/margin.
       if (evt.type === 'order_filled') {
         void refreshPositions();
+        void refreshPendingOrders();
         void refreshAccount();
         return;
       }
@@ -325,7 +318,7 @@ function TradingSession({ children }: { children: React.ReactNode }) {
       unsub();
       tradeSocket.disconnect();
     };
-  }, [accountQueryId, refreshPositions, refreshAccount]);
+  }, [accountQueryId, refreshPositions, refreshPendingOrders, refreshAccount]);
 
   return <>{children}</>;
 }

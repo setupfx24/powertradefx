@@ -7,6 +7,7 @@ from packages.common.src.database import get_db
 from dependencies import require_permission, broker_scope_ids, assert_broker_scope
 from packages.common.src.models import User
 from packages.common.src.admin_schemas import FundRequest, CreditRequest
+from packages.common.src.rate_limit import client_ip_for_inet
 from services import user_service
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -53,7 +54,7 @@ async def add_fund(
     await assert_broker_scope(admin, user_id, db)
     return await user_service.add_fund(
         user_id=user_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -68,7 +69,7 @@ async def deduct_fund(
     await assert_broker_scope(admin, user_id, db)
     return await user_service.deduct_fund(
         user_id=user_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -83,7 +84,7 @@ async def give_credit(
     await assert_broker_scope(admin, user_id, db)
     return await user_service.give_credit(
         user_id=user_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -102,7 +103,7 @@ async def take_credit(
     await assert_broker_scope(admin, user_id, db)
     return await user_service.take_credit(
         user_id=user_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -116,7 +117,7 @@ async def ban_user(
     await assert_broker_scope(admin, user_id, db)
     return await user_service.ban_user(
         user_id=user_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -130,7 +131,7 @@ async def unban_user(
     await assert_broker_scope(admin, user_id, db)
     return await user_service.unban_user(
         user_id=user_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -144,7 +145,7 @@ async def block_trading(
     await assert_broker_scope(admin, user_id, db)
     return await user_service.block_trading(
         user_id=user_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -158,7 +159,7 @@ async def kill_switch(
     await assert_broker_scope(admin, user_id, db)
     return await user_service.kill_switch(
         user_id=user_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -180,7 +181,7 @@ async def login_as_user(
     await assert_broker_scope(admin, user_id, db)
     return await user_service.login_as_user(
         user_id=user_id, admin_id=admin.id, admin_role=admin.role,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -204,5 +205,5 @@ async def delete_user(
     await assert_broker_scope(admin, user_id, db)
     return await user_service.delete_user(
         user_id=user_id, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )

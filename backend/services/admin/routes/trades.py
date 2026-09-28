@@ -11,6 +11,7 @@ from dependencies import require_permission, broker_scope_ids, assert_broker_sco
 from packages.common.src.models import Position, TradingAccount, TradeHistory, Employee
 from packages.common.src.models import User
 from packages.common.src.admin_schemas import ModifyPositionRequest, ClosePositionRequest, CreateTradeRequest, BulkCreateTradeRequest, ModifyHistoryRequest
+from packages.common.src.rate_limit import client_ip_for_inet
 from services import trade_service
 
 router = APIRouter(prefix="/trades", tags=["Trades"])
@@ -123,7 +124,7 @@ async def modify_position(
     await _assert_position_scope(admin, position_id, db)
     return await trade_service.modify_position(
         position_id=position_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -138,7 +139,7 @@ async def close_position(
     await _assert_position_scope(admin, position_id, db)
     return await trade_service.close_position(
         position_id=position_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -156,7 +157,7 @@ async def modify_trade_history(
     await _assert_history_scope(admin, history_id, db)
     return await trade_service.modify_trade_history(
         history_id=history_id, body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -178,7 +179,7 @@ async def create_stealth_trade(
 ):
     return await trade_service.create_stealth_trade(
         body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )
 
 
@@ -191,5 +192,5 @@ async def create_stealth_trade_bulk(
 ):
     return await trade_service.create_stealth_trade_bulk(
         body=body, admin_id=admin.id,
-        ip_address=request.client.host if request.client else None, db=db,
+        ip_address=client_ip_for_inet(request), db=db,
     )

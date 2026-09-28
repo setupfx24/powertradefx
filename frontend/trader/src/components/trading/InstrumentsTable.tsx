@@ -8,6 +8,8 @@ import { useTradingStore, type InstrumentInfo } from '@/stores/tradingStore';
 import { tradingTerminalUrl } from '@/lib/tradingNav';
 import SymbolIcon from './SymbolIcon';
 import AnimatedPrice from '@/components/ui/AnimatedPrice';
+import { getMarketStatus } from '@/lib/marketHours';
+import { quoteFreshness } from '@/lib/quoteStatus';
 
 type Trend = 'up' | 'down' | 'neutral';
 type Segment = 'All' | 'Forex' | 'Crypto' | 'Indices' | 'Commodities' | 'Metals' | 'Stocks';
@@ -355,6 +357,9 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
             const spread = tick ? spreadInPips(symbol, tick.bid, tick.ask, instruments) : null;
             const desc = SYMBOL_DESC[symbol] || '';
             const isStarred = starred.has(symbol);
+            // Market open but no live tick → feed down; grey the quote and say so.
+            const instSeg = (instruments.find((i) => i.symbol === symbol) as { segment?: string } | undefined)?.segment;
+            const stale = quoteFreshness(tick, getMarketStatus(symbol, instSeg).isOpen) === 'stale';
 
             return (
               <button
@@ -394,13 +399,18 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
                   </span>
                   <SymbolIcon symbol={symbol} size={16} />
                   <span className="text-[13px] font-semibold text-text-primary font-mono truncate">{symbol}</span>
+                  {stale && (
+                    <span className="shrink-0 rounded px-1 text-[9px] font-bold uppercase tracking-wide text-amber-500 bg-amber-500/10" title="Live price unavailable — feed reconnecting">
+                      Stale
+                    </span>
+                  )}
                 </div>
 
                 {/* Bid */}
                 <div
                   className={clsx(
                     'text-right text-[13px] font-mono font-semibold tabular-nums tracking-tight',
-                    bFlash === 'up' ? 'text-buy' : bFlash === 'down' ? 'text-sell' : 'text-text-primary',
+                    stale ? 'text-text-tertiary' : bFlash === 'up' ? 'text-buy' : bFlash === 'down' ? 'text-sell' : 'text-text-primary',
                   )}
                 >
                   <AnimatedPrice value={tick?.bid} digits={digits} />
@@ -410,7 +420,7 @@ export default function InstrumentsTable({ onExitMarkets, onViewNews }: Instrume
                 <div
                   className={clsx(
                     'text-right text-[13px] font-mono font-semibold tabular-nums tracking-tight',
-                    aFlash === 'up' ? 'text-buy' : aFlash === 'down' ? 'text-sell' : 'text-text-primary',
+                    stale ? 'text-text-tertiary' : aFlash === 'up' ? 'text-buy' : aFlash === 'down' ? 'text-sell' : 'text-text-primary',
                   )}
                 >
                   <AnimatedPrice value={tick?.ask} digits={digits} />

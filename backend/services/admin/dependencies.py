@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import uuid
 from datetime import datetime
 from functools import wraps
@@ -58,6 +60,96 @@ EMPLOYEE_ROLE_PERMISSIONS = {
 
 ADMIN_COOKIE_NAME = "fx_admin"
 
+# Roles that may authenticate against the admin API. "broker" = white-label
+# tenant admin with a scoped, permission-gated view of THEIR user pool.
+ADMIN_ROLES = ("admin", "super_admin", "broker")
+
+# `iss` claim stamped on every admin JWT and required on decode. Stops a
+# token signed for another audience with the same HS256 secret (a shared
+# .env, a copy-pasted secret between services) from being accepted here.
+ADMIN_JWT_ISSUER = "powertradefx-admin"
+
+# Length of the password fingerprint carried in the `pwd` claim: 16 hex
+# chars = 64 bits, plenty to distinguish "same hash" from "rotated" and
+# short enough to keep the cookie small. It is derived from the bcrypt
+# HASH, never the password, so the claim reveals nothing usable.
+_PWD_FINGERPRINT_HEX_LEN = 16
+
+
+def password_fingerprint(password_hash: str | None) -> str:
+    """Fingerprint of the stored bcrypt hash, embedded in the admin JWT.
+
+    Threat: an admin whose credential leaked rotates their password, but
+    a session minted before the rotation that slipped past the
+    user_sessions revocation (Redis/DB blip — that check fails OPEN)
+    would stay valid until `exp`. Binding the token to
+    sha256(password_hash) makes a password change revoke all outstanding
+    sessions on the next request with no infra dependency. bcrypt hashes
+    are salted, so the fingerprint changes even when the same password
+    is set again.
+    """
+    return hashlib.sha256((password_hash or "").encode("utf-8")).hexdigest()[:_PWD_FINGERPRINT_HEX_LEN]
+
+
+def decode_admin_token(token: str, *, verify_exp: bool = True) -> dict:
+    """Verify signature, issuer and token type; return the claims.
+
+    Raises 401 on any failure. ``verify_exp=False`` exists for callers
+    that deliberately accept an expired token (logout clearing a lapsed
+    session); every authenticating path verifies expiry.
+    """
+    try:
+        payload = jwt.decode(
+            token,
+            settings.ADMIN_JWT_SECRET,
+            algorithms=[settings.ADMIN_JWT_ALGORITHM],
+            issuer=ADMIN_JWT_ISSUER,
+            options={"verify_exp": verify_exp, "require": ["iss", "exp", "iat"]},
+        )
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+    if payload.get("type") != "admin":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token")
+    if not payload.get("admin_id"):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+    return payload
+
+
+def assert_token_matches_password(payload: dict, admin: User) -> None:
+    """Reject a token whose `pwd` claim does not match the admin's CURRENT
+    password hash (see ``password_fingerprint``). A missing claim is also
+    rejected: tokens minted before this check existed are invalidated
+    exactly once and the operator simply signs in again — the acceptable
+    cost of not needing a migration."""
+    claimed = payload.get("pwd")
+    if not isinstance(claimed, str) or not hmac.compare_digest(
+        claimed, password_fingerprint(admin.password_hash)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session invalidated — please sign in again",
+        )
+
+
+async def assert_admin_session_active(payload: dict) -> None:
+    """H-ADMIN-1: reject a token whose admin session was revoked (logout /
+    password change). Tokens minted before sessions existed carry no sid
+    and are grandfathered (they lapse within the 8h lifetime). Fail OPEN
+    on an infra error so a Redis/DB blip can never lock every admin out —
+    the `pwd` fingerprint still catches a password rotation in that case."""
+    sid = payload.get("sid")
+    if not sid:
+        return
+    from packages.common.src.auth import _session_is_active
+    try:
+        _sess_ok = await _session_is_active(sid)
+    except Exception:
+        _sess_ok = True
+    if not _sess_ok:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked, please sign in again")
+
 
 async def get_current_admin(
     request: Request,
@@ -70,7 +162,12 @@ async def get_current_admin(
     no XSS-readable token) OR a Bearer header (legacy clients). The
     cookie path is what the new admin frontend uses; the header path
     is retained so cron / scripts that already mint a token via /login
-    keep working until they migrate."""
+    keep working until they migrate.
+
+    Every token must carry the admin issuer and a `pwd` fingerprint that
+    matches the account's current password hash, so a password rotation
+    kills all pre-existing sessions on their next request even if the
+    user_sessions check is unavailable."""
     token: str | None = None
     cookie_token = request.cookies.get(ADMIN_COOKIE_NAME)
     if cookie_token:
@@ -79,46 +176,29 @@ async def get_current_admin(
         token = credentials.credentials
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    try:
-        payload = jwt.decode(
-            token,
-            settings.ADMIN_JWT_SECRET,
-            algorithms=[settings.ADMIN_JWT_ALGORITHM],
-        )
-        if payload.get("type") != "admin":
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token")
-        admin_id = payload.get("admin_id")
-        if admin_id is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
 
-    # H-ADMIN-1: reject a token whose admin session was revoked (logout /
-    # password change). Tokens minted before sessions existed carry no sid and
-    # are grandfathered (they lapse within the 8h lifetime). Fail OPEN on an
-    # infra error so a Redis/DB blip can never lock every admin out.
-    sid = payload.get("sid")
-    if sid:
-        from packages.common.src.auth import _session_is_active
-        try:
-            _sess_ok = await _session_is_active(sid)
-        except Exception:
-            _sess_ok = True
-        if not _sess_ok:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked, please sign in again")
+    payload = decode_admin_token(token)
+    try:
+        admin_uuid = uuid.UUID(str(payload["admin_id"]))
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+
+    await assert_admin_session_active(payload)
 
     result = await db.execute(
         select(User).where(
-            User.id == uuid.UUID(admin_id),
+            User.id == admin_uuid,
             # White-label brokers authenticate against the same admin panel
             # with a scoped, permission-gated view of THEIR user pool only.
-            User.role.in_(["admin", "super_admin", "broker"]),
+            User.role.in_(ADMIN_ROLES),
             User.status == "active",
         )
     )
     admin = result.scalar_one_or_none()
     if admin is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin user not found or inactive")
+
+    assert_token_matches_password(payload, admin)
 
     if admin.role == "broker":
         # A suspended tenant (rental lapsed, ToS breach, …) loses admin

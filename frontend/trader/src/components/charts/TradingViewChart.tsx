@@ -107,6 +107,27 @@ const CHART_THEME_OVERRIDES: Record<'dark' | 'light', Record<string, string>> = 
   },
 };
 
+// Theme-independent overrides asserted on construction AND after a saved
+// layout is restored (a restore brings back whatever the layout was saved
+// with). Candle-close countdown next to the last price on the axis — it
+// follows the active timeframe (client request: "candle time" when switching
+// intervals). use_localstorage_for_settings is disabled, so this applies on
+// every load.
+const CHART_BASE_OVERRIDES: Record<string, boolean> = {
+  'mainSeriesProperties.showCountdown': true,
+};
+
+/** The chart's current symbol without any "EXCHANGE:" prefix, upper-cased. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function chartSymbolOf(chart: any): string {
+  try {
+    const raw = String(chart?.symbol?.() ?? '').toUpperCase().trim();
+    return raw.includes(':') ? raw.slice(raw.lastIndexOf(':') + 1) : raw;
+  } catch {
+    return '';
+  }
+}
+
 // ── Chart layout persistence ───────────────────────────────────────────────
 // The widget is created with `use_localstorage_for_settings` disabled and
 // nothing ever called widget.save(), so studies (indicators), drawings, the
@@ -293,7 +314,7 @@ function TradingViewChartInner({
         // a layout saved under a different symbol cannot hijack the view.
         ...(savedLayout ? { saved_data: savedLayout } : {}),
         auto_save_delay: 2,
-        overrides: CHART_THEME_OVERRIDES[theme],
+        overrides: { ...CHART_BASE_OVERRIDES, ...CHART_THEME_OVERRIDES[theme] },
       });
       // Persist on every library-signalled change, plus on the way out: a
       // fast reload can beat the 2s autosave debounce, which is exactly the
@@ -323,6 +344,26 @@ function TradingViewChartInner({
         widgetRef.current.onChartReady(() => {
           readyRef.current = true;
           setChartReady(true);
+          // Two-way symbol sync. The app pushes selectedSymbol INTO the chart
+          // (effect below), but the chart's own header symbol search changed
+          // the chart without telling the app — so the on-chart SELL/BUY
+          // widget, the order panel and the watchlist kept trading the OLD
+          // symbol (client: ETHUSD chart, BTCUSD fill). Subscribe to the
+          // library's symbol-change event and mirror it into the store; the
+          // store→chart effect skips setSymbol when they already agree.
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const chart: any = widgetRef.current.activeChart?.();
+            chart?.onSymbolChanged?.().subscribe(null, () => {
+              try {
+                const sym = chartSymbolOf(chart);
+                const st = useTradingStore.getState();
+                if (sym && sym !== st.selectedSymbol && st.instruments.some((i) => String(i.symbol).toUpperCase() === sym)) {
+                  st.setSelectedSymbol(sym);
+                }
+              } catch { /* ignore */ }
+            });
+          } catch { /* ignore */ }
           // A restored layout brings back the colours it was autosaved with,
           // and those beat both the `theme` and the constructor `overrides`
           // — a session last used in dark mode painted the light chart
@@ -331,7 +372,7 @@ function TradingViewChartInner({
           // it, applyOverrides then pins our exact pane/scale colours.
           if (savedLayout) {
             const reassert = () => {
-              try { widgetRef.current?.applyOverrides?.(CHART_THEME_OVERRIDES[theme]); } catch { /* ignore */ }
+              try { widgetRef.current?.applyOverrides?.({ ...CHART_BASE_OVERRIDES, ...CHART_THEME_OVERRIDES[theme] }); } catch { /* ignore */ }
             };
             try {
               const p = widgetRef.current.changeTheme?.(theme);
@@ -417,7 +458,10 @@ function TradingViewChartInner({
             try { if (entry && entry.id != null) chart?.removeEntity(entry.id); } catch { /* ignore */ }
           }
           linesRef.current.clear();
-          chart.setSymbol(sym);
+          // No-op when the chart already shows this symbol (its own header
+          // search just mirrored it into the store): re-setting the same
+          // symbol would reload the series and ping-pong with onSymbolChanged.
+          if (chartSymbolOf(chart) !== sym) chart.setSymbol(sym);
         } catch {
           /* ignore */
         }
@@ -720,8 +764,12 @@ function TradingViewChartInner({
       const g = computePnlAt(p, price);
       return Number.isFinite(g) ? g - (Number(p.commission) || 0) + (Number(p.swap) || 0) : NaN;
     };
+    // The entry price is part of the label and the right-axis tag is OFF (see
+    // the entry createLine below): TradingView shoves an axis tag up/down to
+    // dodge the live-price tag, so a tag reading 83,200 floated above a line
+    // that WAS at 83,200 and read as a misplaced fill (client report).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const entryText = (p: any) => `${String(p.side).toUpperCase()} ${Number(p.lots)}`;
+    const entryText = (p: any) => `${String(p.side).toUpperCase()} ${Number(p.lots)} @ ${(Number(p.open_price) || 0).toFixed(digits)}`;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const safe = <T,>(fn: () => T): T | undefined => { try { return fn(); } catch { return undefined; } };
 
@@ -1240,7 +1288,7 @@ function TradingViewChartInner({
         const entryId = await createLine(entry, {
           shape: 'horizontal_line', text: entryText(p),
           lock: true, disableSelection: false, disableSave: true, disableUndo: true,
-          overrides: { linecolor: sideColor, linestyle: 0, linewidth: 2, showLabel: true, textcolor: sideColor, fontsize: 11, bold: true, horzLabelsAlign: 'left', vertLabelsAlign: 'middle', showPrice: true },
+          overrides: { linecolor: sideColor, linestyle: 0, linewidth: 2, showLabel: true, textcolor: sideColor, fontsize: 11, bold: true, horzLabelsAlign: 'left', vertLabelsAlign: 'middle', showPrice: false },
         });
         if (disposed) { if (entryId) safe(() => chart.removeEntity(entryId)); return; }
         e.entryId = entryId;

@@ -21,6 +21,7 @@ from packages.common.src import broker_tenancy
 from packages.common.src.models.broker import (
     BROKER_SECTIONS, PERMISSION_EDIT, PERMISSION_VIEW, permission_at_least,
 )
+from packages.common.src.rate_limit import client_ip_for_inet
 from dependencies import get_current_admin
 from services import broker_service
 
@@ -28,7 +29,7 @@ router = APIRouter(prefix="/brokers", tags=["Brokers"])
 
 
 def _client_ip(request: Request) -> str | None:
-    return request.client.host if request.client else None
+    return client_ip_for_inet(request)
 
 
 async def _require_broker_surface(admin: User, db: AsyncSession, min_level: str) -> User:

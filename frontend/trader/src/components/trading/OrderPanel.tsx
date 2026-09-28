@@ -12,11 +12,19 @@ import api from '@/lib/api/client';
 import { sounds, unlockAudio } from '@/lib/sounds';
 import { getDigits } from '@/lib/utils';
 import { getMarketStatus } from '@/lib/marketHours';
+import { quoteFreshness, staleQuoteMessage } from '@/lib/quoteStatus';
 import { wsManager } from '@/lib/ws/wsManager';
 import OrderPanelSymbolPicker from '@/components/trading/OrderPanelSymbolPicker';
 
 type OrderSide = 'buy' | 'sell';
 type OrderType = 'market' | 'pending';
+type PendingKind = 'limit' | 'stop' | 'stop_limit';
+
+/** MT5-style name for a pending order, e.g. "Buy Limit", "Sell Stop-Limit". */
+function pendingKindLabel(side: OrderSide, kind: PendingKind): string {
+  const s = side === 'buy' ? 'Buy' : 'Sell';
+  return kind === 'limit' ? `${s} Limit` : kind === 'stop' ? `${s} Stop` : `${s} Stop-Limit`;
+}
 
 export default function OrderPanel({
   onOrderPlaced,
@@ -32,6 +40,7 @@ export default function OrderPanel({
     toggleTerminalMarkets,
     oneClickTrading,
     setOneClickTrading,
+    setActiveBottomTab,
   } = useUIStore();
 
   // Narrow selectors: the order ticket needs live `prices`, but selecting each
@@ -45,6 +54,7 @@ export default function OrderPanel({
   const positions = useTradingStore((s) => s.positions);
   const setPositions = useTradingStore((s) => s.setPositions);
   const refreshPositions = useTradingStore((s) => s.refreshPositions);
+  const refreshPendingOrders = useTradingStore((s) => s.refreshPendingOrders);
   const refreshAccount = useTradingStore((s) => s.refreshAccount);
   const orderFormCloneDraft = useTradingStore((s) => s.orderFormCloneDraft);
   const setOrderFormCloneDraft = useTradingStore((s) => s.setOrderFormCloneDraft);
@@ -53,7 +63,7 @@ export default function OrderPanel({
 
   const [side, setSide] = useState<OrderSide>('buy');
   const [orderTab, setOrderTab] = useState<OrderType>('market');
-  const [pendingKind, setPendingKind] = useState<'limit' | 'stop' | 'stop_limit'>('limit');
+  const [pendingKind, setPendingKind] = useState<PendingKind>('limit');
   const [triggerPrice, setTriggerPrice] = useState('');
   const [stopLimitPrice, setStopLimitPrice] = useState('');
   const [lots, setLots] = useState('0.01');
@@ -76,6 +86,10 @@ export default function OrderPanel({
     () => getMarketStatus(selectedSymbol, segment),
     [selectedSymbol, segment, Math.floor(Date.now() / 60_000)],
   );
+  // Feed health for the selected symbol. 'stale' = market open but no live
+  // tick (upstream feed down). The backend refuses orders on a stale quote,
+  // so the panel says so up front instead of letting the click bounce.
+  const feedStale = quoteFreshness(tick, marketStatus.isOpen) === 'stale';
 
   const bid = tick?.bid ?? 0;
   const ask = tick?.ask ?? 0;
@@ -111,6 +125,41 @@ export default function OrderPanel({
     const base = Number.isFinite(trig) && trig > 0 ? trig : execPrice;
     setTriggerPrice((base + d * stepPx).toFixed(digits));
   };
+  /** Pending-order helpers. The trigger field used to show a grey NUMERIC
+   *  placeholder (the live quote) that read as a filled-in value: traders
+   *  tapped Buy, the button was disabled because the field was actually
+   *  empty, and they concluded the order silently failed. The field now
+   *  says "Enter price" and the suggestion is an explicit "Use 2647.69"
+   *  button next to the Min/Max rule. 0 = no quote yet (button hidden). */
+  const suggestedTrigger = !tick
+    ? 0
+    : pendingKind === 'limit'
+      ? side === 'buy' ? ask * 0.999 : bid * 1.001
+      : side === 'buy' ? ask * 1.001 : bid * 0.999;
+  const triggerEntered = Number.isFinite(trig) && trig > 0;
+  const suggestedStopLimit = triggerEntered
+    ? side === 'buy' ? trig * 0.999 : trig * 1.001
+    : 0;
+  /** Submit button wording: "Buy" at market, "Buy Limit" / "Sell Stop" …
+   *  for pending; the price shown is the trigger the order will rest at,
+   *  not the current quote. */
+  const submitAction = orderTab === 'market'
+    ? (side === 'buy' ? 'Buy' : 'Sell')
+    : pendingKindLabel(side, pendingKind);
+  const submitPrice = orderTab === 'market' ? execPrice : (triggerEntered ? trig : 0);
+  /** Price the order will actually FILL at: the live quote for market
+   *  orders, the trigger (or the stop-limit's limit) for pending orders.
+   *  The server validates SL/TP against that same entry, so a default
+   *  anchored on the live quote would be rejected for a limit resting far
+   *  from the market. */
+  const slTpRef = (() => {
+    if (orderTab !== 'pending') return execPrice;
+    if (pendingKind === 'stop_limit') {
+      const sl = parseFloat(stopLimitPrice);
+      if (Number.isFinite(sl) && sl > 0) return sl;
+    }
+    return submitPrice > 0 ? submitPrice : execPrice;
+  })();
   const equityVal = Number(activeAccount?.equity ?? 0);
   const balanceVal = Number(activeAccount?.balance ?? 0);
   const creditVal = Number((activeAccount as { credit?: number } | null)?.credit ?? 0);
@@ -195,16 +244,17 @@ export default function OrderPanel({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [symbolPickerOpen]);
 
-  // Auto-set SL/TP defaults
+  // Auto-set SL/TP defaults around the price the order will actually fill
+  // at (slTpRef): live quote for market, trigger price for pending.
   useEffect(() => {
-    if (slEnabled && !stopLoss && execPrice > 0) {
-      setStopLoss((side === 'buy' ? execPrice * 0.99 : execPrice * 1.01).toFixed(digits));
+    if (slEnabled && !stopLoss && slTpRef > 0) {
+      setStopLoss((side === 'buy' ? slTpRef * 0.99 : slTpRef * 1.01).toFixed(digits));
     }
   }, [slEnabled]);
 
   useEffect(() => {
-    if (tpEnabled && !takeProfit && execPrice > 0) {
-      setTakeProfit((side === 'buy' ? execPrice * 1.02 : execPrice * 0.98).toFixed(digits));
+    if (tpEnabled && !takeProfit && slTpRef > 0) {
+      setTakeProfit((side === 'buy' ? slTpRef * 1.02 : slTpRef * 0.98).toFixed(digits));
     }
   }, [tpEnabled]);
 
@@ -232,6 +282,10 @@ export default function OrderPanel({
     markRecentlyClicked();
     if (orderTab === 'market' && !marketStatus.isOpen) {
       toast.error(marketStatus.reason || 'Market is closed');
+      return;
+    }
+    if (orderTab === 'market' && feedStale) {
+      toast.error(staleQuoteMessage(tick));
       return;
     }
     if (!hasEnoughMargin) {
@@ -354,7 +408,23 @@ export default function OrderPanel({
       take_profit: tpEnabled && takeProfit ? parseFloat(takeProfit) : undefined,
     }).then(async (res) => {
       // Confirm success only now — the request actually went through.
-      toast.success(`${side.toUpperCase()} ${lotsNum} ${selectedSymbol}`);
+      if (orderTab === 'pending' && triggerPx != null) {
+        // A resting order is NOT a fill. Say so, put it in the Pending tab
+        // right away and show that tab, so the trader never reads
+        // "BUY 0.01 ETHUSD" as a market execution or an empty Pending list
+        // as "it didn't go in".
+        const at = stopLimitPx != null
+          ? `${triggerPx.toFixed(digits)} (limit ${stopLimitPx.toFixed(digits)})`
+          : triggerPx.toFixed(digits);
+        toast.success(
+          `${pendingKindLabel(side, pendingKind)} ${lotsNum} ${selectedSymbol} @ ${at} placed — waiting for price`,
+          { duration: 5000 },
+        );
+        refreshPendingOrders().catch(() => {});
+        setActiveBottomTab('pending');
+      } else {
+        toast.success(`${side.toUpperCase()} ${lotsNum} ${selectedSymbol}`);
+      }
 
       // The response for a market order already carries the REAL
       // position_id (plus fill price / commission) — promote the
@@ -393,9 +463,13 @@ export default function OrderPanel({
       // would tear down + rebuild rows unnecessarily — skip it, the
       // periodic poll already syncs server-side fields without remounting.
       refreshAccount().catch(() => {});
-    }).catch((e: any) => {
+    }).catch((e: unknown) => {
       if (rollback) rollback();
-      toast.error(e.message || 'Order failed');
+      // api/client.ts throws Error(detail) for 4xx — e.g. "Buy limit must be
+      // below the current ask (2650.34)..." — so the server's own words reach
+      // the trader instead of a generic failure.
+      const msg = e instanceof Error && e.message ? e.message : 'Order failed';
+      toast.error(msg, { duration: 6000 });
     }).finally(() => {
       setSubmitting(false);
     });
@@ -507,9 +581,10 @@ export default function OrderPanel({
           <div className="flex items-center gap-1">
             <span
               className={clsx('font-bold', isTradingTerminal ? 'text-[9px]' : 'text-[10px]')}
-              style={{ color: marketStatus.isOpen ? '#1E66F5' : '#f57c00' }}
+              style={{ color: marketStatus.isOpen && !feedStale ? '#1E66F5' : '#f57c00' }}
+              title={feedStale ? staleQuoteMessage(tick) : undefined}
             >
-              {marketStatus.isOpen ? 'OPEN' : 'CLOSED'}
+              {!marketStatus.isOpen ? 'CLOSED' : feedStale ? 'FEED OFFLINE' : 'OPEN'}
             </span>
             {isConnected ? (
               <Wifi size={isTradingTerminal ? 11 : 12} className="text-buy" />
@@ -567,7 +642,7 @@ export default function OrderPanel({
           <div className="flex items-center gap-2">
             {isTradingTerminal && (
               <span className="flex shrink-0 items-center gap-1.5 text-[11px] font-semibold leading-none text-text-secondary">
-                <span className={clsx('h-1.5 w-1.5 rounded-full', marketStatus.isOpen ? 'bg-emerald-500' : 'bg-[#f57c00]')} aria-hidden />
+                <span className={clsx('h-1.5 w-1.5 rounded-full', marketStatus.isOpen && !feedStale ? 'bg-emerald-500' : 'bg-[#f57c00]')} aria-hidden title={feedStale ? staleQuoteMessage(tick) : undefined} />
                 {selectedSymbol}
               </span>
             )}
@@ -613,9 +688,12 @@ export default function OrderPanel({
                   <input
                     type="text"
                     inputMode="decimal"
+                    id="order-trigger-price"
+                    name="order-trigger-price"
                     value={triggerPrice}
                     onChange={(e) => setTriggerPrice(e.target.value)}
-                    placeholder={execPrice ? execPrice.toFixed(digits) : '—'}
+                    placeholder="Enter price"
+                    aria-label={ticketTab === 'limit' ? 'Limit price' : 'Stop price'}
                     className="ticket-input w-full bg-transparent p-0 text-[15px] font-bold tabular-nums text-text-primary placeholder:text-text-tertiary focus:outline-none border-0 shadow-none"
                   />
                 </div>
@@ -624,9 +702,21 @@ export default function OrderPanel({
                   <button type="button" onClick={() => stepTrigger(1)} aria-label="Increase price" className="flex h-7 w-7 items-center justify-center rounded-full text-text-secondary hover:bg-bg-hover"><Plus size={14} /></button>
                 </div>
               </div>
-              {triggerBound && (
-                <p className={clsx('mt-1.5 text-[12px]', triggerOutOfBounds ? 'text-[#E5484D]' : 'text-text-tertiary')}>
-                  {triggerBound.kind === 'min' ? 'Min' : 'Max'} value: {triggerBound.v.toFixed(digits)}
+              {(triggerBound || suggestedTrigger > 0) && (
+                <p className={clsx('mt-1.5 flex items-center justify-between gap-2 text-[12px]', triggerOutOfBounds ? 'text-[#E5484D]' : 'text-text-tertiary')}>
+                  <span className="tabular-nums">
+                    {triggerBound ? `${triggerBound.kind === 'min' ? 'Min' : 'Max'} value: ${triggerBound.v.toFixed(digits)}` : ''}
+                  </span>
+                  {suggestedTrigger > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setTriggerPrice(suggestedTrigger.toFixed(digits))}
+                      className="shrink-0 rounded-md px-1.5 py-0.5 font-semibold tabular-nums text-[#E94E1B] hover:bg-bg-hover"
+                      aria-label={`Use ${suggestedTrigger.toFixed(digits)} as the ${ticketTab === 'limit' ? 'limit' : 'stop'} price`}
+                    >
+                      Use {suggestedTrigger.toFixed(digits)}
+                    </button>
+                  )}
                 </p>
               )}
               {ticketTab === 'stop_limit' && (
@@ -636,13 +726,31 @@ export default function OrderPanel({
                     <input
                       type="text"
                       inputMode="decimal"
+                      id="order-stop-limit-price"
+                      name="order-stop-limit-price"
                       value={stopLimitPrice}
                       onChange={(e) => setStopLimitPrice(e.target.value)}
-                      placeholder={Number.isFinite(trig) ? (side === 'buy' ? trig * 0.999 : trig * 1.001).toFixed(digits) : '—'}
+                      placeholder="Enter price"
+                      aria-label="Limit price"
                       className="ticket-input w-full bg-transparent p-0 text-[18px] font-bold tabular-nums text-text-primary placeholder:text-text-tertiary focus:outline-none border-0 shadow-none"
                     />
                   </div>
                 </div>
+              )}
+              {ticketTab === 'stop_limit' && (
+                <p className="mt-1.5 flex items-center justify-between gap-2 text-[12px] text-text-tertiary">
+                  <span>{side === 'buy' ? 'Must be below the stop price' : 'Must be above the stop price'}</span>
+                  {suggestedStopLimit > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setStopLimitPrice(suggestedStopLimit.toFixed(digits))}
+                      className="shrink-0 rounded-md px-1.5 py-0.5 font-semibold tabular-nums text-[#E94E1B] hover:bg-bg-hover"
+                      aria-label={`Use ${suggestedStopLimit.toFixed(digits)} as the limit price`}
+                    >
+                      Use {suggestedStopLimit.toFixed(digits)}
+                    </button>
+                  )}
+                </p>
               )}
             </div>
           )}
@@ -654,6 +762,9 @@ export default function OrderPanel({
               <input
                 type="text"
                 inputMode="decimal"
+                id="order-volume"
+                name="order-volume"
+                aria-label="Volume (lots)"
                 value={lots}
                 onChange={(e) => { const v = e.target.value; if (v === '' || /^\d*\.?\d{0,2}$/.test(v)) setLots(v); }}
                 onBlur={() => { const n = parseFloat(lots); if (!Number.isFinite(n) || n <= 0) setLots(minLots.toFixed(2)); else setLots(Math.min(n, maxLots).toFixed(2)); }}
@@ -701,11 +812,11 @@ export default function OrderPanel({
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-xl px-3 py-1.5" style={{ background: 'var(--bg-card-nested)' }}>
                 <p className="text-[11px] text-text-tertiary">Take Profit</p>
-                <input type="text" inputMode="decimal" value={takeProfit} onChange={(e) => setTakeProfit(e.target.value)} placeholder={execPrice ? (execPrice * (side === 'buy' ? 1.02 : 0.98)).toFixed(digits) : '—'} className="ticket-input w-full bg-transparent p-0 text-[15px] font-bold tabular-nums text-buy placeholder:text-text-tertiary focus:outline-none border-0 shadow-none" />
+                <input type="text" inputMode="decimal" id="order-take-profit" name="order-take-profit" aria-label="Take profit" value={takeProfit} onChange={(e) => setTakeProfit(e.target.value)} placeholder={slTpRef > 0 ? (slTpRef * (side === 'buy' ? 1.02 : 0.98)).toFixed(digits) : '—'} className="ticket-input w-full bg-transparent p-0 text-[15px] font-bold tabular-nums text-buy placeholder:text-text-tertiary focus:outline-none border-0 shadow-none" />
               </div>
               <div className="rounded-xl px-3 py-1.5" style={{ background: 'var(--bg-card-nested)' }}>
                 <p className="text-[11px] text-text-tertiary">Stop Loss</p>
-                <input type="text" inputMode="decimal" value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} placeholder={execPrice ? (execPrice * (side === 'buy' ? 0.99 : 1.01)).toFixed(digits) : '—'} className="ticket-input w-full bg-transparent p-0 text-[15px] font-bold tabular-nums text-[#E5484D] placeholder:text-text-tertiary focus:outline-none border-0 shadow-none" />
+                <input type="text" inputMode="decimal" id="order-stop-loss" name="order-stop-loss" aria-label="Stop loss" value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} placeholder={slTpRef > 0 ? (slTpRef * (side === 'buy' ? 0.99 : 1.01)).toFixed(digits) : '—'} className="ticket-input w-full bg-transparent p-0 text-[15px] font-bold tabular-nums text-[#E5484D] placeholder:text-text-tertiary focus:outline-none border-0 shadow-none" />
               </div>
             </div>
           )}
@@ -714,17 +825,22 @@ export default function OrderPanel({
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={submitting || (!recentlyClicked && (!hasEnoughMargin || !activeAccount || (orderTab === 'market' && !marketStatus.isOpen) || !pendingTriggerValid || triggerOutOfBounds))}
+            disabled={submitting || (!recentlyClicked && (!hasEnoughMargin || !activeAccount || (orderTab === 'market' && (!marketStatus.isOpen || feedStale)) || !pendingTriggerValid || triggerOutOfBounds))}
             className={clsx(
               'w-full rounded-xl py-2.5 text-[15px] font-semibold text-white transition-[transform,opacity] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45',
               side === 'buy' ? 'bg-[#1E66F5] hover:bg-[#1a58d6]' : 'bg-[#E5484D] hover:bg-[#d23b40]',
             )}
           >
-            {submitting ? 'Placing…' : side === 'buy' ? 'Buy' : 'Sell'}
+            {submitting ? 'Placing…' : submitAction}
+            {!submitting && orderTab === 'pending' && submitPrice > 0 && (
+              <span className="ml-2 font-mono font-bold tabular-nums opacity-85">@ {submitPrice.toFixed(digits)}</span>
+            )}
           </button>
           {!hasEnoughMargin && <p className="text-center text-[12px] font-semibold text-[#E5484D]">Insufficient margin</p>}
-          {!marketStatus.isOpen && orderTab === 'market' && (
-            <p className="rounded-xl px-3 py-2 text-center text-[12px] text-[#E5484D]" style={{ background: 'rgba(229,72,77,0.1)' }}>{marketStatus.reason}</p>
+          {(!marketStatus.isOpen || feedStale) && orderTab === 'market' && (
+            <p className="rounded-xl px-3 py-2 text-center text-[12px] text-[#E5484D]" style={{ background: 'rgba(229,72,77,0.1)' }}>
+              {!marketStatus.isOpen ? marketStatus.reason : staleQuoteMessage(tick)}
+            </p>
           )}
 
           {/* Margin rows */}

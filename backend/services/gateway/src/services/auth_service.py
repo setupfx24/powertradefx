@@ -306,7 +306,9 @@ async def _consume_referral(db: AsyncSession, user_id: UUID, referral_code: str)
         select(IBProfile).where(IBProfile.referral_code == code, IBProfile.is_active == True)
     )
     ib_profile = ib_q.scalar_one_or_none()
-    if ib_profile:
+    # An IB cannot refer themselves: self-referral would let them earn on
+    # their own trading via a second account.
+    if ib_profile and ib_profile.user_id != user_id:
         db.add(Referral(referrer_id=ib_profile.user_id, referred_id=user_id, ib_profile_id=ib_profile.id))
 
 
