@@ -551,7 +551,10 @@ class MarketDataService:
                     break
                 now_mono = time.monotonic()
                 gap = now_mono - self._last_feed_tick_mono
-                primary_live = gap < STALE_TICK_AFTER_SEC
+                # _last_feed_tick_mono starts at boot, so require at least one
+                # real primary tick since start — otherwise a feed that never
+                # connected would read as live for the first 90 s.
+                primary_live = self._tick_count > 0 and gap < STALE_TICK_AFTER_SEC
                 try:
                     market_open, _ = is_market_open("EURUSD", "forex", None)
                 except Exception:
