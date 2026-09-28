@@ -261,6 +261,27 @@ function TradingViewChartInner({
         widgetRef.current.onChartReady(() => {
           readyRef.current = true;
           setChartReady(true);
+          // Two-way symbol sync. The app pushes selectedSymbol INTO the chart
+          // (effect below), but the chart's own header symbol search changed
+          // the chart without telling the app — so the on-chart SELL/BUY
+          // widget, the order panel and the watchlist kept trading the OLD
+          // symbol (client: ETHUSD chart, BTCUSD fill). Subscribe to the
+          // library's symbol-change event and mirror it into the store; the
+          // store→chart effect is a no-op when they already agree.
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const chart: any = widgetRef.current.activeChart?.();
+            chart?.onSymbolChanged?.().subscribe(null, () => {
+              try {
+                const raw = String(chart.symbol?.() ?? '').toUpperCase().trim();
+                const sym = raw.includes(':') ? raw.slice(raw.lastIndexOf(':') + 1) : raw;
+                const st = useTradingStore.getState();
+                if (sym && sym !== st.selectedSymbol && st.instruments.some((i) => i.symbol === sym)) {
+                  st.setSelectedSymbol(sym);
+                }
+              } catch { /* ignore */ }
+            });
+          } catch { /* ignore */ }
           // Pin a small FIXED right margin (~3 bars) so the latest candle hugs
           // the right edge like MT5 — the library's default wide future
           // whitespace reads as a "candle gap" (sibling-platform client
