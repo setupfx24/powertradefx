@@ -129,6 +129,10 @@ interface TradingState {
   removePosition: (id: string) => void;
   removeAccount: (id: string) => void;
   refreshPositions: () => Promise<void>;
+  /** Re-fetch the account's resting (status=pending) orders. Called right
+   *  after a limit/stop is placed so the Pending tab reflects it at once,
+   *  and when the engine reports a fill so the row leaves the list. */
+  refreshPendingOrders: () => Promise<void>;
   refreshAccount: () => Promise<void>;
   placeOrder: (data: {
     account_id: string;
@@ -256,6 +260,25 @@ function applyTick(
   };
 }
 
+/** Wire → PendingOrder. The ONE mapper for GET /orders/ rows — used by the
+ *  terminal bootstrap (trading/layout.tsx) and by refreshPendingOrders. */
+export function mapApiPendingOrder(row: unknown): PendingOrder {
+  const o = (row ?? {}) as Record<string, unknown>;
+  return {
+    id: String(o.id),
+    account_id: String(o.account_id),
+    symbol: String(o.symbol || (o.instrument as { symbol?: string })?.symbol || ''),
+    order_type: String(o.order_type),
+    side: o.side as 'buy' | 'sell',
+    status: String(o.status),
+    lots: Number(o.lots) || 0,
+    price: Number(o.price) || 0,
+    stop_loss: o.stop_loss != null ? Number(o.stop_loss) : undefined,
+    take_profit: o.take_profit != null ? Number(o.take_profit) : undefined,
+    created_at: String(o.created_at ?? ''),
+  };
+}
+
 export const useTradingStore = create<TradingState>()((set, get) => ({
   activeAccount: null,
   accounts: [],
@@ -367,6 +390,19 @@ export const useTradingStore = create<TradingState>()((set, get) => ({
         : merged;
 
       set({ positions: finalPositions });
+    } catch {}
+  },
+
+  refreshPendingOrders: async () => {
+    const account = get().activeAccount;
+    if (!account) return;
+    try {
+      const orders = await api.get<unknown[]>('/orders/', { account_id: account.id, status: 'pending' });
+      // The account may have been switched (or cleared) while the request
+      // was in flight — never write another account's orders into the store.
+      if (get().activeAccount?.id !== account.id) return;
+      const list = Array.isArray(orders) ? orders : [];
+      set({ pendingOrders: list.map(mapApiPendingOrder) });
     } catch {}
   },
 
@@ -499,8 +535,14 @@ export const useTradingStore = create<TradingState>()((set, get) => ({
       }
 
       // Still reconcile in the background for server-authoritative numbers
-      // (margin, equity, swap) — but the UI no longer waits on it.
-      Promise.all([get().refreshPositions(), get().refreshAccount()]).catch(() => {});
+      // (margin, equity, swap) — but the UI no longer waits on it. A resting
+      // limit/stop has no position to reconcile, but it must show up in the
+      // Pending tab immediately — there is no background poll for orders.
+      Promise.all([
+        get().refreshPositions(),
+        get().refreshAccount(),
+        data.order_type !== 'market' ? get().refreshPendingOrders() : Promise.resolve(),
+      ]).catch(() => {});
 
       return res;
     } catch (err) {

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { useUIStore } from '@/stores/uiStore';
 import { useTradingStore, type Position, type InstrumentInfo } from '@/stores/tradingStore';
 import { clsx } from 'clsx';
 import api from '@/lib/api/client';
@@ -347,8 +348,15 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
   const removePosition = useTradingStore((s) => s.removePosition);
   const refreshPositions = useTradingStore((s) => s.refreshPositions);
   const refreshAccount = useTradingStore((s) => s.refreshAccount);
+  const refreshPendingOrders = useTradingStore((s) => s.refreshPendingOrders);
   const instruments = useTradingStore((s) => s.instruments);
-  const [activeTab, setActiveTab] = useState<TabId>('open');
+  // The active tab lives in the UI store so the order panel can jump here
+  // ("pending") right after a limit/stop order is placed. The persisted
+  // default is the legacy 'positions' value — anything unknown maps to 'open'.
+  const storeTab = useUIStore((s) => s.activeBottomTab);
+  const setActiveBottomTab = useUIStore((s) => s.setActiveBottomTab);
+  const activeTab: TabId = storeTab === 'pending' || storeTab === 'history' ? storeTab : 'open';
+  const setActiveTab = (t: TabId) => setActiveBottomTab(t);
   const [historyTrades, setHistoryTrades] = useState<ClosedTrade[]>([]);
   // Server-reported TOTAL closed trades — the list holds only the latest page
   // (200), so counts must come from here, not items.length.
@@ -872,7 +880,8 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
     try {
       await api.delete(`/orders/${orderId}`);
       toast.success('Order cancelled');
-      refreshPositions();
+      void refreshPendingOrders();
+      void refreshAccount();
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Failed');
     }

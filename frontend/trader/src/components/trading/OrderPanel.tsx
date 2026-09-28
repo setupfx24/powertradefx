@@ -82,6 +82,7 @@ export default function OrderPanel({
     toggleTerminalMarkets,
     oneClickTrading,
     setOneClickTrading,
+    setActiveBottomTab,
   } = useUIStore();
 
   // Narrow selectors: the order ticket needs live `prices`, but selecting each
@@ -95,6 +96,7 @@ export default function OrderPanel({
   const positions = useTradingStore((s) => s.positions);
   const setPositions = useTradingStore((s) => s.setPositions);
   const refreshPositions = useTradingStore((s) => s.refreshPositions);
+  const refreshPendingOrders = useTradingStore((s) => s.refreshPendingOrders);
   const refreshAccount = useTradingStore((s) => s.refreshAccount);
   const orderFormCloneDraft = useTradingStore((s) => s.orderFormCloneDraft);
   const setOrderFormCloneDraft = useTradingStore((s) => s.setOrderFormCloneDraft);
@@ -179,6 +181,32 @@ export default function OrderPanel({
     ? execPrice
     : (() => { const t = parseFloat(triggerPrice); return Number.isFinite(t) && t > 0 ? t : 0; })();
 
+  /** Pending-order helpers. The trigger field used to show a grey NUMERIC
+   *  placeholder (ask x 0.999) that read as a filled-in value: traders
+   *  tapped "Buy Limit", the button was disabled because the field was
+   *  actually empty, and they concluded the order silently failed. The
+   *  field now says "Enter price" and the suggestion is an explicit
+   *  "Use 2647.69" button under it, next to the validity rule. 0 = no
+   *  quote yet (button hidden). Validation itself is unchanged. */
+  const suggestedTrigger = pendingKind === 'limit'
+    ? side === 'buy' ? ask * 0.999 : bid * 1.001
+    : side === 'buy' ? ask * 1.001 : bid * 0.999;
+  const triggerRule = !tick
+    ? 'Waiting for a quote'
+    : pendingKind === 'limit'
+      ? side === 'buy'
+        ? `must be below ${ask.toFixed(digits)}`
+        : `must be above ${bid.toFixed(digits)}`
+      : side === 'buy'
+        ? `must be above ${ask.toFixed(digits)}`
+        : `must be below ${bid.toFixed(digits)}`;
+  const triggerNum = parseFloat(triggerPrice);
+  const triggerEntered = Number.isFinite(triggerNum) && triggerNum > 0;
+  const suggestedStopLimit = triggerEntered
+    ? side === 'buy' ? triggerNum * 0.999 : triggerNum * 1.001
+    : 0;
+  const stopLimitRule = side === 'buy' ? 'must be below the stop price' : 'must be above the stop price';
+
   useEffect(() => {
     const unsub = wsManager.onStatusChange(setWsStatus);
     setWsStatus(wsManager.status);
@@ -225,16 +253,28 @@ export default function OrderPanel({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [symbolPickerOpen]);
 
-  // Auto-set SL/TP defaults
+  // Auto-set SL/TP defaults around the price the order will actually FILL
+  // at: the live quote for market orders, the trigger (or the stop-limit's
+  // limit) for pending orders. The server validates SL/TP against that
+  // same entry, so a default anchored on the live quote would be rejected
+  // for a limit resting far from the market.
+  const slTpRef = (() => {
+    if (orderTab !== 'pending') return execPrice;
+    if (pendingKind === 'stop_limit') {
+      const sl = parseFloat(stopLimitPrice);
+      if (Number.isFinite(sl) && sl > 0) return sl;
+    }
+    return submitPrice > 0 ? submitPrice : execPrice;
+  })();
   useEffect(() => {
-    if (slEnabled && !stopLoss && execPrice > 0) {
-      setStopLoss((side === 'buy' ? execPrice * 0.99 : execPrice * 1.01).toFixed(digits));
+    if (slEnabled && !stopLoss && slTpRef > 0) {
+      setStopLoss((side === 'buy' ? slTpRef * 0.99 : slTpRef * 1.01).toFixed(digits));
     }
   }, [slEnabled]);
 
   useEffect(() => {
-    if (tpEnabled && !takeProfit && execPrice > 0) {
-      setTakeProfit((side === 'buy' ? execPrice * 1.02 : execPrice * 0.98).toFixed(digits));
+    if (tpEnabled && !takeProfit && slTpRef > 0) {
+      setTakeProfit((side === 'buy' ? slTpRef * 1.02 : slTpRef * 0.98).toFixed(digits));
     }
   }, [tpEnabled]);
 
@@ -391,7 +431,23 @@ export default function OrderPanel({
       take_profit: tpEnabled && takeProfit ? parseFloat(takeProfit) : undefined,
     }).then(async () => {
       // Confirm success only now — the request actually went through.
-      toast.success(`${side.toUpperCase()} ${lotsNum} ${selectedSymbol}`);
+      if (orderTab === 'pending' && triggerPx != null) {
+        // A resting order is NOT a fill. Say so, put it in the Pending tab
+        // right away (nothing else polls orders) and show that tab, so the
+        // trader never reads "BUY 0.01 ETHUSD" as a market execution or
+        // an empty Pending list as "it didn't go in".
+        const at = stopLimitPx != null
+          ? `${triggerPx.toFixed(digits)} (limit ${stopLimitPx.toFixed(digits)})`
+          : triggerPx.toFixed(digits);
+        toast.success(
+          `${pendingKindLabel(side, pendingKind)} ${lotsNum} ${selectedSymbol} @ ${at} placed — waiting for price`,
+          { duration: 5000 },
+        );
+        refreshPendingOrders().catch(() => {});
+        setActiveBottomTab('pending');
+      } else {
+        toast.success(`${side.toUpperCase()} ${lotsNum} ${selectedSymbol}`);
+      }
 
       // Note: we no longer swap the optimistic row's id with the real
       // position_id here. The store's refreshPositions does that merge
@@ -405,9 +461,13 @@ export default function OrderPanel({
       // the periodic poll already syncs server-side fields without
       // remounting React rows.
       refreshAccount().catch(() => {});
-    }).catch((e: any) => {
+    }).catch((e: unknown) => {
       if (rollback) rollback();
-      toast.error(e.message || 'Order failed');
+      // api/client.ts throws Error(detail) for 4xx — e.g. "Buy limit must be
+      // below the current ask (2650.34)..." — so the server's own words reach
+      // the trader instead of a generic failure.
+      const msg = e instanceof Error && e.message ? e.message : 'Order failed';
+      toast.error(msg, { duration: 6000 });
     });
 
     // Order is on its way (optimistic, same as the sound above) — let the
@@ -727,18 +787,7 @@ export default function OrderPanel({
                 />
               </div>
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <Caption>{pendingKind === 'stop_limit' ? 'Stop (trigger) price' : 'Trigger price'}</Caption>
-                  <span className="text-xxs text-text-tertiary font-mono tabular-nums">
-                    {pendingKind === 'limit'
-                      ? side === 'buy'
-                        ? `< ${ask.toFixed(digits)}`
-                        : `> ${bid.toFixed(digits)}`
-                      : side === 'buy'
-                        ? `> ${ask.toFixed(digits)}`
-                        : `< ${bid.toFixed(digits)}`}
-                  </span>
-                </div>
+                <Caption className="block mb-1">{pendingKind === 'stop_limit' ? 'Stop (trigger) price' : 'Trigger price'}</Caption>
                 <Input
                   type="number"
                   inputMode="decimal"
@@ -747,27 +796,30 @@ export default function OrderPanel({
                   value={triggerPrice}
                   onChange={(e) => setTriggerPrice(e.target.value)}
                   step={priceStep}
-                  placeholder={(
-                    pendingKind === 'limit'
-                      ? side === 'buy'
-                        ? ask * 0.999
-                        : bid * 1.001
-                      : side === 'buy'
-                        ? ask * 1.001
-                        : bid * 0.999
-                  ).toFixed(digits)}
+                  placeholder="Enter price"
                   aria-label={pendingKind === 'stop_limit' ? 'Stop (trigger) price' : 'Trigger price'}
+                  hint={
+                    <span className="flex items-center justify-between gap-2 min-h-7">
+                      <span className="font-mono tabular-nums truncate">{triggerRule}</span>
+                      {suggestedTrigger > 0 && (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          onClick={() => setTriggerPrice(suggestedTrigger.toFixed(digits))}
+                          className="shrink-0 font-mono tabular-nums !text-xs"
+                          aria-label={`Use ${suggestedTrigger.toFixed(digits)} as the trigger price`}
+                        >
+                          Use {suggestedTrigger.toFixed(digits)}
+                        </Button>
+                      )}
+                    </span>
+                  }
                 />
               </div>
               {/* Second price input only for stop-limit */}
               {pendingKind === 'stop_limit' && (
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <Caption>Limit (target) price</Caption>
-                    <span className="text-xxs text-text-tertiary font-mono">
-                      {side === 'buy' ? '< stop' : '> stop'}
-                    </span>
-                  </div>
+                  <Caption className="block mb-1">Limit (target) price</Caption>
                   <Input
                     type="number"
                     inputMode="decimal"
@@ -776,16 +828,24 @@ export default function OrderPanel({
                     value={stopLimitPrice}
                     onChange={(e) => setStopLimitPrice(e.target.value)}
                     step={priceStep}
-                    placeholder={
-                      Number.isFinite(parseFloat(triggerPrice))
-                        ? (
-                            side === 'buy'
-                              ? parseFloat(triggerPrice) * 0.999
-                              : parseFloat(triggerPrice) * 1.001
-                          ).toFixed(digits)
-                        : '—'
-                    }
+                    placeholder="Enter price"
                     aria-label="Limit (target) price"
+                    hint={
+                      <span className="flex items-center justify-between gap-2 min-h-7">
+                        <span className="truncate">{stopLimitRule}</span>
+                        {suggestedStopLimit > 0 && (
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            onClick={() => setStopLimitPrice(suggestedStopLimit.toFixed(digits))}
+                            className="shrink-0 font-mono tabular-nums !text-xs"
+                            aria-label={`Use ${suggestedStopLimit.toFixed(digits)} as the limit price`}
+                          >
+                            Use {suggestedStopLimit.toFixed(digits)}
+                          </Button>
+                        )}
+                      </span>
+                    }
                   />
                 </div>
               )}

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useTradingStore } from '@/stores/tradingStore';
+import { useUIStore } from '@/stores/uiStore';
 import { clsx } from 'clsx';
 import toast from 'react-hot-toast';
 import { ChevronDown, LineChart, Minus, Plus, X } from 'lucide-react';
@@ -48,6 +49,7 @@ export default function MobileOrderSheet({ symbol, onClose, onGoToChart }: Mobil
   const instruments = useTradingStore((s) => s.instruments);
   const activeAccount = useTradingStore((s) => s.activeAccount);
   const placeOrder = useTradingStore((s) => s.placeOrder);
+  const setActiveBottomTab = useUIStore((s) => s.setActiveBottomTab);
   const [orderType, setOrderType] = useState<'market' | 'pending'>('market');
   const [pendingSubtype, setPendingSubtype] = useState<PendingSubtype>('buy_limit');
   const [submitting, setSubmitting] = useState(false);
@@ -73,6 +75,29 @@ export default function MobileOrderSheet({ symbol, onClose, onGoToChart }: Mobil
     : 0;
   const freeMargin = activeAccount?.free_margin || 0;
   const hasEnoughMargin = freeMargin >= marginRequired;
+
+  // Entry-price helper (parity with the desktop OrderPanel): the rule the
+  // server enforces for the chosen order type plus an explicit "Use <price>"
+  // suggestion, so the field is never mistaken for pre-filled. 0 = no quote.
+  const pendingLabel = PENDING_SUBTYPES.find((t) => t.id === pendingSubtype)?.label ?? pendingSubtype;
+  const suggestedEntry = !price
+    ? 0
+    : pendingSubtype === 'buy_limit'
+      ? price.ask * 0.999
+      : pendingSubtype === 'sell_limit'
+        ? price.bid * 1.001
+        : pendingSubtype === 'buy_stop'
+          ? price.ask * 1.001
+          : price.bid * 0.999;
+  const entryRule = !price
+    ? 'Waiting for a quote'
+    : pendingSubtype === 'buy_limit'
+      ? `must be below ${price.ask.toFixed(digits)}`
+      : pendingSubtype === 'sell_limit'
+        ? `must be above ${price.bid.toFixed(digits)}`
+        : pendingSubtype === 'buy_stop'
+          ? `must be above ${price.ask.toFixed(digits)}`
+          : `must be below ${price.bid.toFixed(digits)}`;
 
   const handleAdjustLots = (delta: number) => {
     setLots(prev => {
@@ -121,13 +146,13 @@ export default function MobileOrderSheet({ symbol, onClose, onGoToChart }: Mobil
     const slNum = sl.trim() ? parseFloat(sl) : NaN;
     const tpNum = tp.trim() ? parseFloat(tp) : NaN;
 
-    // Optimistic: instant feedback, API fires in background
+    // Optimistic: instant feedback, API fires in background. Market orders
+    // toast immediately (the store injects the optimistic position row);
+    // a pending order toasts only once the server accepts it, because a
+    // resting order is NOT a fill and the message must not race a 400.
     sounds.orderPlaced();
-    const label =
-      orderType === 'market'
-        ? `${side.toUpperCase()} ${lots} ${symbol}`
-        : `${apiOrderType} ${side} ${lots} ${symbol}`;
-    toast.success(label);
+    const isPending = orderType !== 'market';
+    if (!isPending) toast.success(`${side.toUpperCase()} ${lots} ${symbol}`);
     onClose();
     placeOrder({
       account_id: activeAccount.id,
@@ -138,8 +163,20 @@ export default function MobileOrderSheet({ symbol, onClose, onGoToChart }: Mobil
       price: priceVal,
       stop_loss: Number.isFinite(slNum) ? slNum : undefined,
       take_profit: Number.isFinite(tpNum) ? tpNum : undefined,
+    }).then(() => {
+      if (!isPending || priceVal == null) return;
+      // placeOrder already re-fetched pending orders for a limit/stop, so
+      // the Pending tab is current — bring it into view.
+      toast.success(
+        `${pendingLabel} ${lots} ${symbol} @ ${priceVal.toFixed(digits)} placed — waiting for price`,
+        { duration: 5000 },
+      );
+      setActiveBottomTab('pending');
     }).catch((err: unknown) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to place order');
+      // api/client.ts throws Error(detail) for 4xx — surface the server's
+      // exact reason (e.g. "Buy limit must be below the current ask (...)").
+      const msg = err instanceof Error && err.message ? err.message : 'Failed to place order';
+      toast.error(msg, { duration: 6000 });
     });
   };
 
@@ -260,6 +297,7 @@ export default function MobileOrderSheet({ symbol, onClose, onGoToChart }: Mobil
                 <Caption>Entry Price</Caption>
                 <Input
                   type="number"
+                  inputMode="decimal"
                   size="lg"
                   numeric
                   placeholder="Enter price"
@@ -267,6 +305,22 @@ export default function MobileOrderSheet({ symbol, onClose, onGoToChart }: Mobil
                   onChange={(e) => setEntryPrice(e.target.value)}
                   className="font-bold"
                   aria-label="Entry price"
+                  hint={
+                    <span className="flex items-center justify-between gap-2 min-h-7">
+                      <span className="font-mono tabular-nums truncate">{entryRule}</span>
+                      {suggestedEntry > 0 && (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          onClick={() => setEntryPrice(suggestedEntry.toFixed(digits))}
+                          className="shrink-0 font-mono tabular-nums !text-xs"
+                          aria-label={`Use ${suggestedEntry.toFixed(digits)} as the entry price`}
+                        >
+                          Use {suggestedEntry.toFixed(digits)}
+                        </Button>
+                      )}
+                    </span>
+                  }
                 />
               </div>
             </div>
