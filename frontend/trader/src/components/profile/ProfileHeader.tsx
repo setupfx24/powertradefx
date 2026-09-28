@@ -76,14 +76,18 @@ export default function ProfileHeader({
       {/* Cover — dashboard artwork under a dark-to-transparent veil so the
           avatar + name stay legible in both themes. */}
       <div className="relative h-44 sm:h-56 overflow-hidden">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <motion.img
-          src="/assets/dashboard_banner_ny.png"
-          alt=""
+        {/* Brand cover: a soft orange bloom on graphite, drawn in CSS so the
+            header never depends on a raster asset. */}
+        <motion.div
+          aria-hidden
           initial={{ scale: 1.08 }}
           animate={{ scale: 1 }}
           transition={{ duration: 1.4, ease: [0.22, 1, 0.36, 1] }}
-          className="absolute inset-0 h-full w-full object-cover object-[70%_40%]"
+          className="absolute inset-0"
+          style={{
+            background:
+              'radial-gradient(120% 140% at 85% 20%, rgba(255,106,0,0.85) 0%, rgba(255,106,0,0.25) 38%, rgba(0,0,0,0) 70%), linear-gradient(135deg, #1a1a1d 0%, #0b0b0c 100%)',
+          }}
         />
         <div aria-hidden className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.15)_0%,rgba(0,0,0,0.4)_50%,rgba(0,0,0,0.92)_100%)]" />
         <div aria-hidden className="absolute inset-0 bg-[linear-gradient(90deg,rgba(0,0,0,0.55)_0%,rgba(0,0,0,0)_60%)]" />

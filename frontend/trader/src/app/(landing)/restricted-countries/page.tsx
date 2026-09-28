@@ -8,11 +8,10 @@ import { BRAND_NAME, BRAND_SUPPORT_EMAIL } from '@/lib/brand';
 /**
  * Restricted Countries — public legal page.
  *
- * The list of restricted jurisdictions is the same one already shown in
- * the canonical landing footer (Footer.jsx 'Restricted Regions' callout),
- * surfaced as a dedicated page so the footer 'Restricted Countries' link
- * lands on its own document instead of a PDF download. Restyled onto the
- * shared marketing design system; the copy is carried over verbatim.
+ * Where PowerTradeFX does not accept clients, how residency is checked
+ * at KYC, and what happens if someone misrepresents their location.
+ * The country list is the sanctions-style list also shown in the site
+ * footer; it is a policy list, not legal advice on any jurisdiction.
  */
 
 const RESTRICTED = [
@@ -27,39 +26,51 @@ const RESTRICTED = [
 const SECTIONS: { h: string; body: string; list?: string[]; trailing?: string }[] = [
   {
     h: '1. Overview',
-    body: `${BRAND_NAME} ("${BRAND_NAME}", "Company", "we", "our", or "us") is a software development company that builds and licenses trading technology to licensed operators. We assess every client engagement individually and comply with applicable export-control and sanctions laws. As a result, we do not provide software or services in connection with certain jurisdictions.`,
+    body: `${BRAND_NAME} ("${BRAND_NAME}", "we", "our" or "us") does not open accounts for, or provide trading services to, residents or citizens of jurisdictions where doing so would be unlawful, where local rules would require a licence we do not hold, or which are subject to comprehensive international sanctions. This page lists the jurisdictions currently affected and explains how we apply the policy.`,
   },
   {
-    h: '2. Sanctioned and High-Risk Jurisdictions',
-    body: `${BRAND_NAME} does not enter into software licensing or service engagements connected with jurisdictions subject to comprehensive sanctions or export restrictions, which currently include:`,
+    h: '2. Restricted Jurisdictions',
+    body: `We do not accept clients who are resident in, citizens of, or located in the following jurisdictions:`,
     list: RESTRICTED,
-    trailing: `${BRAND_NAME} software and services are not intended for supply to, or use by, any person or entity in any country or jurisdiction where such supply or use would be contrary to applicable law, regulation, or sanctions.`,
+    trailing: `The platform is also not intended for anyone in any other country or territory where access to, or use of, leveraged trading services offered by ${BRAND_NAME} would be contrary to local law or regulation. The list above is not exhaustive and we may decline an application from any jurisdiction at our discretion.`,
   },
   {
-    h: '3. Client Responsibility',
-    body: `It is the responsibility of each client to ensure that its licensing of ${BRAND_NAME} software, and the operation of any platform built with it, is lawful in every jurisdiction in which the client and its own customers are located. By engaging ${BRAND_NAME}, you confirm that you are not located in, and are not acting on behalf of any person in, a restricted jurisdiction.`,
-  },
-  {
-    h: '4. Misrepresentation',
-    body: `Any attempt to obtain ${BRAND_NAME} software or services from a restricted jurisdiction — including through misrepresentation of location, identity, or ownership — constitutes a breach of these Terms and may result in:`,
+    h: '3. How We Check Residency',
+    body: `Residency and location are checked during registration and identity verification (KYC) and monitored afterwards:`,
     list: [
-      'Immediate suspension or termination of access and licences',
-      'Suspension of any engagement pending a compliance review',
-      'Reporting of activity to relevant authorities where required',
-      'Termination of any related agreements or commercial arrangements',
+      'You declare your country of residence and nationality when you register.',
+      'Your government-issued ID and, where requested, proof of address are checked against that declaration before you can withdraw.',
+      'IP address and device signals are monitored for logins that are inconsistent with your declared location.',
+      'Names are screened against applicable sanctions and watch lists at onboarding and periodically thereafter.',
+    ],
+    trailing: 'If any of these checks indicate a restricted jurisdiction we may pause the account and ask for further documents before deciding whether it can remain open.',
+  },
+  {
+    h: '4. Your Responsibility',
+    body: `It is your responsibility to make sure that trading leveraged products with ${BRAND_NAME} is lawful where you live and that you are not a restricted person. By opening an account you confirm that you are not resident in, a citizen of, or acting on behalf of any person in a restricted jurisdiction, and you agree to tell us promptly if you move to one.`,
+  },
+  {
+    h: '5. Misrepresentation',
+    body: `Attempting to open or use an account from a restricted jurisdiction — including by giving a false address, using someone else's documents, or using a VPN, proxy or other tool to disguise your location — is a breach of our Terms of Service and may result in:`,
+    list: [
+      'Immediate suspension of trading on the account',
+      'Closure of open positions at the prevailing market price',
+      'Closure of the account and return of any verified balance to its source, less applicable charges, once our checks are complete',
+      'Forfeiture of programme rewards or partner commissions earned through the account',
+      'Reporting of the matter to the relevant authorities where required',
     ],
   },
   {
-    h: '5. Updates to the Restricted List',
-    body: `${BRAND_NAME} reserves the right to add, remove, or modify the jurisdictions and restrictions described here at any time without prior notice. Updates will become effective immediately upon publication on the ${BRAND_NAME} website. Continued use of ${BRAND_NAME} services following any update constitutes acceptance of the revised terms.`,
+    h: '6. Sanctions Screening',
+    body: `Regardless of country of residence, we do not provide services to individuals or entities listed on applicable sanctions lists (including, without limitation, UN, OFAC, EU and UK lists) or owned or controlled by such persons. Matches found during screening lead to the account being frozen while the match is reviewed.`,
   },
   {
-    h: '6. Sanctions & Compliance',
-    body: `In addition to the jurisdictions above, ${BRAND_NAME} maintains sanctions-screening procedures that may restrict, suspend, or terminate engagements with individuals or entities listed on any applicable sanctions list (including, without limitation, OFAC, UN, EU, and UK lists), regardless of country of residence.`,
+    h: '7. Changes to This List',
+    body: `Sanctions and local regulation change. We may add or remove jurisdictions, or change how we apply this policy, at any time. The current version is published on this page with its date. If your country is added to the list after you open an account, we will contact you about closing positions and withdrawing your balance.`,
   },
   {
-    h: '7. Contact',
-    body: `Questions about engagement eligibility or sanctions compliance can be sent to ${BRAND_SUPPORT_EMAIL}. We aim to respond within five business days.`,
+    h: '8. Contact',
+    body: `If you are unsure whether you can open an account from your country, or you believe a restriction has been applied to you in error, contact ${BRAND_SUPPORT_EMAIL} before registering or depositing. We aim to respond within five business days.`,
   },
 ];
 
@@ -71,17 +82,18 @@ export default function RestrictedCountriesPage() {
       <PageHero
         kicker="Legal"
         title="Restricted Countries"
-        lead={`How ${BRAND_NAME} approaches jurisdictional, export-control, and sanctions compliance.`}
+        lead={`Where ${BRAND_NAME} does not accept clients, and how we check residency when you verify your account.`}
       />
 
       <Section raised>
-        <LegalDoc toc={TOC} updated="June 2026">
+        <LegalDoc toc={TOC} updated="September 2026">
           {/* Headline callout — quick-glance list of restricted countries */}
           <LegalCallout tone="warn">
             <span style={{ color: 'var(--mk-text)', fontWeight: 700 }}>
-              Not available in connection with:
+              We do not accept clients from:
             </span>{' '}
-            {RESTRICTED.join(' · ')}.
+            {RESTRICTED.join(' · ')}, or from any other jurisdiction where our services would be
+            unlawful.
           </LegalCallout>
 
           {SECTIONS.map(({ h, body, list, trailing }) => (
@@ -96,21 +108,26 @@ export default function RestrictedCountriesPage() {
             Read this alongside our{' '}
             <Link href="/terms" className="hover:underline" style={{ color: 'var(--mk-accent)' }}>
               Terms of Service
+            </Link>
+            ,{' '}
+            <Link href="/privacy" className="hover:underline" style={{ color: 'var(--mk-accent)' }}>
+              Privacy Policy
             </Link>{' '}
             and{' '}
-            <Link href="/risk" className="hover:underline" style={{ color: 'var(--mk-accent)' }}>
-              Risk Disclaimer
+            <Link href="/risk-warning" className="hover:underline" style={{ color: 'var(--mk-accent)' }}>
+              Risk Warning
             </Link>
-            .
+            . Trading leveraged products such as forex and CFDs carries a high level of risk and may
+            not be suitable for all investors. You could lose more than your initial deposit.
           </LegalP>
         </LegalDoc>
       </Section>
 
       <CtaBanner
-        title="Ready to see the platform?"
-        lead={`If ${BRAND_NAME} can engage in your jurisdiction, book a walkthrough of the platform under your own brand.`}
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'Contact Compliance', href: `mailto:${BRAND_SUPPORT_EMAIL}` }}
+        title="Eligible to trade?"
+        lead={`If your country is not on the list, you can open a ${BRAND_NAME} account in minutes. Not sure? Ask our support team first.`}
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'Contact support', href: `mailto:${BRAND_SUPPORT_EMAIL}` }}
       />
     </main>
   );

@@ -13,7 +13,7 @@ export function BannerPlaceholder({
   title: string;
   tagline?: string;
   height?: number;
-  /** Optional banner image — drop in `public/images/banners/<slug>.webp` and pass `/images/banners/<slug>.webp`. */
+  /** Optional banner image — a real product screenshot under `/marketing/screens/`. */
   bannerSrc?: string;
 }) {
   return (

@@ -2,49 +2,54 @@
 
 /**
  * Demo Account — an account SPECIFICATION page, not a pricing plan.
- * Copy carried over verbatim from the previous Demo Account page; restyled
- * onto the shared marketing design system. Every CTA opens an account.
+ * The demo is real: one click on "Try with demo" on the login page creates
+ * a $10,000 demo account instantly, with no email. Demo accounts trade the
+ * live price feed on the full terminal; they cannot deposit, and copy
+ * trading needs a live account.
  */
-import { Check, GraduationCap, BarChart3, RefreshCw } from 'lucide-react';
+import { Check, GraduationCap, BarChart3, MousePointerClick } from 'lucide-react';
 import { Section, SectionHeading, PageHero, FeatureGrid, CtaBanner } from '@/marketing/components';
 
+const RISK_LINE =
+  'Trading leveraged products such as forex and CFDs carries a high level of risk and may not be suitable for all investors. You could lose more than your initial deposit.';
+
 const FEATURES = [
-  'Identical to live trading environment',
-  'Unlimited demo resets',
-  'Access to all platforms (Web, Copy Trading)',
-  'No credit card required',
-  'Real-time market data',
-  'Practice with $100,000 virtual funds',
-  'Test trading strategies risk-free',
-  'Learn platform features',
+  'The same web terminal as a live account',
+  'Live prices on 40+ instruments across forex, metals, indices, energy and crypto',
+  'Market, limit, stop and stop-limit orders with stop-loss and take-profit',
+  'Try the AI Strategy Builder and the Algo Connector API',
+  'No email, no card, no deposit',
+  'Leverage up to 1:500, lots from 0.01',
+  'Test strategies before you put money on them',
+  'Learn where everything is in the terminal',
 ];
 
 const SPECS = [
-  { label: 'Virtual Funds', value: '$100,000' },
+  { label: 'Virtual funds', value: '$10,000' },
   { label: 'Cost', value: 'Free' },
-  { label: 'Duration', value: 'Unlimited' },
-  { label: 'Platforms', value: 'All' },
+  { label: 'Sign-up', value: 'One click' },
+  { label: 'Terminal', value: 'Full' },
 ];
 
 const STEPS = [
-  { n: '1', title: 'Client signs up', body: 'A client creates a free demo account in seconds' },
-  { n: '2', title: 'Choose platform', body: 'They pick Web Platform or Copy Trading' },
-  { n: '3', title: 'Start practising', body: 'They practise with $100,000 virtual funds' },
+  { n: '1', title: 'Go to the login page', body: 'Press “Try with demo”. No email or password is needed.' },
+  { n: '2', title: 'Land in the terminal', body: 'A $10,000 demo account is created instantly and opened for you.' },
+  { n: '3', title: 'Trade', body: 'Place orders on live prices. When you are ready, open a live account from the same login.' },
 ];
 
 export default function DemoAccountPage() {
   return (
     <main>
       <PageHero
-        kicker="A risk-free demo tier"
-        title="Give clients a $100,000 virtual-funds demo tier"
-        lead="Let clients test strategies on live market conditions with virtual funds — a demo tier built into the platform we deliver under your brand. No credit card required."
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'View live tiers', href: '/accounts/standard' }}
+        kicker="Demo account"
+        title="A $10,000 demo, one click away"
+        lead="Trade the full terminal on live prices with virtual funds. No email, no card, no deposit — press one button and you are in."
+        primary={{ label: 'Try a free demo', href: '/auth/login' }}
+        secondary={{ label: 'Open a live account', href: '/auth/register' }}
       />
 
       <Section raised>
-        <SectionHeading kicker="Specifications" title="Account Conditions" />
+        <SectionHeading kicker="Specifications" title="Demo account conditions" />
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-5 mt-12">
           {SPECS.map((s) => (
@@ -70,7 +75,7 @@ export default function DemoAccountPage() {
         </div>
 
         <div className="mx-auto max-w-4xl mt-14">
-          <h3 className="mk-h2 text-center">Demo Account Features</h3>
+          <h3 className="mk-h2 text-center">What the demo includes</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8">
             {FEATURES.map((feature) => (
               <div key={feature} className="flex items-start gap-3">
@@ -79,36 +84,40 @@ export default function DemoAccountPage() {
               </div>
             ))}
           </div>
+          <p className="mk-body text-center mt-8" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)' }}>
+            Demo accounts cannot deposit or withdraw, and copy trading is available on live
+            accounts only.
+          </p>
         </div>
       </Section>
 
       <Section>
-        <SectionHeading kicker="Benefits" title="Why offer a demo tier?" />
+        <SectionHeading kicker="Why start on a demo" title="Practise before you fund" />
         <FeatureGrid
           className="mt-12"
           columns={3}
           items={[
             {
               icon: GraduationCap,
-              title: 'Learn Risk-Free',
-              body: 'Lets clients practise strategies and test their skills without risking real money.',
+              title: 'Learn without losing',
+              body: 'Try order types, stop-loss and take-profit, and the one-click widget with virtual money.',
             },
             {
               icon: BarChart3,
-              title: 'Real Market Conditions',
-              body: 'Live market prices and conditions identical to a funded account.',
+              title: 'Real prices',
+              body: 'The demo uses the same live feed and the same server-side execution as a live account.',
             },
             {
-              icon: RefreshCw,
-              title: 'Unlimited Resets',
-              body: 'Clients can reset the demo anytime and start fresh with $100,000 virtual funds.',
+              icon: MousePointerClick,
+              title: 'No forms',
+              body: 'One button on the login page. Come back later and open a live account when you are ready.',
             },
           ]}
         />
       </Section>
 
       <Section raised>
-        <SectionHeading kicker="Getting Started" title="How clients get started" />
+        <SectionHeading kicker="Getting started" title="Three steps" />
         <ol className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-12">
           {STEPS.map((s) => (
             <li key={s.n} className="mk-card mk-card--hover flex flex-col items-center text-center gap-3">
@@ -125,11 +134,21 @@ export default function DemoAccountPage() {
         </ol>
       </Section>
 
+      <Section className="mk-section--tight">
+        <p
+          className="mk-body mx-auto text-center"
+          style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)', maxWidth: '70ch' }}
+        >
+          <strong>Risk warning:</strong> {RISK_LINE} Results on a demo account do not guarantee
+          results on a live account.
+        </p>
+      </Section>
+
       <CtaBanner
-        title="See the platform for yourself"
-        lead={'Book a demo and see the demo tier and the live tiers running on the platform we build under your brand.'}
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'View live tiers', href: '/accounts/standard' }}
+        title="Try the terminal now"
+        lead="One click on the login page gives you a $10,000 demo. When you are ready, open a live Standard or Pro account."
+        primary={{ label: 'Try a free demo', href: '/auth/login' }}
+        secondary={{ label: 'Compare live accounts', href: '/account-types' }}
       />
     </main>
   );

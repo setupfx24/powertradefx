@@ -2,53 +2,58 @@
 
 /**
  * Standard Account — an account SPECIFICATION page, not a pricing plan.
- * Copy carried over verbatim from the previous Standard Account page;
- * restyled onto the shared marketing design system. Every CTA opens an
- * account (no checkout, no plan selection).
+ * PowerTradeFX's entry-level live account: commission-free, competitive
+ * spreads, low minimum deposit. Every CTA opens an account (no checkout,
+ * no plan selection).
  */
 import { Check } from 'lucide-react';
 import { Section, SectionHeading, PageHero, CtaBanner } from '@/marketing/components';
 
+const RISK_LINE =
+  'Trading leveraged products such as forex and CFDs carries a high level of risk and may not be suitable for all investors. You could lose more than your initial deposit.';
+
 const FEATURES = [
-  'Education content modules',
-  '24/7 support from the team that builds it',
-  'Negative balance protection controls',
-  'Access to all platform surfaces',
-  'Transparent, configurable pricing',
-  'Deposit & withdrawal integrations',
-  'Real-time market data',
-  'Mobile trading apps',
+  'No commission — the spread is the only cost',
+  'Leverage up to 1:500, lots from 0.01',
+  '40+ instruments: forex, metals, indices, energy and crypto',
+  'Full web terminal with TradingView charts and one-click trading',
+  'Stop-loss and take-profit executed server-side',
+  'Deposit by USDT (TRC20, BEP20, ERC20) or bank transfer / UPI',
+  'Copy trading, AI Strategy Builder and Algo Connector API',
+  'In-app support tickets and email support',
 ];
 
 const SPECS = [
-  { label: 'Min Deposit', value: '$100' },
-  { label: 'Spreads From', value: '1.1 pips' },
-  { label: 'Leverage', value: '1:500' },
+  { label: 'Min deposit', value: '$100' },
+  { label: 'Spreads from', value: '1.1 pips' },
+  { label: 'Leverage', value: 'Up to 1:500' },
   { label: 'Commission', value: 'None' },
 ];
 
 const COMPARISON = [
-  { feature: 'Minimum Deposit', standard: '$100', pro: '$5,000', demo: '$0' },
-  { feature: 'Spreads From', standard: '1.1 pips', pro: '0.0 pips', demo: 'Live spreads' },
-  { feature: 'Leverage', standard: 'Up to 1:500', pro: 'Up to 1:200', demo: 'Up to 1:500' },
-  { feature: 'Commission', standard: 'None', pro: '$3.5/lot', demo: 'None' },
-  { feature: 'Platforms', standard: 'Web, Copy Trading', pro: 'Web, Copy Trading', demo: 'Web, Copy Trading' },
-  { feature: 'Support', standard: '24/7', pro: 'Priority 24/7', demo: '24/7' },
+  { feature: 'Minimum deposit', standard: '$100', pro: '$5,000', demo: 'None' },
+  { feature: 'Spreads from', standard: '1.1 pips', pro: '0.0 pips', demo: 'Live spreads' },
+  { feature: 'Commission', standard: 'None', pro: '$3.5 / lot', demo: 'None' },
+  { feature: 'Leverage', standard: 'Up to 1:500', pro: 'Up to 1:500', demo: 'Up to 1:500' },
+  { feature: 'Lot size from', standard: '0.01', pro: '0.01', demo: '0.01' },
+  { feature: 'Copy trading', standard: 'Yes', pro: 'Yes', demo: 'Live accounts only' },
+  { feature: 'Deposits & withdrawals', standard: 'USDT, bank / UPI', pro: 'USDT, bank / UPI', demo: 'Not available' },
+  { feature: 'Support', standard: 'In-app & email', pro: 'Priority', demo: 'In-app & email' },
 ];
 
 export default function StandardAccountPage() {
   return (
     <main>
       <PageHero
-        kicker="A configurable account tier"
+        kicker="Account types"
         title="Standard Account"
-        lead="The entry-level tier your clients can start on — low minimum deposit, competitive spreads and no commission, all configurable in the platform we build under your brand."
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'View platforms', href: '/platforms/web' }}
+        lead="The account most traders start on. Low minimum deposit, competitive spreads, no commission, and every feature of the platform."
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'Try a free demo', href: '/auth/login' }}
       />
 
       <Section raised>
-        <SectionHeading kicker="Specifications" title="Account Conditions" />
+        <SectionHeading kicker="Specifications" title="Account conditions" />
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-5 mt-12">
           {SPECS.map((s) => (
@@ -74,7 +79,7 @@ export default function StandardAccountPage() {
         </div>
 
         <div className="mx-auto max-w-4xl mt-14">
-          <h3 className="mk-h2 text-center">Account Features</h3>
+          <h3 className="mk-h2 text-center">What you get</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8">
             {FEATURES.map((feature) => (
               <div key={feature} className="flex items-start gap-3">
@@ -87,7 +92,7 @@ export default function StandardAccountPage() {
       </Section>
 
       <Section>
-        <SectionHeading kicker="Side by Side" title="Compare Account Types" />
+        <SectionHeading kicker="Side by side" title="Compare account types" />
 
         <div className="mt-12 overflow-x-auto">
           <div
@@ -136,13 +141,26 @@ export default function StandardAccountPage() {
             </table>
           </div>
         </div>
+        <p className="mk-body text-center mt-6" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)' }}>
+          You can hold more than one account under a single login and move funds between them
+          and your wallet at any time.
+        </p>
+      </Section>
+
+      <Section className="mk-section--tight">
+        <p
+          className="mk-body mx-auto text-center"
+          style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)', maxWidth: '70ch' }}
+        >
+          <strong>Risk warning:</strong> {RISK_LINE}
+        </p>
       </Section>
 
       <CtaBanner
-        title="Offer a Standard tier under your brand"
-        lead="Configure the Standard tier in the platform we build and launch it to your clients under your own brand."
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'View platforms', href: '/platforms/web' }}
+        title="Open a Standard account"
+        lead="Register in minutes, verify your identity, fund by USDT or bank transfer, and trade."
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'See the Pro account', href: '/accounts/pro' }}
       />
     </main>
   );

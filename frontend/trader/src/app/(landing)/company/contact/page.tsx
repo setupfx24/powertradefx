@@ -1,26 +1,25 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Mail, MapPin, Send, MessageCircle, X } from 'lucide-react';
+import Link from 'next/link';
+import { Mail, Send, MessageCircle, X, Ticket, Clock } from 'lucide-react';
 import { Section, SectionHeading, PageHero } from '@/marketing/components';
 import { BRAND_NAME, BRAND_SUPPORT_EMAIL } from '@/lib/brand';
 
 /**
- * Company → Contact. Restyled onto the shared marketing design system.
- * The enquiry form, its POST to /api/v1/public/contact, the success
- * modal and the live-chat widget are carried over unchanged — only the
- * shell around them was re-skinned.
+ * Company → Contact.
+ *
+ * Three ways to reach the team: email, in-app support tickets (/support
+ * after sign-in) and the live-chat assistant on this page. The enquiry
+ * form still POSTs to /api/v1/public/contact and the success modal only
+ * opens once the backend confirms delivery.
+ *
+ * There is intentionally no phone number and no office address on this
+ * page: the ones that used to be here belonged to a previous brand.
  */
 
-/** Official WhatsApp glyph — lucide-react doesn't ship brand logos, so we
- *  inline the SVG. Inherits size + colour from className (currentColor). */
-function WhatsAppIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
-      <path d="M.057 24l1.687-6.163a11.867 11.867 0 01-1.587-5.945C.16 5.335 5.495 0 12.05 0a11.82 11.82 0 018.413 3.488 11.82 11.82 0 013.48 8.414c-.003 6.557-5.338 11.892-11.893 11.892a11.9 11.9 0 01-5.688-1.448L.057 24zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884a9.82 9.82 0 001.671 5.475l-.999 3.648 3.817-1.002zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z" />
-    </svg>
-  );
-}
+const RISK_LINE =
+  'Trading leveraged products such as forex and CFDs carries a high level of risk and may not be suitable for all investors. You could lose more than your initial deposit.';
 
 type ChatMessage = { from: 'agent' | 'user'; text: string; time: string };
 
@@ -60,7 +59,7 @@ export default function ContactPage() {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { from: 'agent', text: `Hi there! 👋 I'm your ${BRAND_NAME} assistant. How can I help you today?`, time: 'now' },
+    { from: 'agent', text: `Hi, I'm the ${BRAND_NAME} assistant. Ask me about accounts, deposits, KYC or trading and I'll point you the right way.`, time: 'now' },
   ]);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -81,15 +80,22 @@ export default function ContactPage() {
     };
   }, [showSuccess]);
 
+  /** Scripted answers for the most common trader questions. Anything the
+   *  script cannot answer is routed to a ticket or the form. */
   const getAutoReply = (text: string) => {
     const t = text.toLowerCase();
-    if (t.includes('account') || t.includes('open') || t.includes('demo')) return 'You can book a demo in under 2 minutes from our contact form below. Would you like me to walk you through it?';
-    if (t.includes('deposit') || t.includes('fund') || t.includes('payment')) return 'We wire payment, wallet, KYC/AML and liquidity integrations into the platforms we build. Which providers are you planning to use?';
-    if (t.includes('price') || t.includes('cost') || t.includes('fee')) return 'Pricing depends on the modules and integrations you need. Tell us about your setup and we will scope it for you.';
-    if (t.includes('platform')) return 'We build web, mobile and desktop terminals, copy trading, prop trading, and IB management tools. Visit the Platforms page to learn more.';
-    if (t.includes('hi') || t.includes('hello') || t.includes('hey')) return 'Hello! 👋 How can I help you with your white-label platform today?';
-    if (t.includes('thank')) return 'You\'re welcome! Is there anything else I can help you with?';
-    return 'Thanks for your message! One of our specialists will get back to you shortly. In the meantime, feel free to ask about platforms, integrations, delivery timelines, or booking a demo.';
+    if (t.includes('demo')) return 'Go to Sign in and press "Try with demo" — you get a $10,000 demo account instantly, no email needed.';
+    if (t.includes('open') || t.includes('register') || t.includes('sign up') || t.includes('account')) return 'Open a live account at /auth/register. Once you are signed in you can add more accounts from Open account and move funds between them.';
+    if (t.includes('deposit') || t.includes('fund') || t.includes('payment') || t.includes('usdt')) return 'Deposits are made from Wallet: USDT on TRC20, BEP20 or ERC20, or bank transfer / UPI via a payment link. Demo accounts cannot deposit.';
+    if (t.includes('withdraw')) return 'Withdrawals go to USDT or bank/UPI from Wallet. Complete KYC first — withdrawals need a verified account. Crypto is typically same-day; bank withdrawals are reviewed by our team.';
+    if (t.includes('kyc') || t.includes('verify') || t.includes('verification')) return 'KYC takes a government ID, a selfie and proof of address. Upload them at /kyc after sign-in; you need it before your first withdrawal.';
+    if (t.includes('leverage') || t.includes('margin')) return 'Leverage is flexible up to 1:500 (default 1:100) and set per account group. Lot sizes start from 0.01. The margin calculator at /risk-calculator shows what a position needs.';
+    if (t.includes('copy') || t.includes('pamm')) return 'Copy trading (/social) and PAMM (/pamm) both need a live account. Pick a master or manager, choose an allocation, and you can stop at any time.';
+    if (t.includes('partner') || t.includes('ib') || t.includes('affiliate') || t.includes('referral')) return 'Apply to the IB programme from /business after sign-in. You get a referral link and code, and commission is calculated per lot when a referred trade fills.';
+    if (t.includes('api') || t.includes('bot') || t.includes('algo')) return 'The Algo Connector (/algo-connector) gives you a per-account API key with REST endpoints for BUY/SELL/CLOSE and a WebSocket tick stream. The AI strategy builder is at /ai-strategies.';
+    if (t.includes('hi') || t.includes('hello') || t.includes('hey')) return 'Hello. What can I help you with — your account, deposits, KYC, trading or the partner programme?';
+    if (t.includes('thank')) return 'You\'re welcome. If you need anything else, open a ticket from /support and a person will pick it up.';
+    return `Thanks — I can answer common questions about accounts, deposits, KYC and trading. For anything specific to your account, open a ticket at /support after signing in or email ${BRAND_SUPPORT_EMAIL}.`;
   };
 
   const handleSendChat = (e: React.FormEvent) => {
@@ -105,9 +111,8 @@ export default function ContactPage() {
   };
 
   /** POSTs to the gateway, which emails the submission to the support inbox
-   *  (CONTACT_INBOX_EMAIL). The success modal only
-   *  opens once the backend confirms delivery — previously it always showed,
-   *  so failed messages looked sent. */
+   *  (CONTACT_INBOX_EMAIL). The success modal only opens once the backend
+   *  confirms delivery, so a failed message never looks sent. */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
@@ -155,113 +160,80 @@ export default function ContactPage() {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const contactInfo: {
-    icon: React.ComponentType<{ className?: string }>;
-    title: string;
-    content: string;
-    link: string;
-  }[] = [
-    {
-      icon: Mail,
-      title: 'Email Us',
-      content: BRAND_SUPPORT_EMAIL,
-      link: `mailto:${BRAND_SUPPORT_EMAIL}`,
-    },
-    {
-      icon: WhatsAppIcon,
-      title: 'WhatsApp',
-      content: '+33 7 59 15 99 87',
-      link: 'https://wa.me/33759159987',
-    },
-    {
-      icon: MapPin,
-      title: '📍 Visit Us — United Kingdom',
-      content: 'Office 23US, 18 Young St, UNIT LGE 1/1, Edinburgh EH2 4JB, Scotland, United Kingdom 🇬🇧',
-      link: 'https://www.google.com/maps/search/?api=1&query=18+Young+Street+Edinburgh+EH2+4JB',
-    },
-  ];
-
   return (
     <main>
       <PageHero
         kicker="Contact"
-        title="Get in Touch"
-        lead="Book a demo or ask us anything about launching your white-label trading platform. Our team is here to help."
+        title="Get in touch"
+        lead="Questions about your account, a deposit, KYC or a trade? Email us, open a support ticket from your dashboard, or use the form below."
       />
 
       <Section raised>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {contactInfo.map((info) => {
-            const external = info.link.startsWith('http');
-            const Icon = info.icon;
-            return (
-              <article key={info.title} className="mk-card mk-card--hover text-center flex flex-col items-center gap-3">
-                <span
-                  className="inline-flex h-11 w-11 items-center justify-center rounded-xl shrink-0"
-                  style={{ background: 'var(--mk-accent-soft)', color: 'var(--mk-accent)' }}
-                >
-                  <Icon className="h-5 w-5" />
-                </span>
-                <h3 className="mk-h3">{info.title}</h3>
-                <a
-                  href={info.link}
-                  target={external ? '_blank' : undefined}
-                  rel={external ? 'noopener noreferrer' : undefined}
-                  className="mk-body break-words"
-                >
-                  {info.content}
-                </a>
-              </article>
-            );
-          })}
-        </div>
-
-        {/* UK office pin — Google Maps embed for Edinburgh HQ */}
-        <div
-          className="mt-12 overflow-hidden"
-          style={{
-            border: '1px solid var(--mk-line)',
-            borderRadius: 'var(--mk-radius-lg)',
-            background: 'var(--mk-surface)',
-          }}
-        >
-          <div className="flex flex-wrap items-center gap-3 px-5 py-4">
-            <MapPin size={20} style={{ color: 'var(--mk-accent)' }} />
-            <div>
-              <div className="font-bold" style={{ fontSize: 'var(--mk-text-sm)' }}>{BRAND_NAME} UK Office</div>
-              <div style={{ fontSize: 'var(--mk-text-xs)', color: 'var(--mk-text-faint)' }}>
-                18 Young St, Edinburgh EH2 4JB, Scotland
-              </div>
-            </div>
-            <a
-              href="https://www.google.com/maps/search/?api=1&query=18+Young+Street+Edinburgh+EH2+4JB"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ml-auto hover:underline"
-              style={{ fontSize: 'var(--mk-text-xs)', color: 'var(--mk-accent)' }}
+          {/* Email */}
+          <article className="mk-card mk-card--hover text-center flex flex-col items-center gap-3">
+            <span
+              className="inline-flex h-11 w-11 items-center justify-center rounded-xl shrink-0"
+              style={{ background: 'var(--mk-accent-soft)', color: 'var(--mk-accent)' }}
             >
-              Open in Google Maps →
+              <Mail className="h-5 w-5" />
+            </span>
+            <h3 className="mk-h3">Email us</h3>
+            <a href={`mailto:${BRAND_SUPPORT_EMAIL}`} className="mk-body break-words">
+              {BRAND_SUPPORT_EMAIL}
             </a>
-          </div>
-          <iframe
-            title={`${BRAND_NAME} UK office location`}
-            src="https://www.google.com/maps?q=18+Young+Street+Edinburgh+EH2+4JB&output=embed"
-            width="100%"
-            height="360"
-            style={{ border: 0, display: 'block' }}
-            loading="lazy"
-            referrerPolicy="no-referrer-when-downgrade"
-            allowFullScreen
-          />
+          </article>
+
+          {/* In-app tickets */}
+          <article className="mk-card mk-card--hover text-center flex flex-col items-center gap-3">
+            <span
+              className="inline-flex h-11 w-11 items-center justify-center rounded-xl shrink-0"
+              style={{ background: 'var(--mk-accent-soft)', color: 'var(--mk-accent)' }}
+            >
+              <Ticket className="h-5 w-5" />
+            </span>
+            <h3 className="mk-h3">Support tickets</h3>
+            <p className="mk-body">
+              Signed in? Open a ticket from your dashboard — it is tied to your account, so we can
+              look straight at the deposit, trade or document you are asking about.
+            </p>
+            <Link href="/support" className="mk-link" style={{ fontSize: 'var(--mk-text-sm)' }}>
+              Open a ticket →
+            </Link>
+          </article>
+
+          {/* Live chat */}
+          <article className="mk-card mk-card--hover text-center flex flex-col items-center gap-3">
+            <span
+              className="inline-flex h-11 w-11 items-center justify-center rounded-xl shrink-0"
+              style={{ background: 'var(--mk-accent-soft)', color: 'var(--mk-accent)' }}
+            >
+              <MessageCircle className="h-5 w-5" />
+            </span>
+            <h3 className="mk-h3">Live chat</h3>
+            <p className="mk-body">
+              Instant answers to the common questions — demo accounts, funding, KYC, leverage — right
+              here on this page.
+            </p>
+            <button
+              type="button"
+              className="mk-link"
+              style={{ fontSize: 'var(--mk-text-sm)' }}
+              onClick={() => setIsChatOpen(true)}
+            >
+              Start chat →
+            </button>
+          </article>
         </div>
 
         <div className="grid lg:grid-cols-2 gap-8 mt-12">
           <div>
-            <h2 className="mk-h2 mb-6">Send Us a Message</h2>
+            <h2 className="mk-h2 mb-6">Send us a message</h2>
             <form onSubmit={handleSubmit} className="flex flex-col gap-5">
               <div>
-                <label style={LABEL_STYLE}>Name</label>
+                <label htmlFor="contact-name" style={LABEL_STYLE}>Name</label>
                 <input
+                  id="contact-name"
                   type="text"
                   name="name"
                   value={formData.name}
@@ -272,8 +244,9 @@ export default function ContactPage() {
                 />
               </div>
               <div>
-                <label style={LABEL_STYLE}>Email</label>
+                <label htmlFor="contact-email" style={LABEL_STYLE}>Email</label>
                 <input
+                  id="contact-email"
                   type="email"
                   name="email"
                   value={formData.email}
@@ -284,8 +257,9 @@ export default function ContactPage() {
                 />
               </div>
               <div>
-                <label style={LABEL_STYLE}>Subject</label>
+                <label htmlFor="contact-subject" style={LABEL_STYLE}>Subject</label>
                 <select
+                  id="contact-subject"
                   name="subject"
                   value={formData.subject}
                   onChange={handleChange}
@@ -293,22 +267,25 @@ export default function ContactPage() {
                   style={FIELD_STYLE}
                 >
                   <option value="">Select a subject</option>
-                  <option value="general">General Inquiry</option>
-                  <option value="account">Book a demo</option>
-                  <option value="technical">Technical Issue</option>
-                  <option value="partnership">Partnership</option>
+                  <option value="account">My account</option>
+                  <option value="funding">Deposits &amp; withdrawals</option>
+                  <option value="kyc">KYC / verification</option>
+                  <option value="trading">Trading &amp; platform</option>
+                  <option value="partnership">Partnership / IB programme</option>
+                  <option value="general">Something else</option>
                 </select>
               </div>
               <div>
-                <label style={LABEL_STYLE}>Message</label>
+                <label htmlFor="contact-message" style={LABEL_STYLE}>Message</label>
                 <textarea
+                  id="contact-message"
                   name="message"
                   value={formData.message}
                   onChange={handleChange}
                   required
                   rows={6}
                   style={{ ...FIELD_STYLE, resize: 'none' }}
-                  placeholder="How can we help you?"
+                  placeholder="Tell us what you need. If it is about a specific deposit or trade, include the date and amount."
                 />
               </div>
               {submitError && (
@@ -332,28 +309,34 @@ export default function ContactPage() {
                 className="mk-btn mk-btn--primary w-full disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 <Send className="h-4 w-4" />
-                {submitting ? 'Sending…' : 'Send Message'}
+                {submitting ? 'Sending…' : 'Send message'}
               </button>
             </form>
           </div>
 
           <div>
-            <h2 className="mk-h2 mb-6">Our Office</h2>
+            <h2 className="mk-h2 mb-6">Before you write</h2>
             <article className="mk-card flex flex-col gap-4">
-              <h3 className="mk-h3">{BRAND_NAME}</h3>
-              <p className="mk-body">
-                Office 23US, 18 Young St<br />
-                UNIT LGE 1/1<br />
-                Edinburgh EH2 4JB<br />
-                Scotland
-              </p>
-              <div className="flex flex-col gap-2">
-                <p className="mk-body">
-                  <span className="font-bold" style={{ color: 'var(--mk-text)' }}>WhatsApp:</span> +33 7 59 15 99 87
-                </p>
-                <p className="mk-body break-words">
-                  <span className="font-bold" style={{ color: 'var(--mk-text)' }}>Email:</span> {BRAND_SUPPORT_EMAIL}
-                </p>
+              <h3 className="mk-h3">Fastest answers</h3>
+              <ul className="flex flex-col gap-2.5">
+                {[
+                  { label: 'Want to try the platform first?', body: 'Sign in and press "Try with demo" for an instant $10,000 demo — no email needed.', href: '/auth/login', cta: 'Try a free demo' },
+                  { label: 'Deposit or withdrawal question?', body: 'Funding methods, limits and timing are on the deposits page.', href: '/deposit-withdrawal', cta: 'Deposits & withdrawals' },
+                  { label: 'General question?', body: 'Check the FAQ — accounts, KYC, funding, trading, copy trading and partners.', href: '/faq', cta: 'Read the FAQ' },
+                ].map((item) => (
+                  <li key={item.label} className="flex flex-col gap-1" style={{ paddingBottom: 'var(--mk-space-3)', borderBottom: '1px solid var(--mk-line)' }}>
+                    <span className="font-bold" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text)' }}>{item.label}</span>
+                    <span className="mk-body" style={{ fontSize: 'var(--mk-text-sm)' }}>{item.body}</span>
+                    <Link href={item.href} className="mk-link" style={{ fontSize: 'var(--mk-text-sm)' }}>{item.cta} →</Link>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex items-start gap-2 mk-meta">
+                <Clock size={15} className="mt-0.5 shrink-0" />
+                <span>
+                  Account-specific requests (a pending withdrawal, a KYC document, a disputed fill)
+                  are handled fastest through an in-app ticket, because it is already linked to your account.
+                </span>
               </div>
             </article>
           </div>
@@ -363,39 +346,28 @@ export default function ContactPage() {
       <Section>
         <SectionHeading
           kicker="Support"
-          title="Need Immediate Assistance?"
-          lead="Our 24/7 support team is one tap away — WhatsApp, in-app chat, or email."
+          title="Need help right now?"
+          lead="Start a chat for instant answers to common questions, or email us and a member of the team will reply."
         />
 
-        {/* WhatsApp number details — surfaced alongside the live-chat CTA
-            so visitors don't have to dig through the cards above. */}
-        <div className="mt-10 flex flex-col items-center gap-2">
-          <a
-            href="https://wa.me/33759159987"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mk-btn"
-            style={{ background: '#25D366', color: '#fff' }}
-            aria-label="WhatsApp +33 7 59 15 99 87"
-          >
-            <WhatsAppIcon className="h-5 w-5" />
-            WhatsApp: +33 7 59 15 99 87
-          </a>
-          <span style={{ fontSize: 'var(--mk-text-xs)', color: 'var(--mk-text-faint)' }}>
-            Reply usually within minutes · Available 24/7
-          </span>
-        </div>
-
-        <div className="mt-6 flex flex-wrap justify-center gap-3">
+        <div className="mt-10 flex flex-wrap justify-center gap-3">
           <button type="button" className="mk-btn mk-btn--primary" onClick={() => setIsChatOpen(true)}>
             <MessageCircle className="h-4 w-4" />
-            Start Live Chat
+            Start live chat
           </button>
           <a href={`mailto:${BRAND_SUPPORT_EMAIL}`} className="mk-btn mk-btn--ghost">
             <Mail className="h-4 w-4" />
             Email us
           </a>
+          <Link href="/support" className="mk-btn mk-btn--ghost">
+            <Ticket className="h-4 w-4" />
+            Open a ticket
+          </Link>
         </div>
+
+        <p className="mk-meta mx-auto text-center" style={{ marginTop: 'var(--mk-space-8)', maxWidth: '72ch' }}>
+          {RISK_LINE}
+        </p>
       </Section>
 
       {showSuccess && (
@@ -431,7 +403,7 @@ export default function ContactPage() {
               </span>
 
               <h2 id="contact-success-title" className="mk-h3">
-                {sentTo.name ? `Thanks, ${sentTo.name}!` : 'Message Sent!'}
+                {sentTo.name ? `Thanks, ${sentTo.name}!` : 'Message sent'}
               </h2>
 
               <p className="mk-body">Your message is on its way to our team.</p>
@@ -441,14 +413,6 @@ export default function ContactPage() {
                   <span className="font-bold break-all" style={{ color: 'var(--mk-text)' }}>{sentTo.email}</span>
                 </p>
               )}
-
-              <div
-                className="flex items-center justify-center gap-2"
-                style={{ fontSize: 'var(--mk-text-xs)', color: 'var(--mk-text-faint)' }}
-              >
-                <span className="h-2 w-2 rounded-full" style={{ background: 'var(--mk-accent)' }} />
-                Typical response time: under 1 hour · 24/7
-              </div>
 
               <div className="flex flex-col sm:flex-row gap-3 w-full mt-2">
                 <button type="button" onClick={() => setShowSuccess(false)} className="mk-btn mk-btn--primary flex-1">
@@ -460,7 +424,7 @@ export default function ContactPage() {
                   className="mk-btn mk-btn--ghost flex-1"
                 >
                   <MessageCircle className="h-4 w-4" />
-                  Live Chat
+                  Live chat
                 </button>
               </div>
             </div>
@@ -497,9 +461,9 @@ export default function ContactPage() {
                   />
                 </div>
                 <div>
-                  <div className="font-bold" style={{ color: '#fff' }}>Live Support</div>
+                  <div className="font-bold" style={{ color: '#fff' }}>{BRAND_NAME} assistant</div>
                   <div style={{ fontSize: 'var(--mk-text-xs)', color: 'rgba(255,255,255,0.8)' }}>
-                    Online • Typically replies instantly
+                    Instant answers to common questions
                   </div>
                 </div>
               </div>
@@ -538,10 +502,12 @@ export default function ContactPage() {
               style={{ borderTop: '1px solid var(--mk-line)', background: 'var(--mk-bg-raised)' }}
             >
               <input
+                id="contact-chat-input"
+                name="chat"
                 type="text"
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
-                placeholder="Type your message..."
+                placeholder="Type your question…"
                 className="flex-1 min-w-0 px-4 py-2 outline-none"
                 style={{
                   background: 'var(--mk-surface-2)',

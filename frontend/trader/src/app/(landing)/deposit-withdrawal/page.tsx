@@ -1,261 +1,245 @@
 'use client';
 
 /**
- * Payment & Wallet Integrations — describes the funding/withdrawal
- * integrations the platform supports for operators to offer their own
- * clients. 14 numbered sections with 2.x / 3.x style sub-clauses,
- * mirroring the original document's hierarchy. Linked from the footer.
+ * Deposits & withdrawals — how you fund a PowerTradeFX account and get
+ * money back out. Everything here mirrors the in-app wallet (/wallet)
+ * and KYC (/kyc) flows. Linked from the footer.
  */
 import Link from 'next/link';
-import { Wallet, ShieldCheck, Mail } from 'lucide-react';
-import { Section, PageHero, CtaBanner } from '@/marketing/components';
+import Image from 'next/image';
+import {
+  Wallet, ShieldCheck, Mail, Coins, Landmark, ArrowLeftRight, Clock, FileCheck2, History,
+} from 'lucide-react';
+import { Section, SectionHeading, PageHero, FeatureGrid, CtaBanner, FaqAccordion } from '@/marketing/components';
 import { BRAND_NAME, BRAND_SUPPORT_EMAIL } from '@/lib/brand';
 
-/** Section shape — supports flat prose paragraphs, bullet lists, and
- *  numbered sub-clauses (3.1, 3.2, etc.) so the layout can mirror the
- *  PDF's hierarchy without bespoke markup. */
-type Block =
-  | { kind: 'p'; text: string }
-  | { kind: 'bullets'; items: string[] }
-  | { kind: 'sub'; n: string; title: string; blocks: Block[] };
-
-type PolicySection = { h: string; blocks: Block[] };
-
-const SECTIONS: PolicySection[] = [
+const METHODS = [
   {
-    h: '1. Introduction',
-    blocks: [
-      { kind: 'p', text: `This page describes the payment and wallet integrations the ${BRAND_NAME} platform supports, so operators can offer funding and withdrawal options to their own clients under their own licence.` },
-      { kind: 'p', text: `${BRAND_NAME} is a technology provider: we build and wire in these integrations. The operator running the platform is responsible for onboarding clients and for any handling of client funds under their own regulatory permissions.` },
-    ],
+    Icon: Coins,
+    title: 'Crypto (USDT)',
+    lines: ['Networks: TRC20, BEP20 and ERC20', 'Deposit to the address shown in your wallet', 'Credited once the network confirms', 'Withdrawals typically same-day'],
   },
   {
-    h: '2. Supported Payment Integrations',
-    blocks: [
-      { kind: 'p', text: `The ${BRAND_NAME} platform ships with cryptocurrency payment and wallet integrations, and can extend to further methods during delivery.` },
-      { kind: 'p', text: 'Supported cryptocurrency integrations may include, but are not limited to:' },
-      { kind: 'bullets', items: ['Bitcoin (BTC)', 'Ethereum (ETH)', 'Tether (USDT)', 'USD Coin (USDC)', 'Other cryptocurrencies configured for the operator'] },
-      { kind: 'p', text: 'Integrations that can be added on request include:' },
-      { kind: 'bullets', items: ['Bank Transfers', 'Credit Cards', 'Debit Cards', 'Third-party payment processors the operator works with'] },
-      { kind: 'p', text: 'The set of available payment integrations can be updated as the platform evolves.' },
-    ],
-  },
-  {
-    h: '3. Deposit Flow Integration',
-    blocks: [
-      { kind: 'sub', n: '3.1', title: 'Deposit Wallet Address', blocks: [
-        { kind: 'p', text: `The platform can generate a deposit wallet address for each client inside the operator's branded client portal built on ${BRAND_NAME}.` },
-      ] },
-      { kind: 'sub', n: '3.2', title: 'Deposit Confirmation', blocks: [
-        { kind: 'p', text: 'Deposits are credited after the required blockchain network confirmations are completed.' },
-        { kind: 'p', text: 'Confirmation times depend on:' },
-        { kind: 'bullets', items: ['Blockchain network congestion', 'Cryptocurrency type', 'Network transaction fees'] },
-      ] },
-      { kind: 'sub', n: '3.3', title: 'Correct Network Usage', blocks: [
-        { kind: 'p', text: 'The flow surfaces the correct blockchain network for each transfer so clients select the right one.' },
-        { kind: 'p', text: 'Examples:' },
-        { kind: 'bullets', items: ['USDT (TRC20)', 'USDT (ERC20)', 'USDT (BEP20)'] },
-        { kind: 'p', text: 'Sending funds through an unsupported network may result in permanent loss, so the integration flags the required network clearly.' },
-      ] },
-      { kind: 'sub', n: '3.4', title: 'Minimum Amounts', blocks: [
-        { kind: 'p', text: 'Minimum amounts are configurable by the operator and displayed in the client portal.' },
-      ] },
-    ],
-  },
-  {
-    h: '4. Withdrawal Flow Integration',
-    blocks: [
-      { kind: 'sub', n: '4.1', title: 'Withdrawal Requests', blocks: [
-        { kind: 'p', text: `Clients submit withdrawal requests through the operator's branded client portal built on the ${BRAND_NAME} platform.` },
-      ] },
-      { kind: 'sub', n: '4.2', title: 'Security Verification', blocks: [
-        { kind: 'p', text: 'The withdrawal flow can require, via integrated checks:' },
-        { kind: 'bullets', items: ['KYC Verification', 'Identity Verification', 'Security Confirmation', 'Additional compliance checks'] },
-        { kind: 'p', text: 'before a request is released for the operator to process.' },
-      ] },
-      { kind: 'sub', n: '4.3', title: 'Processing Time', blocks: [
-        { kind: 'p', text: 'Operators configure processing windows; the platform can flag approved requests for same-day handling.' },
-        { kind: 'p', text: 'Actual receipt times depend on:' },
-        { kind: 'bullets', items: ['Blockchain network conditions', 'Cryptocurrency selected', 'Required network confirmations'] },
-      ] },
-      { kind: 'sub', n: '4.4', title: 'Withdrawal Wallet Ownership', blocks: [
-        { kind: 'p', text: 'The integration validates that a destination wallet address is provided before a request proceeds.' },
-        { kind: 'p', text: 'Common causes of irreversible transfer errors, which the flow warns against, include:' },
-        { kind: 'bullets', items: ['Incorrect wallet addresses', 'Unsupported wallets', 'Wrong blockchain networks', 'User input errors'] },
-        { kind: 'p', text: 'Transactions confirmed on the blockchain cannot be reversed.' },
-      ] },
-    ],
-  },
-  {
-    h: '5. KYC/AML Integration',
-    blocks: [
-      { kind: 'p', text: 'The platform integrates identity-verification providers so operators can require verification before funding is enabled or withdrawals are released.' },
-      { kind: 'p', text: 'Documents an operator can require through the integration include:' },
-      { kind: 'bullets', items: ['Government-issued Photo ID', 'Proof of Address', 'Selfie Verification', 'Additional documents requested by the operator'] },
-      { kind: 'p', text: 'Operators can restrict account functionality until verification is completed; the platform enforces the rules they set.' },
-    ],
-  },
-  {
-    h: '6. AML & Compliance Tooling',
-    blocks: [
-      { kind: 'p', text: 'The platform provides AML and monitoring tooling operators can use to meet their own regulatory obligations.' },
-      { kind: 'p', text: 'The tooling can support operators who need to:' },
-      { kind: 'bullets', items: ['Request proof of source of funds', 'Request blockchain transaction evidence', 'Delay transactions pending compliance review', 'Reject suspicious transactions', 'Freeze accounts involved in unlawful activity', 'Report suspicious activity to relevant authorities where required'] },
-    ],
-  },
-  {
-    h: '7. Third-Party Payments',
-    blocks: [
-      { kind: 'p', text: 'The platform can enforce a rule that only the account holder funds and withdraws from their account, when the operator chooses.' },
-      { kind: 'p', text: 'When enabled, the registered account holder must be the beneficial owner of all funds moving through the account.' },
-      { kind: 'p', text: 'Any suspected third-party transaction can trigger:' },
-      { kind: 'bullets', items: ['Transaction rejection', 'Account suspension', 'Compliance review', 'Account closure'] },
-    ],
-  },
-  {
-    h: '8. Withdrawal Restrictions',
-    blocks: [
-      { kind: 'p', text: 'The platform lets operators decline or delay withdrawals in circumstances such as:' },
-      { kind: 'bullets', items: ['Incomplete KYC verification', 'Ongoing AML review', 'Security concerns', 'Suspected fraud', "Violation of the operator's terms", 'Account disputes', "Technical issues beyond the operator's control"] },
-    ],
-  },
-  {
-    h: '9. Internal Transfers',
-    blocks: [
-      { kind: 'p', text: "The platform can allow transfers between client accounts subject to the operator's approval workflow." },
-      { kind: 'p', text: 'Additional verification can be required before approval.' },
-    ],
-  },
-  {
-    h: '10. Refund Handling',
-    blocks: [
-      { kind: 'sub', n: '10.1', title: 'Refund Eligibility', blocks: [
-        { kind: 'p', text: 'Operators can configure a refund window — for example, allowing a refund request within 24 hours of a deposit where no trading activity has occurred.' },
-      ] },
-      { kind: 'sub', n: '10.2', title: 'Review Process', blocks: [
-        { kind: 'p', text: 'Refund requests can be routed for case-by-case review and may require identity verification.' },
-      ] },
-      { kind: 'sub', n: '10.3', title: 'Non-Refundable Situations', blocks: [
-        { kind: 'p', text: 'Operators can define situations where refunds are not offered, such as where:' },
-        { kind: 'bullets', items: ['Trading activity has occurred', 'Positions have been opened or closed', 'Bonus abuse is suspected', 'AML concerns exist'] },
-      ] },
-      { kind: 'sub', n: '10.4', title: 'Refund Destination', blocks: [
-        { kind: 'p', text: 'The flow can return approved refunds to the original cryptocurrency wallet used for the deposit whenever technically possible.' },
-      ] },
-    ],
-  },
-  {
-    h: '11. Fees',
-    blocks: [
-      { kind: 'p', text: 'The platform lets operators configure withdrawal fees, blockchain network fees, or processing fees where applicable.' },
-      { kind: 'p', text: 'Current fees are displayed within the client portal and are set by the operator.' },
-    ],
-  },
-  {
-    h: '12. Support and Escalation',
-    blocks: [
-      { kind: 'p', text: 'Questions about the payment and wallet integrations can be submitted in writing to:' },
-      { kind: 'p', text: `Email: ${BRAND_SUPPORT_EMAIL}` },
-      { kind: 'p', text: 'Subject: Payment Integrations' },
-      { kind: 'p', text: `We will route the enquiry to the ${BRAND_NAME} team responsible for the integration.` },
-    ],
-  },
-  {
-    h: '13. Risk Warning',
-    blocks: [
-      { kind: 'p', text: 'Cryptocurrency transactions are irreversible and subject to blockchain network risks, volatility, and technical limitations.' },
-      { kind: 'p', text: 'Clients are responsible for verifying wallet addresses, network selections, and transaction details before submitting any transfer.' },
-      { kind: 'p', text: `${BRAND_NAME} provides the software and is not liable for losses resulting from client errors, blockchain failures, or third-party wallet service disruptions.` },
-    ],
-  },
-  {
-    h: '14. Updates',
-    blocks: [
-      { kind: 'p', text: `${BRAND_NAME} may update the payment and wallet integrations described here at any time.` },
-      { kind: 'p', text: `Any updates take effect when published on the ${BRAND_NAME} website.` },
-      { kind: 'p', text: `Continued use of the ${BRAND_NAME} platform constitutes acceptance of the current integration set.` },
-    ],
+    Icon: Landmark,
+    title: 'Local banking',
+    lines: ['Bank transfer or UPI via a payment link', 'Pay from your own bank or UPI app', 'Withdrawals to your bank account or UPI ID', 'Withdrawals reviewed by our team'],
   },
 ];
 
-function renderBlocks(blocks: Block[], keyPrefix = ''): React.ReactNode {
-  return blocks.map((b, i) => {
-    const k = `${keyPrefix}-${i}`;
-    if (b.kind === 'p') return <p key={k}>{b.text}</p>;
-    if (b.kind === 'bullets') return (
-      <ul key={k} className="list-disc list-inside space-y-1.5 mt-1 ml-1">
-        {b.items.map((it) => <li key={it}>{it}</li>)}
-      </ul>
-    );
-    return (
-      <div key={k} className="mt-3">
-        <h3 className="font-bold mb-2" style={{ color: 'var(--mk-text)' }}>
-          <span className="mr-2" style={{ color: 'var(--mk-accent)' }}>{b.n}</span> {b.title}
-        </h3>
-        <div className="space-y-3">{renderBlocks(b.blocks, k)}</div>
-      </div>
-    );
-  });
-}
+const DEPOSIT_STEPS = [
+  { n: '01', title: 'Open your wallet', body: 'Sign in and go to Wallet. Choose Deposit, then pick crypto or local banking.' },
+  { n: '02', title: 'Send the funds', body: 'For USDT, send to the address shown on the network you selected. For local banking, complete the payment link with bank transfer or UPI.' },
+  { n: '03', title: 'Move it to an account', body: 'Once credited, transfer from your main wallet to any of your trading accounts and start trading.' },
+];
+
+const WITHDRAW_STEPS = [
+  { n: '01', title: 'Complete KYC once', body: 'Upload a government ID, a selfie and proof of address at /kyc. Withdrawals are released only on verified accounts.' },
+  { n: '02', title: 'Request a withdrawal', body: 'In Wallet, choose Withdraw, pick USDT (TRC20, BEP20 or ERC20) or bank/UPI, and enter the amount and destination.' },
+  { n: '03', title: 'We process it', body: 'Crypto withdrawals are typically sent the same day. Bank and UPI withdrawals are reviewed by our team before release.' },
+];
 
 export default function DepositWithdrawalPage() {
   return (
     <main>
       <PageHero
-        kicker="Platform"
-        title="Payment & Wallet Integrations"
-        lead={`The payment and wallet integrations the ${BRAND_NAME} platform supports, so operators can offer funding and withdrawals to their own clients.`}
+        kicker="Funding"
+        title="Deposits and withdrawals"
+        lead={`Fund your ${BRAND_NAME} account with USDT or local banking, move money between your accounts, and withdraw to crypto or your bank. Every transaction is listed in your wallet history.`}
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'Try a free demo', href: '/auth/login' }}
       />
 
+      {/* Methods */}
       <Section raised>
-        <div className="mx-auto max-w-[840px] flex flex-col gap-7">
-          <div className="mk-card flex items-center gap-3" style={{ padding: 'var(--mk-space-4) var(--mk-space-5)' }}>
-            <Wallet size={16} className="shrink-0" style={{ color: 'var(--mk-accent)' }} />
-            <span className="mk-body" style={{ fontSize: 'var(--mk-text-sm)' }}>
-              <span className="font-bold" style={{ color: 'var(--mk-text)' }}>
-                {BRAND_NAME} — Payment &amp; Wallet Integrations
-              </span>{' '}
-              · Last updated: June 2026
-            </span>
-          </div>
-
-          {SECTIONS.map((sec, idx) => (
-            <section key={sec.h} className="mk-card">
-              <h2 className="mk-h3" style={{ marginBottom: 'var(--mk-space-4)' }}>{sec.h}</h2>
-              <div className="mk-body space-y-3" style={{ fontSize: 'var(--mk-text-sm)' }}>
-                {renderBlocks(sec.blocks, String(idx))}
-              </div>
-            </section>
+        <SectionHeading
+          kicker="Methods"
+          title="Two ways to fund, two ways to withdraw"
+          lead="Pick the one that suits you. Both are handled from the Wallet page inside the platform."
+        />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-12 mx-auto max-w-4xl">
+          {METHODS.map(({ Icon, title, lines }) => (
+            <article key={title} className="mk-card flex flex-col gap-4">
+              <span
+                className="inline-flex h-11 w-11 items-center justify-center rounded-xl"
+                style={{ background: 'var(--mk-accent-soft)', color: 'var(--mk-accent)' }}
+              >
+                <Icon size={20} />
+              </span>
+              <h3 className="mk-h3">{title}</h3>
+              <ul className="flex flex-col gap-2">
+                {lines.map((l) => (
+                  <li key={l} className="flex items-start gap-2 mk-body" style={{ fontSize: 'var(--mk-text-sm)' }}>
+                    <ShieldCheck size={15} className="mt-0.5 shrink-0" style={{ color: 'var(--mk-accent)' }} />
+                    <span>{l}</span>
+                  </li>
+                ))}
+              </ul>
+            </article>
           ))}
+        </div>
+        <p className="mk-meta mt-6 text-center mx-auto max-w-2xl">
+          Demo accounts cannot deposit or withdraw. Send USDT only on the network shown in your wallet; a transfer
+          on the wrong network cannot be recovered.
+        </p>
+      </Section>
 
-          <div className="mk-card flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
-            <div className="flex items-start gap-3">
-              <ShieldCheck size={18} className="shrink-0 mt-0.5" style={{ color: 'var(--mk-accent)' }} />
-              <p className="mk-body" style={{ fontSize: 'var(--mk-text-sm)' }}>
-                Read this alongside our{' '}
-                <Link href="/terms" className="underline-offset-4 hover:underline" style={{ color: 'var(--mk-accent)' }}>
-                  Terms of Service
-                </Link>{' '}
-                and{' '}
-                <Link href="/privacy" className="underline-offset-4 hover:underline" style={{ color: 'var(--mk-accent)' }}>
-                  Privacy Policy
-                </Link>
-                .
-              </p>
-            </div>
-            <a href={`mailto:${BRAND_SUPPORT_EMAIL}`} className="mk-btn mk-btn--primary shrink-0">
-              <Mail size={16} /> Contact Support
-            </a>
+      {/* Deposit steps */}
+      <Section>
+        <SectionHeading kicker="Deposits" title="How to deposit" />
+        <ol className="grid sm:grid-cols-3 gap-5 mt-12" aria-label="How to deposit">
+          {DEPOSIT_STEPS.map((s) => (
+            <li key={s.n} className="mk-card flex flex-col gap-3">
+              <span className="font-extrabold" style={{ fontSize: 'var(--mk-text-h2)', color: 'var(--mk-accent)', lineHeight: 1 }}>{s.n}</span>
+              <h3 className="mk-h3">{s.title}</h3>
+              <p className="mk-body">{s.body}</p>
+            </li>
+          ))}
+        </ol>
+      </Section>
+
+      {/* Withdrawals + KYC screenshot */}
+      <Section raised>
+        <SectionHeading
+          kicker="Withdrawals"
+          title="How to withdraw"
+          lead="Withdrawals go to USDT or to your bank/UPI. Identity verification is required before the first one."
+        />
+        <ol className="grid sm:grid-cols-3 gap-5 mt-12" aria-label="How to withdraw">
+          {WITHDRAW_STEPS.map((s) => (
+            <li key={s.n} className="mk-card flex flex-col gap-3">
+              <span className="font-extrabold" style={{ fontSize: 'var(--mk-text-h2)', color: 'var(--mk-accent)', lineHeight: 1 }}>{s.n}</span>
+              <h3 className="mk-h3">{s.title}</h3>
+              <p className="mk-body">{s.body}</p>
+            </li>
+          ))}
+        </ol>
+
+        <figure className="mx-auto max-w-4xl mt-14">
+          <div className="overflow-hidden" style={{ borderRadius: 'var(--mk-radius-lg)', border: '1px solid var(--mk-line)' }}>
+            <Image
+              src="/marketing/screens/kyc.png"
+              alt={`The ${BRAND_NAME} KYC page where you upload a government ID, a selfie and proof of address`}
+              width={1600}
+              height={1000}
+              sizes="(max-width: 1024px) 100vw, 896px"
+              className="block h-auto w-full"
+            />
           </div>
+          <figcaption className="mk-meta mt-3 text-center">
+            Verification takes a few minutes to submit: government ID, a selfie and proof of address.
+          </figcaption>
+        </figure>
+      </Section>
+
+      {/* Wallet features */}
+      <Section>
+        <SectionHeading kicker="Your wallet" title="What else the wallet does" />
+        <FeatureGrid
+          className="mt-12"
+          columns={3}
+          items={[
+            {
+              icon: ArrowLeftRight,
+              title: 'Internal transfers',
+              body: 'Hold several trading accounts under one login and move funds between them and your main wallet instantly.',
+            },
+            {
+              icon: History,
+              title: 'Full transaction history',
+              body: 'Every deposit, withdrawal and transfer with its status, so you always know where your money is.',
+            },
+            {
+              icon: FileCheck2,
+              title: 'KYC once, then done',
+              body: 'Verify your identity a single time. After approval, withdrawals no longer wait on document checks.',
+            },
+            {
+              icon: Clock,
+              title: 'Clear timings',
+              body: 'Crypto withdrawals are typically same-day. Bank and UPI withdrawals are reviewed by our team before release.',
+            },
+            {
+              icon: Wallet,
+              title: 'Several accounts, one wallet',
+              body: 'Open more than one live account under the same login, fund each from the main wallet, and see all balances in one place.',
+            },
+            {
+              icon: ShieldCheck,
+              title: 'Protected sign-in',
+              body: 'Password plus optional two-factor authentication, session protection and encrypted connections on every request.',
+            },
+          ]}
+        />
+      </Section>
+
+      {/* FAQ */}
+      <Section raised id="faq">
+        <SectionHeading kicker="Questions" title="Funding FAQ" />
+        <div className="mt-12 mx-auto max-w-3xl">
+          <FaqAccordion
+            items={[
+              {
+                q: 'Which USDT networks can I use?',
+                a: <>TRC20, BEP20 and ERC20. Choose the network in your wallet before you send, and use exactly the address shown for that network. Funds sent on a different network cannot be recovered.</>,
+              },
+              {
+                q: 'How do local-banking deposits work?',
+                a: <>Choose local banking in the wallet and you receive a payment link. Pay it by bank transfer or UPI. Your balance is updated once the payment is confirmed.</>,
+              },
+              {
+                q: 'Do I need KYC to deposit?',
+                a: <>You can deposit and trade before verification, but withdrawals are released only after your KYC is approved. Verify early at /kyc so your first withdrawal is not held up.</>,
+              },
+              {
+                q: 'How long do withdrawals take?',
+                a: <>Crypto withdrawals are typically sent the same day. Bank and UPI withdrawals are reviewed by our team before release. You can track the status of every request in your wallet history.</>,
+              },
+              {
+                q: 'Can I fund a demo account?',
+                a: <>No. Demo accounts come with $10,000 of virtual funds and cannot deposit or withdraw. Open a live account at /trading/open-account when you are ready to trade real money.</>,
+              },
+              {
+                q: 'Can I move money between my trading accounts?',
+                a: <>Yes. Transfers between your main wallet and any of your trading accounts are instant and appear in your transaction history.</>,
+              },
+            ]}
+          />
+        </div>
+
+        <div className="mk-card mx-auto max-w-3xl mt-10 flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <ShieldCheck size={18} className="shrink-0 mt-0.5" style={{ color: 'var(--mk-accent)' }} />
+            <p className="mk-body" style={{ fontSize: 'var(--mk-text-sm)' }}>
+              Read this alongside our{' '}
+              <Link href="/terms" className="underline-offset-4 hover:underline" style={{ color: 'var(--mk-accent)' }}>
+                Terms of Service
+              </Link>{' '}
+              and{' '}
+              <Link href="/privacy" className="underline-offset-4 hover:underline" style={{ color: 'var(--mk-accent)' }}>
+                Privacy Policy
+              </Link>
+              .
+            </p>
+          </div>
+          <a href={`mailto:${BRAND_SUPPORT_EMAIL}`} className="mk-btn mk-btn--primary shrink-0">
+            <Mail size={16} /> Contact support
+          </a>
         </div>
       </Section>
 
       <CtaBanner
-        title="See the integrations in action"
-        lead={`Book a demo and see the payment and wallet integrations ${BRAND_NAME} can wire into your platform.`}
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'Contact Support', href: '/company/contact' }}
+        title="Ready to fund your account?"
+        lead="Open a live account, verify once, and deposit with USDT or local banking."
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'Try a free demo', href: '/auth/login' }}
       />
+
+      <div className="mk-container" style={{ paddingTop: 'var(--mk-space-6)', paddingBottom: 'var(--mk-space-8)' }}>
+        <p className="mk-meta mx-auto max-w-3xl text-center">
+          Trading leveraged products such as forex and CFDs carries a high level of risk and may not be suitable
+          for all investors. You could lose more than your initial deposit.
+        </p>
+      </div>
     </main>
   );
 }

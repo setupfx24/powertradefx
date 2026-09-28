@@ -27,114 +27,133 @@ const RULES: { keys: string[]; reply: string; cta?: { label: string; href: strin
   {
     keys: ['hi', 'hello', 'hey', 'namaste', 'hola', 'good morning', 'good afternoon', 'good evening'],
     reply:
-      `Hi! 👋 I'm your ${BRAND_NAME} assistant. I can help with account types, deposits, insurance, the IB program, and more. What would you like to know?`,
+      `Hi! I'm the ${BRAND_NAME} assistant. I can help with opening an account, the free demo, deposits and withdrawals, leverage, copy trading and the IB programme. What would you like to know?`,
   },
   {
     keys: ['bonus', 'welcome bonus', '100%', 'promo', 'promo code', 'first deposit bonus'],
     reply:
-      'We do not run a deposit bonus or promo-code offer at the moment. What you deposit is what you trade with — no bonus terms, no turnover requirement attached to your withdrawals.',
+      'We do not run a deposit bonus or promo-code offer. What you deposit is what you trade with — no bonus terms and no turnover requirement attached to your withdrawals.',
     cta: [
       { label: 'Compare accounts', href: '/account-types' },
       { label: 'Open account',     href: '/auth/register' },
     ],
+  },
+  {
+    keys: ['demo', 'practice', 'try', 'test account'],
+    reply:
+      'The sign-in page has a one-click "Try with demo" button that creates a $10,000 demo account instantly — no email needed. It uses the same terminal and live prices as a real account. Demo accounts cannot deposit or withdraw.',
+    cta: [{ label: 'Try a free demo', href: '/auth/login' }],
   },
   {
     keys: ['minimum deposit', 'min deposit', 'minimum', 'start with', 'how much to start', 'deposit kitna'],
     reply:
-      'Minimum deposit depends on the account type: Standard $50 · ECN $200 · IB $50. A free Demo account with $100,000 virtual funds is also available — no commitment.',
+      'There is a low minimum deposit on live accounts; the exact figure is shown on the account types page. You can also start on the free $10,000 demo with no deposit at all.',
     cta: [
       { label: 'Compare accounts', href: '/account-types' },
       { label: 'Open account',     href: '/auth/register' },
     ],
   },
   {
-    keys: ['account type', 'accounts', 'standard account', 'ecn', 'demo account', 'pro account', 'swap account', 'islamic account'],
+    keys: ['account type', 'accounts', 'standard account', 'pro account', 'open account', 'register', 'sign up'],
     reply:
-      'We offer 4 account types: Standard ($50 min, beginner-friendly), ECN ($200 min, raw spreads from 0.0 pips), IB ($50 min, partner program), and Swap ($200 min, Sharia-compliant, zero overnight swap). A free Demo with $100K virtual funds is also available.',
-    cta: [{ label: 'View all accounts', href: '/account-types' }],
+      'Register with an email and password or with Google, then open a live account in the app. Account types are Standard (commission-free, competitive spreads) and Pro (tighter spreads, priority support). You can hold several accounts under one login and transfer funds between them and your wallet.',
+    cta: [
+      { label: 'View account types', href: '/account-types' },
+      { label: 'Open account',       href: '/auth/register' },
+    ],
   },
   {
-    keys: ['dex', 'decentralized', 'decentralised', 'non-custodial', 'wallet', 'metamask', 'on-chain', 'on chain'],
+    keys: ['ib', 'referral', 'partner', 'introducing broker', 'affiliate', 'commission', 'refer'],
     reply:
-      `${BRAND_NAME} DEX lets you trade directly from your own wallet — non-custodial, on-chain execution. Keep your private keys, sign trades, settle through smart contracts in seconds. MetaMask, WalletConnect, and EVM wallets all work.`,
-    cta: [{ label: 'How it works', href: '/how-it-works' }],
+      'Apply in the app and you get a personal referral link and code. Commission is calculated per lot when a referred trade fills and released when it closes. The network is multi-level, so you also earn on traders your sub-partners bring in. Payouts are reviewed and approved by our team.',
+    cta: [
+      { label: 'IB programme',   href: '/platforms/ib-management' },
+      { label: 'Refer a friend', href: '/products/referral' },
+    ],
   },
   {
-    keys: ['insurance', 'insured', 'insure', 'trade protection', 'protect my trade'],
+    keys: ['copy', 'copy trading', 'social', 'master trader', 'follow'],
     reply:
-      `Every position on ${BRAND_NAME} is automatically policy-backed by on-chain trade insurance — no opt-in. If the market moves against you beyond the policy threshold, the insured amount pays out automatically via smart contract.`,
-    cta: [{ label: 'Read more', href: '/products/insurance' }],
+      'Copy trading lets you follow a master trader from the leaderboard (sorted by return, followers or Sharpe ratio) with an allocation you choose. Their trades are mirrored to your live account automatically, masters may charge a performance fee, and you can stop any time.',
+    cta: [{ label: 'Copy trading', href: '/platforms/copy-trading' }],
   },
   {
-    keys: ['ib', 'referral', 'partner', 'introducing broker', 'affiliate', 'commission'],
+    keys: ['portfolio', 'pamm', 'managed account', 'manager'],
     reply:
-      'The IB program pays lifetime per-lot commissions — up to $7 / lot at Platinum tier. Multi-tier earnings, weekly payouts, dedicated manager and marketing kit. Approval typically within 24 hours.',
-    cta: [{ label: 'Apply for IB', href: '/products/ib-referral' }],
+      'PAMM lets you invest with approved managers who run pooled managed accounts, sorted by ROI. Managers apply in-app and are reviewed, and they earn a performance fee on profits.',
+    cta: [{ label: 'View PAMM', href: '/services/portfolio-management' }],
   },
   {
-    keys: ['portfolio', 'mam', 'pamm', 'managed account', 'manager'],
+    keys: ['deposit', 'fund', 'usdt', 'upi', 'bank transfer'],
     reply:
-      'Portfolio Management offers MAM (Multi-Account Manager) and PAMM (Percentage Allocation Management Module) models. Verified managers, segregated funds, transparent high-water-mark fees. $1,000 minimum for PAMM, $5,000 for MAM.',
-    cta: [{ label: 'View managers', href: '/services/portfolio-management' }],
+      'Deposit from your wallet by crypto (USDT on TRC20, BEP20 or ERC20) or by local banking (bank transfer or UPI via a payment link). Demo accounts cannot deposit.',
+    cta: [{ label: 'Deposits & withdrawals', href: '/deposit-withdrawal' }],
   },
   {
     keys: ['withdraw', 'withdrawal', 'cash out', 'payout', 'paise nikalna'],
     reply:
-      'Withdrawals are processed by your preferred method — crypto (instant), bank wire (1–3 business days), card, Skrill, or Neteller. All deposits are 100% fee-free; withdrawal speed depends on the rail.',
+      'Withdraw to USDT or to your bank or UPI. Crypto withdrawals are typically processed the same day; bank withdrawals are reviewed by our team. Identity verification (KYC) is required before your first withdrawal.',
+    cta: [{ label: 'Deposits & withdrawals', href: '/deposit-withdrawal' }],
   },
   {
-    keys: ['leverage', 'margin'],
+    keys: ['leverage', 'margin', 'lot size', 'position size'],
     reply:
-      'Maximum leverage is up to 1:500 across forex, metals, energies, and indices. Hedged positions carry 0% margin. Margin call at 30%, stop-out at 0% with instrument-specific rules. Use leverage responsibly.',
+      'Leverage is flexible up to 1:500 and is set per account group; the default is 1:100. Lot sizes start from 0.01. Balance, equity, margin, free margin and margin level are always visible in the terminal. Leverage magnifies both gains and losses.',
+    cta: [{ label: 'Risk calculator', href: '/risk-calculator' }],
   },
   {
-    keys: ['platform', 'mt4', 'mt5', 'app', 'mobile', 'web platform'],
+    keys: ['platform', 'terminal', 'app', 'mobile', 'web platform', 'android', 'ios', 'desktop', 'download'],
     reply:
-      `${BRAND_NAME} runs on a fast web platform plus dedicated iOS and Android apps. One login keeps your positions, alerts, and watchlists in sync across every device.`,
-    cta: [{ label: 'See platforms', href: '/platforms' }],
+      `The ${BRAND_NAME} web terminal runs in your browser on desktop and phone: TradingView charts, market, limit, stop and stop-limit orders, SL/TP on every trade, and a live account panel. A native desktop terminal and an Android app are coming soon.`,
+    cta: [
+      { label: 'Web terminal', href: '/platforms/web' },
+      { label: 'Download',     href: '/download' },
+    ],
   },
   {
-    keys: ['market', 'instruments', 'forex', 'crypto', 'indices', 'commodities', 'stocks', 'pairs'],
+    keys: ['market', 'instruments', 'forex', 'crypto', 'indices', 'commodities', 'gold', 'oil', 'pairs'],
     reply:
-      `You can trade forex (60+ pairs), indices (US500, NAS100, DAX, FTSE…), commodities (gold, silver, oil, gas), stocks (Apple, Amazon, Microsoft…), and crypto (BTC, ETH, SOL, and more) — all from a single ${BRAND_NAME} login.`,
+      'You can trade 40+ instruments across five classes: forex (EUR/USD, GBP/USD, USD/JPY and more), metals (gold, silver, platinum, palladium), indices (US30, NAS100, GER40, UK100), energy (US and UK oil) and crypto (BTC, ETH, LTC, SOL, XRP). Crypto trades 24/7; the rest follow market hours.',
     cta: [{ label: 'Browse markets', href: '/markets' }],
   },
   {
-    keys: ['spread', 'leverage', 'lot size', 'position size', 'trading conditions', 'commission'],
+    keys: ['spread', 'fees', 'charges', 'trading conditions'],
     reply:
-      'Spreads start from 0.0 pips on ECN and 1.0 pip on Standard, with commission shown on the order ticket before you confirm. Leverage is adjustable up to 1:500 depending on account type and instrument.',
-    cta: [{ label: 'Trading conditions', href: '/account-types' }],
+      'Standard accounts are commission-free with competitive spreads; Pro accounts have tighter spreads and priority support. Live bid, ask and spread are shown in the terminal watchlist before you trade.',
+    cta: [{ label: 'Account types', href: '/account-types' }],
+  },
+  {
+    keys: ['ai', 'algo', 'strategy', 'bot', 'api', 'automated'],
+    reply:
+      'The AI Strategy Builder turns a plain-language description into a rules-based strategy you can backtest and deploy on your account. The Algo Connector gives each account an API key and secret with REST endpoints and a WebSocket tick stream, so you can connect your own bot.',
+    cta: [{ label: 'AI & algo trading', href: '/platforms/super-admin' }],
   },
   {
     keys: ['support', 'help', 'human', 'agent', 'contact', 'live chat', 'speak to someone', 'whatsapp', 'phone', 'call'],
     reply:
-      `For anything I can't help with, a live agent is one tap away. Pick whichever's easiest — they all reach our 24/7 support team.\n\n💬 WhatsApp: +44 7737119978\n📧 Email: ${BRAND_SUPPORT_EMAIL}\n📍 Office: 18 Young St, Edinburgh EH2 4JB, Scotland, United Kingdom`,
+      `For anything I can't help with, our support team is reachable by ticket inside the app or by email at ${BRAND_SUPPORT_EMAIL}.`,
     cta: [
-      { label: 'WhatsApp us',      href: 'https://wa.me/447737119978' },
-      { label: 'Email us',         href: `mailto:${BRAND_SUPPORT_EMAIL}` },
-      { label: 'Contact page',     href: '/company/contact' },
+      { label: 'Email us',     href: `mailto:${BRAND_SUPPORT_EMAIL}` },
+      { label: 'Contact page', href: '/company/contact' },
     ],
-  },
-  {
-    keys: ['ico', 'token sale', 'early stage'],
-    reply:
-      'Our ICO / early-stage investment program launches in Q3 2026 — curated, vetted projects with audited contracts and on-chain custody. Join the early-access list to be notified first.',
-    cta: [{ label: 'Early access', href: '/services/ico-coming-soon' }],
-  },
-  {
-    keys: ['fees', 'spread', 'commission', 'charges'],
-    reply:
-      'Standard accounts: zero commission, spreads from 1.1 pips. ECN: raw spreads from 0.0 pips + low per-lot commission. All deposits are 100% fee-free. Withdrawal fees are network/processor pass-through only.',
   },
   {
     keys: ['kyc', 'verification', 'verify', 'document'],
     reply:
-      'KYC verification is automated and typically completes within 24 hours. You will need a government-issued ID and a recent proof of address (utility bill or bank statement under 90 days old).',
+      'KYC needs a government-issued ID and a selfie, plus proof of address. Verification is required before you can withdraw.',
+    cta: [{ label: 'How it works', href: '/how-it-works' }],
   },
   {
-    keys: ['regulated', 'license', 'regulation', 'safe', 'secure'],
+    keys: ['regulated', 'license', 'regulation', 'safe', 'secure', 'security', '2fa', 'two-factor'],
     reply:
-      `${BRAND_NAME} is a globally regulated forex & CFD broker founded in 2010, with a decentralized exchange layer added. Client funds are held in segregated tier-one bank accounts; trades carry on-chain insurance.`,
+      'Your login is protected by a password plus optional two-factor authentication (TOTP), Google sign-in, session protection and encrypted connections. Funds and trading data run on segregated infrastructure, and withdrawals require identity verification.',
+    cta: [{ label: 'Why PowerTradeFX', href: '/company/why-powertradefx' }],
+  },
+  {
+    keys: ['insurance', 'insured', 'prop', 'ico', 'token sale'],
+    reply:
+      'Trade insurance, prop trading and the ICO launchpad are not live yet — they are coming soon. Contact us if you would like to be told when they launch.',
+    cta: [{ label: 'Contact us', href: '/company/contact' }],
   },
   {
     keys: ['thanks', 'thank you', 'shukriya', 'dhanyavaad', 'ty'],
@@ -142,16 +161,17 @@ const RULES: { keys: string[]; reply: string; cta?: { label: string; href: strin
   },
   {
     keys: ['bye', 'goodbye', 'see you', 'cya'],
-    reply: 'Bye! 👋 Catch you again when you have more questions. Have a profitable session.',
+    reply: 'Bye! Come back whenever you have more questions.',
   },
 ];
 
 const QUICK_REPLIES = [
-  'Minimum deposit',
-  'Account types',
-  'Trade insurance',
   'Open account',
-  'Live agent',
+  'Free demo',
+  'Deposits',
+  'Leverage',
+  'Copy trading',
+  'Support',
 ];
 
 const INITIAL: Msg[] = [
@@ -159,7 +179,7 @@ const INITIAL: Msg[] = [
     id: 'm0',
     sender: 'bot',
     text:
-      `Hi! 👋 I'm the ${BRAND_NAME} Assistant. Ask me about account types, deposits, insurance, the IB program — or pick a topic below.`,
+      `Hi! I'm the ${BRAND_NAME} assistant. Ask me about opening an account, the free demo, deposits, leverage, copy trading or the IB programme — or pick a topic below.`,
     ts: Date.now(),
   },
 ];
@@ -178,7 +198,7 @@ function matchRule(input: string): { reply: string; cta?: { label: string; href:
   // Default fallback
   return {
     reply:
-      "I didn't quite catch that — try asking about the minimum deposit, account types, trade insurance, or the IB program. Or pick a chip below 👇",
+      "I didn't quite catch that — try asking about opening an account, the demo, deposits, leverage, copy trading or the IB programme. Or pick a topic below.",
   };
 }
 
@@ -360,7 +380,7 @@ export function ChatBot() {
                     type="text"
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    placeholder="Ask about bonus, deposits, accounts…"
+                    placeholder="Ask about accounts, deposits, leverage…"
                     aria-label="Message"
                     className="flex-1 bg-transparent rounded-full px-4 py-2.5 text-sm outline-none border focus:border-primary/60"
                     style={{

@@ -2,8 +2,7 @@
 
 import Link from 'next/link';
 import {
-  Users, BarChart3, Wallet, Zap, Headphones, Award, Layers, Share2,
-  Crown, Gem, Sparkles,
+  Users, BarChart3, Wallet, Zap, Award, Layers, Share2, Crown, Gem, Sparkles, Link2, Building2,
 } from 'lucide-react';
 import {
   Section, SectionHeading, PageHero, FeatureGrid, CtaBanner, FaqAccordion,
@@ -11,23 +10,21 @@ import {
 import { BRAND_NAME } from '@/lib/brand';
 
 /**
- * Products → IB Referral. Restyled onto the shared marketing design system;
- * all copy, tier data and links carried over from the previous page.
+ * Products → IB programme. The Introducing Broker / affiliate programme
+ * for partners who bring traders to PowerTradeFX. Partners apply
+ * in-app at /business after registering.
  */
 
 /**
- * IB Account Type tier grid — per the client spec sheet delivered 2026-06.
- * Was briefly hosted on the Insurance page; moved here where it belongs.
- * Each tier is gated by an "active traders" threshold and carries a
- * per-lot commission + tier reward "amount". Platinum is the entry
- * point for the custom-deal program (up to $15 / lot) called out in
- * the callout below the grid.
+ * Commission tiers. Each tier is reached at an active-trader count and
+ * carries a per-lot commission plus a one-off tier reward. Platinum is
+ * the entry point for custom deals (up to $15 / lot).
  */
 const IB_TIERS = [
-  { tier: 'Bronze',   traders: '+5',   commission: '$5',  amount: '$500',    tone: '#cd7f32', Icon: Award },
-  { tier: 'Silver',   traders: '+20',  commission: '$7',  amount: '$5,000',  tone: '#c0c0c0', Icon: Award },
-  { tier: 'Gold',     traders: '+50',  commission: '$10', amount: '$20,000', tone: '#e8b923', Icon: Crown, featured: true },
-  { tier: 'Platinum', traders: '+100', commission: '$12', amount: '$50,000', tone: '#e5e4e2', Icon: Gem },
+  { tier: 'Bronze',   traders: '5+',   commission: '$5',  amount: '$500',    tone: '#cd7f32', Icon: Award },
+  { tier: 'Silver',   traders: '20+',  commission: '$7',  amount: '$5,000',  tone: '#c0c0c0', Icon: Award },
+  { tier: 'Gold',     traders: '50+',  commission: '$10', amount: '$20,000', tone: '#e8b923', Icon: Crown, featured: true },
+  { tier: 'Platinum', traders: '100+', commission: '$12', amount: '$50,000', tone: '#e5e4e2', Icon: Gem },
 ];
 
 function StatRow({ label, value, accent }: { label: string; value: string; accent?: string }) {
@@ -50,28 +47,71 @@ function StatRow({ label, value, accent }: { label: string; value: string; accen
   );
 }
 
+/** Inline network-tree illustration: you at the top, your traders and
+ *  sub-partners below. Decorative; the copy beside it carries the meaning. */
+function NetworkTree() {
+  const nodes = {
+    you: { x: 300, y: 48 },
+    l1: [{ x: 140, y: 150 }, { x: 300, y: 150 }, { x: 460, y: 150 }],
+    l2: [{ x: 80, y: 252 }, { x: 200, y: 252 }, { x: 400, y: 252 }, { x: 520, y: 252 }],
+  };
+  return (
+    <svg viewBox="0 0 600 300" aria-hidden className="w-full h-auto" style={{ borderRadius: 'var(--mk-radius-lg)', display: 'block' }}>
+      <rect x="0" y="0" width="600" height="300" fill="var(--mk-surface-2)" />
+      {nodes.l1.map((n, i) => (
+        <line key={`a${i}`} x1={nodes.you.x} y1={nodes.you.y} x2={n.x} y2={n.y} stroke="var(--mk-line-strong)" strokeWidth="2" />
+      ))}
+      {([[0, 0], [0, 1], [2, 2], [2, 3]] as const).map(([a, b]) => {
+        const from = nodes.l1[a]!;
+        const to = nodes.l2[b]!;
+        return (
+          <line key={`b${a}${b}`} x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="var(--mk-line-strong)" strokeWidth="2" />
+        );
+      })}
+      {/* you */}
+      <circle cx={nodes.you.x} cy={nodes.you.y} r="22" fill="var(--mk-accent)" />
+      <text x={nodes.you.x} y={nodes.you.y + 4} textAnchor="middle" fill="#ffffff" fontSize="11" fontWeight="700" fontFamily="var(--mk-font-mono)">YOU</text>
+      {/* level 1: sub-partners and direct traders */}
+      {nodes.l1.map((n, i) => (
+        <g key={`n1${i}`}>
+          <circle cx={n.x} cy={n.y} r="18" fill="var(--mk-bg)" stroke="var(--mk-ink)" strokeWidth="2" />
+          <text x={n.x} y={n.y + 4} textAnchor="middle" fill="var(--mk-text)" fontSize="10" fontWeight="700" fontFamily="var(--mk-font-mono)">{i === 1 ? 'TRADER' : 'SUB-IB'}</text>
+        </g>
+      ))}
+      {/* level 2: traders brought by sub-partners */}
+      {nodes.l2.map((n, i) => (
+        <g key={`n2${i}`}>
+          <circle cx={n.x} cy={n.y} r="16" fill="var(--mk-bg)" stroke="var(--mk-text-faint)" strokeWidth="2" />
+          <text x={n.x} y={n.y + 4} textAnchor="middle" fill="var(--mk-text-muted)" fontSize="9" fontWeight="700" fontFamily="var(--mk-font-mono)">TRADER</text>
+        </g>
+      ))}
+      <text x="24" y="284" fill="var(--mk-text-faint)" fontSize="11" fontFamily="var(--mk-font-mono)">Commission on every lot in your network</text>
+    </svg>
+  );
+}
+
 export default function IbReferralPage() {
   return (
     <main>
       <PageHero
-        kicker="Partner Management"
-        title="IB & Partner Management, Built In"
-        lead={`A full introducing-broker and partner-management module ships with the ${BRAND_NAME} platform — so your brokerage can run its own IB program, set per-lot commissions, and pay partners automatically.`}
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'See how tiers work', href: '#tiers' }}
+        kicker="IB programme"
+        title="Earn on every lot your network trades"
+        lead={`Become a ${BRAND_NAME} Introducing Broker. Share your link, bring traders and sub-partners on board, and earn a per-lot commission on every trade they place, tracked live in your partner dashboard.`}
+        primary={{ label: 'Create your account', href: '/auth/register' }}
+        secondary={{ label: 'See the tiers', href: '#tiers' }}
       />
 
       {/* How it works */}
       <Section raised id="how-it-works">
         <SectionHeading
-          kicker="How It Works"
-          title={<>Three steps. <span style={{ color: 'var(--mk-accent)' }}>Your IB program, live.</span></>}
+          kicker="How it works"
+          title={<>Three steps. <span style={{ color: 'var(--mk-accent)' }}>Then it runs itself.</span></>}
         />
-        <ol className="grid sm:grid-cols-3 gap-5 mt-12" aria-label="How the IB program works">
+        <ol className="grid sm:grid-cols-3 gap-5 mt-12" aria-label="How the IB programme works">
           {[
-            { n: '01', icon: Users,  title: 'Configure Your Tiers', body: 'Set commission rates, qualification thresholds, and tier rewards from the admin back office — no code, live in minutes.' },
-            { n: '02', icon: Share2, title: 'Onboard Partners',     body: 'Your partners get unique referral links, banner kits, and QR codes. Every signup is automatically attributed to the right partner.' },
-            { n: '03', icon: Wallet, title: 'Pay Automatically',    body: 'The module tracks every lot traded by the clients your partners refer — across the asset classes your platform offers — and settles commissions automatically.' },
+            { n: '01', icon: Users,  title: 'Register and apply', body: `Open a ${BRAND_NAME} account, then apply to the partner programme from the Business page inside the platform. Applications are reviewed by our team.` },
+            { n: '02', icon: Share2, title: 'Share your link',     body: 'Once approved you get a personal referral link and code. Anyone who registers through it is attributed to you, permanently.' },
+            { n: '03', icon: Wallet, title: 'Earn per lot',        body: 'Commission is calculated per lot the moment a referred trade fills and released to your balance when the trade closes. Request a payout whenever you like.' },
           ].map(({ n, icon: Icon, title, body }) => (
             <li key={n} className="mk-card mk-card--hover flex flex-col gap-3">
               <div className="flex items-center justify-between">
@@ -95,17 +135,39 @@ export default function IbReferralPage() {
         </ol>
       </Section>
 
-      {/* IB Account Tiers — moved here from /products/insurance per client. */}
-      <Section id="tiers">
+      {/* Multi-level network */}
+      <Section>
+        <div className="grid lg:grid-cols-2 gap-10 items-center">
+          <div className="flex flex-col gap-4">
+            <span className="mk-kicker">Multi-level network</span>
+            <h2 className="mk-h2">Your sub-partners grow your income too</h2>
+            <p className="mk-lead">
+              The programme is multi-level. Bring in another partner and you also earn on the traders they
+              introduce, so your network compounds instead of capping out at the people you reach yourself.
+            </p>
+            <p className="mk-body">
+              Your partner dashboard shows the whole tree: who is in your network, the volume they trade and what
+              you have earned from it, updated live.
+            </p>
+            <div className="flex flex-wrap gap-3 pt-2">
+              <Link href="/auth/register" className="mk-btn mk-btn--primary">Create your account</Link>
+              <Link href="/auth/login" className="mk-btn mk-btn--ghost">Already registered? Sign in</Link>
+            </div>
+          </div>
+          <NetworkTree />
+        </div>
+      </Section>
+
+      {/* Commission tiers */}
+      <Section raised id="tiers">
         <SectionHeading
-          kicker="Commission Tiers"
+          kicker="Commission tiers"
           title={<>Bronze. Silver. <span style={{ color: 'var(--mk-accent)' }}>Gold.</span> Platinum.</>}
           lead={
             <>
-              Set per-lot commission tiers that scale with each partner&apos;s active-trader count.
-              Partners move up automatically — no manual upgrade. Top partners can unlock custom
-              deals up to <span style={{ color: 'var(--mk-accent)', fontWeight: 700 }}>$15 per lot</span>.
-              The figures below are an example ladder — you configure your own.
+              Your per-lot commission rises with the number of active traders in your network. Tiers are
+              upgraded as you qualify. Top partners can unlock custom deals up to{' '}
+              <span style={{ color: 'var(--mk-accent)', fontWeight: 700 }}>$15 per lot</span>.
             </>
           }
         />
@@ -118,7 +180,7 @@ export default function IbReferralPage() {
                   className="absolute -top-3 right-6 z-10 inline-flex items-center gap-1 rounded-full px-3 py-1 font-bold uppercase whitespace-nowrap"
                   style={{ background: tone, color: '#0a0a0a', fontSize: '10px', letterSpacing: '0.12em' }}
                 >
-                  <Sparkles size={12} /> Most Popular
+                  <Sparkles size={12} /> Most popular
                 </div>
               )}
               <article
@@ -142,7 +204,7 @@ export default function IbReferralPage() {
                       color: 'var(--mk-text-faint)',
                     }}
                   >
-                    Commission Tier
+                    Commission tier
                   </div>
                 </div>
 
@@ -150,24 +212,24 @@ export default function IbReferralPage() {
                   className="flex flex-col gap-3 flex-1 pt-4 mt-1"
                   style={{ borderTop: '1px solid var(--mk-line)' }}
                 >
-                  <StatRow label="Active Traders"       value={traders} />
+                  <StatRow label="Active traders"       value={traders} />
                   <StatRow label="Commission (per lot)" value={commission} accent={tone} />
-                  <StatRow label="Tier Reward"          value={amount} />
+                  <StatRow label="Tier reward"          value={amount} />
                 </div>
 
                 <Link
-                  href="/company/contact"
+                  href="/auth/register"
                   className="mk-btn mt-4"
                   style={{ background: tone, color: '#0a0a0a' }}
                 >
-                  Book a demo
+                  Get started
                 </Link>
               </article>
             </div>
           ))}
         </div>
 
-        {/* Top custom-deals callout */}
+        {/* Custom-deals callout */}
         <div
           className="mt-8 mx-auto max-w-3xl flex items-start gap-4"
           style={{
@@ -180,8 +242,8 @@ export default function IbReferralPage() {
           <Sparkles size={20} className="shrink-0 mt-0.5" style={{ color: 'var(--mk-accent)' }} />
           <p className="mk-body" style={{ color: 'var(--mk-text)' }}>
             <span style={{ color: 'var(--mk-accent)', fontWeight: 700 }}>Custom deals up to $15 per lot.</span>{' '}
-            The module lets you offer your top partners — those with consistent volume above your
-            highest tier — bespoke commission, marketing budgets, and bonus structures.
+            Partners with consistent volume above Platinum can ask for a bespoke rate. Contact us once you are
+            there and we will talk.
           </p>
         </div>
 
@@ -189,82 +251,78 @@ export default function IbReferralPage() {
           className="mt-6 text-center mx-auto max-w-2xl"
           style={{ fontSize: 'var(--mk-text-xs)', lineHeight: 'var(--mk-leading-body)', color: 'var(--mk-text-faint)' }}
         >
-          Tier qualification, review windows, and payout timing are all configurable in the module.
-          Commissions can settle automatically to each partner&apos;s balance.
+          Commission accrues at fill and is released when the referred trade closes. Payout requests are reviewed
+          and approved by our team. Demo trades do not earn commission, and you cannot refer yourself.
         </p>
       </Section>
 
       {/* Benefits grid */}
-      <Section raised id="benefits">
-        <SectionHeading kicker="Benefits" title={`What the ${BRAND_NAME} IB Module Gives You`} />
+      <Section id="benefits">
+        <SectionHeading kicker="What you get" title={`Why partner with ${BRAND_NAME}`} />
         <FeatureGrid
           className="mt-12"
           columns={3}
           items={[
-            { icon: Wallet,     title: 'Flexible Payout Rules', body: 'Configure per-lot rates, caps, and claw-back rules to fit your commercial model — no hard-coded limits.' },
-            { icon: Layers,     title: 'Multi-Tier Partner Trees', body: 'Support sub-IB structures out of the box — partners earn from their own referrals and from the IBs they introduce.' },
-            { icon: Zap,        title: 'Automated Settlement', body: 'Commissions are calculated and credited automatically the moment a qualifying lot closes — no manual reconciliation.' },
-            { icon: BarChart3,  title: 'Real-Time Dashboards', body: 'Give partners live earnings, trader activity, conversion funnels, and lot volume in one panel.' },
-            { icon: Headphones, title: 'Account-Manager Tools', body: 'Assign named account managers to your top partner tiers and route their requests through the built-in support workflow.' },
-            { icon: Award,      title: 'Marketing Kit',        body: 'Ships with banners, landing pages, and co-branded assets your partners can deploy in multiple languages.' },
-            { icon: Users,      title: 'No Referral Caps',     body: 'Whether a partner brings five clients or fifty thousand, the module scales — commissions only grow with volume.' },
+            { icon: Link2,      title: 'Personal link and code',  body: 'A referral link and a code that work on the sign-up page. Every registration through them is yours.' },
+            { icon: Layers,     title: 'Multi-level network',     body: 'Earn on the traders your sub-partners bring in, not only the ones you introduce directly.' },
+            { icon: Zap,        title: 'Accrued at fill, paid at close', body: 'Commission is calculated per lot the moment a referred trade fills and released when it closes. No month-end reconciliation.' },
+            { icon: BarChart3,  title: 'Live partner dashboard',  body: 'Your network, its trading volume and your earnings in one panel, updated as trades happen.' },
+            { icon: Wallet,     title: 'Payouts on request',      body: 'Request a payout from your partner balance whenever you like. Requests are reviewed and approved by our team.' },
+            { icon: Users,      title: 'Five asset classes',      body: 'Commission is earned on forex, metals, indices, energy and crypto lots alike, on every account type.' },
+            { icon: Award,      title: 'No cap on your network',  body: 'Five traders or five thousand: the programme scales, and your tier only moves up.' },
           ]}
         />
       </Section>
 
-      {/* Apply form removed per client request — IB application now
-          handled via the /auth/register flow + partner outreach by email. */}
-
-      {/* Testimonials */}
-      <Section id="testimonials">
-        <SectionHeading kicker="Operators" title="What operators say" />
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-12">
-          {[
-            { name: 'Karan A.', region: 'India',   quote: 'We launched our IB program on the platform in days. Partners get their own dashboards and payouts run automatically — no more spreadsheets.' },
-            { name: 'Maria L.', region: 'Spain',   quote: 'The co-branded marketing kit saved our partner team weeks of design work, and everything ships under our own brand.' },
-            { name: 'Tunde O.', region: 'Nigeria', quote: 'Multi-tier partner trees were the deciding feature for us — our top IBs build and earn from their own networks inside our platform.' },
-          ].map((t) => (
-            <article key={t.name} className="mk-card mk-card--hover flex flex-col gap-4">
-              {/* Real partner-style photo via pravatar.cc. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={`https://i.pravatar.cc/120?u=partner-${t.name.toLowerCase().replace(/\W+/g, '-')}`}
-                alt=""
-                className="h-12 w-12 rounded-full object-cover"
-                aria-hidden
-                style={{ border: '1px solid var(--mk-accent-line)' }}
-              />
-              <p className="mk-body italic" style={{ color: 'var(--mk-text)' }}>&ldquo;{t.quote}&rdquo;</p>
-              <div className="pt-4 mt-auto" style={{ borderTop: '1px solid var(--mk-line)' }}>
-                <div className="font-bold" style={{ fontSize: 'var(--mk-text-sm)' }}>{t.name}</div>
-                <div style={{ fontSize: 'var(--mk-text-xs)', color: 'var(--mk-text-faint)' }}>{t.region}</div>
-              </div>
-            </article>
-          ))}
+      {/* Partner with us — the one B2B side note */}
+      <Section raised>
+        <div className="mk-card mx-auto max-w-3xl flex flex-col sm:flex-row gap-5 sm:items-center">
+          <span
+            className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-xl"
+            style={{ background: 'var(--mk-accent-soft)', color: 'var(--mk-accent)' }}
+          >
+            <Building2 size={22} />
+          </span>
+          <div className="flex-1">
+            <h3 className="mk-h3">Run a brand of your own?</h3>
+            <p className="mk-body" style={{ fontSize: 'var(--mk-text-sm)' }}>
+              Beyond the IB programme, {BRAND_NAME} works with a small number of partners on white-label arrangements.
+              Get in touch and tell us about your business.
+            </p>
+          </div>
+          <Link href="/company/contact" className="mk-btn mk-btn--ghost shrink-0">Contact us</Link>
         </div>
       </Section>
 
       {/* FAQ */}
-      <Section raised id="faq">
-        <SectionHeading kicker="Questions" title="FAQ" />
+      <Section id="faq">
+        <SectionHeading kicker="Questions" title="IB FAQ" />
         <div className="mt-12 mx-auto max-w-3xl">
           <FaqAccordion
             items={[
               {
-                q: 'Is the IB module included with the platform?',
-                a: <>Yes. Introducing-broker and partner management ship with the {BRAND_NAME} platform — you configure commission rates, tiers, and payout rules from the admin back office. There is nothing extra to install.</>,
+                q: 'How do I become a partner?',
+                a: <>Register a {BRAND_NAME} account, then open the Business page inside the platform and submit the partner application. Our team reviews it and, once approved, your referral link and code are ready in the dashboard.</>,
               },
               {
-                q: 'How are commissions paid out?',
-                a: <>You decide. The module can settle commissions automatically the moment a qualifying lot closes, or on a schedule you set, to each partner&apos;s balance.</>,
+                q: 'When is commission credited?',
+                a: <>Commission is calculated per lot at the moment a referred trade fills, and released to your partner balance when that trade closes. Trades on demo accounts never earn commission.</>,
               },
               {
-                q: 'Which asset classes does it track?',
-                a: <>Any the platform offers. Commissions can be tracked on every lot across the asset classes you enable — forex, metals, energies, indices, and crypto.</>,
+                q: 'How are payouts made?',
+                a: <>Request a payout from your partner balance in the dashboard. Each request is reviewed and approved by our team before it is paid.</>,
               },
               {
-                q: 'How is partner attribution handled?',
-                a: <>Attribution is persistent. Each client stays linked to the partner who introduced them, and the module keeps that link intact across the client&apos;s lifecycle.</>,
+                q: 'Which markets count?',
+                a: <>Every lot on the platform: forex, metals, indices, energy and crypto, on any live account type.</>,
+              },
+              {
+                q: 'How does the multi-level network work?',
+                a: <>If a partner you introduced brings in their own traders, those traders sit in your network too and you earn on their volume. Your dashboard shows the full tree.</>,
+              },
+              {
+                q: 'Does a referred trader stay linked to me?',
+                a: <>Yes. Attribution is permanent: a trader who registers through your link or code stays in your network for the life of their account. You cannot refer yourself.</>,
               },
             ]}
           />
@@ -272,10 +330,18 @@ export default function IbReferralPage() {
       </Section>
 
       <CtaBanner
-        title="See the IB Module in Action"
-        lead="Book a demo and we'll walk you through configuring tiers, onboarding partners, and automating payouts on your platform."
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
+        title="Start building your network"
+        lead={`Create your ${BRAND_NAME} account, apply from the Business page, and share your link the same day.`}
+        primary={{ label: 'Create your account', href: '/auth/register' }}
+        secondary={{ label: 'Sign in', href: '/auth/login' }}
       />
+
+      <div className="mk-container" style={{ paddingTop: 'var(--mk-space-6)', paddingBottom: 'var(--mk-space-8)' }}>
+        <p className="mk-meta mx-auto max-w-3xl text-center">
+          Trading leveraged products such as forex and CFDs carries a high level of risk and may not be suitable
+          for all investors. You could lose more than your initial deposit.
+        </p>
+      </div>
     </main>
   );
 }

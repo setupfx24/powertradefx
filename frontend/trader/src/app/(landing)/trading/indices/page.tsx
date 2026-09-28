@@ -1,28 +1,27 @@
 'use client';
 
 /**
- * Trading → Indices. Restyled onto the shared marketing design system;
- * all copy, figures and instrument specs carried over from the previous
- * TradingPageTemplate-driven page.
+ * Trading → Indices. US30, NAS100, GER40 and UK100 as CFDs on PowerTradeFX.
  */
-import { Globe, TrendingUp, Clock } from 'lucide-react';
+import { Globe, TrendingUp, Clock, ShieldCheck, Gauge, Newspaper } from 'lucide-react';
 import { Section, SectionHeading, PageHero, FeatureGrid, CtaBanner } from '@/marketing/components';
 import { BRAND_NAME } from '@/lib/brand';
+import {
+  StatStrip, InstrumentTable, MarketIllustration, TerminalShot, RiskNote, type InstrumentRow,
+} from '../_components/MarketPageParts';
 
 const STATS = [
-  { label: 'Spread From', value: '0.4 pips' },
-  { label: 'Leverage', value: '1:200' },
-  { label: 'Indices', value: '20+' },
-  { label: 'Market Hours', value: '24/7' },
+  { label: 'Indices', value: '4' },
+  { label: 'Leverage', value: 'Up to 1:500' },
+  { label: 'Lot size from', value: '0.01' },
+  { label: 'Direction', value: 'Long or short' },
 ];
 
-const INSTRUMENTS = [
-  { symbol: 'US500 (S&P 500)', spread: '0.4 pips', leverage: '1:200', margin: '0.5%' },
-  { symbol: 'NAS100 (NASDAQ)', spread: '0.6 pips', leverage: '1:200', margin: '0.5%' },
-  { symbol: 'UK100 (FTSE 100)', spread: '0.8 pips', leverage: '1:200', margin: '0.5%' },
-  { symbol: 'GER40 (DAX 40)', spread: '0.8 pips', leverage: '1:200', margin: '0.5%' },
-  { symbol: 'JPN225 (Nikkei)', spread: '1.0 pips', leverage: '1:200', margin: '0.5%' },
-  { symbol: 'AUS200 (ASX 200)', spread: '1.0 pips', leverage: '1:200', margin: '0.5%' },
+const INSTRUMENTS: InstrumentRow[] = [
+  { symbol: 'US30', name: 'Dow Jones Industrial Average (30 US stocks)', hours: 'Market hours, Mon–Fri' },
+  { symbol: 'NAS100', name: 'Nasdaq 100 (100 US technology stocks)', hours: 'Market hours, Mon–Fri' },
+  { symbol: 'GER40', name: 'DAX 40 (40 German stocks)', hours: 'Market hours, Mon–Fri' },
+  { symbol: 'UK100', name: 'FTSE 100 (100 UK stocks)', hours: 'Market hours, Mon–Fri' },
 ];
 
 export default function IndicesPage() {
@@ -30,119 +29,99 @@ export default function IndicesPage() {
     <main>
       <PageHero
         kicker="Indices"
-        title={'Indices support for your platform'}
-        lead="Give your clients exposure to US500, UK100, GER40 and more — index support built into the platform we deliver under your brand."
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'Explore market coverage', href: '/markets' }}
+        title="Trade US30, NAS100, GER40 and UK100"
+        lead={`Take a position on a whole stock market in one trade. Four index CFDs on one ${BRAND_NAME} account, long or short, from 0.01 lots.`}
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'Try a free demo', href: '/auth/login' }}
       />
 
       <Section raised>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
-          {STATS.map((s) => (
-            <div key={s.label} className="mk-card text-center">
-              <div
-                className="font-extrabold"
-                style={{ fontSize: 'var(--mk-text-h3)', color: 'var(--mk-accent)', lineHeight: 1.15 }}
-              >
-                {s.value}
-              </div>
-              <div
-                className="mt-2"
-                style={{
-                  fontSize: 'var(--mk-text-label)',
-                  letterSpacing: 'var(--mk-tracking-label)',
-                  textTransform: 'uppercase',
-                  color: 'var(--mk-text-faint)',
-                }}
-              >
-                {s.label}
-              </div>
-            </div>
-          ))}
-        </div>
+        <StatStrip stats={STATS} />
 
-        <div className="flex flex-col gap-4 mx-auto max-w-3xl mt-14 text-center">
-          <h2 className="mk-h2">What are Index CFDs?</h2>
-          <p className="mk-lead">
-            {`Index trading lets clients speculate on the performance of entire markets or sectors without buying individual stocks. The ${BRAND_NAME} platform supports popular indices like the S&P 500, NASDAQ 100, FTSE 100 and DAX 40, with lower margin requirements, extended trading hours and the ability to go long or short on market movements — all under your brand.`}
-          </p>
+        <div className="grid lg:grid-cols-2 gap-10 items-center mt-14">
+          <div className="flex flex-col gap-4">
+            <span className="mk-kicker">What you are trading</span>
+            <h2 className="mk-h2">Index CFDs, in plain terms</h2>
+            <p className="mk-lead">
+              An index tracks a basket of shares: the Dow follows 30 large US companies, the Nasdaq 100 the biggest
+              US technology names, the DAX 40 Germany&apos;s blue chips and the FTSE 100 the largest UK-listed firms.
+              An index CFD lets you trade the level of that basket without buying a single share.
+            </p>
+            <p className="mk-body">
+              Index prices follow the underlying exchange sessions, so each instrument has its own trading hours. The
+              watchlist shows when a market is open, and the terminal blocks new orders while it is closed.
+            </p>
+          </div>
+          <MarketIllustration symbol="NAS100" side="Sell" ticket="0.10 lot · SL / TP set" />
         </div>
       </Section>
 
       <Section>
-        <SectionHeading kicker="Instruments" title="Popular Index CFDs" />
-        <div className="mt-12 overflow-x-auto">
-          <div
-            className="min-w-[520px] overflow-hidden"
-            style={{ border: '1px solid var(--mk-line)', borderRadius: 'var(--mk-radius-lg)' }}
-          >
-            <table className="w-full" style={{ borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  {['Instrument', 'Spread From', 'Max Leverage', 'Margin'].map((h, i) => (
-                    <th
-                      key={h}
-                      className={i === 0 ? 'text-left px-5 py-4' : 'text-right px-5 py-4'}
-                      style={{
-                        background: 'var(--mk-surface-2)',
-                        color: 'var(--mk-accent)',
-                        fontSize: 'var(--mk-text-label)',
-                        letterSpacing: 'var(--mk-tracking-label)',
-                        textTransform: 'uppercase',
-                        fontWeight: 700,
-                      }}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {INSTRUMENTS.map((i) => (
-                  <tr key={i.symbol} style={{ borderTop: '1px solid var(--mk-line)', background: 'var(--mk-surface)' }}>
-                    <td className="px-5 py-4 font-semibold" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text)' }}>{i.symbol}</td>
-                    <td className="px-5 py-4 text-right" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)', fontFamily: 'var(--mk-font-mono)' }}>{i.spread}</td>
-                    <td className="px-5 py-4 text-right" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)', fontFamily: 'var(--mk-font-mono)' }}>{i.leverage}</td>
-                    <td className="px-5 py-4 text-right" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)', fontFamily: 'var(--mk-font-mono)' }}>{i.margin}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <SectionHeading
+          kicker="Instruments"
+          title="Every index on the platform"
+          lead="All four are available on live and demo accounts with the same charting, order types and margin rules."
+        />
+        <div className="mt-12">
+          <InstrumentTable rows={INSTRUMENTS} />
         </div>
       </Section>
 
       <Section raised>
-        <SectionHeading kicker="Platform capability" title={`Indices on the ${BRAND_NAME} platform`} />
+        <SectionHeading kicker="Why trade indices here" title={`Indices on ${BRAND_NAME}`} />
         <FeatureGrid
           className="mt-12"
           columns={3}
           items={[
             {
               icon: Globe,
-              title: 'Global Market Access',
-              body: 'Clients reach major indices from the US, Europe, Asia and Australia, all from one platform.',
+              title: 'US, Germany and the UK in one list',
+              body: 'Wall Street, the Nasdaq, Frankfurt and London on one watchlist, each with live bid, ask and spread.',
             },
             {
               icon: TrendingUp,
-              title: 'Low Margin Requirements',
-              body: 'Support for large positions with configurable margin rates and flexible leverage up to 1:200.',
+              title: 'Go long or short',
+              body: 'Sell an index as easily as you buy it. One ticket, one click, and a stop-loss and take-profit on either side.',
+            },
+            {
+              icon: Gauge,
+              title: 'Leverage set per account group',
+              body: 'Default 1:100, up to 1:500 depending on your account group. Margin and free margin are always on screen.',
             },
             {
               icon: Clock,
-              title: 'Extended Trading Hours',
-              body: 'Clients trade indices nearly around the clock, with access to both cash and futures contracts.',
+              title: 'Pending orders for the open',
+              body: 'Place limit, stop or stop-limit orders ahead of the session. The engine fills them at your requested price when the market trades there.',
+            },
+            {
+              icon: Newspaper,
+              title: 'The releases that move indices',
+              body: 'The economic-news panel inside the terminal shows rate decisions, inflation and jobs data with impact levels.',
+            },
+            {
+              icon: ShieldCheck,
+              title: 'Protection that runs server-side',
+              body: 'Stop-loss and take-profit are executed by the engine, so a fast move at the open is handled even if your browser is closed.',
             },
           ]}
         />
       </Section>
 
+      <Section>
+        <SectionHeading kicker="The terminal" title="Where you trade it" />
+        <div className="mt-12">
+          <TerminalShot alt={`The ${BRAND_NAME} web terminal showing an index chart, the watchlist and the order ticket`} />
+        </div>
+      </Section>
+
       <CtaBanner
-        title={'Add indices to your platform'}
-        lead={`Book a demo and see how the ${BRAND_NAME} platform supports the major US, European and Asian indices under your brand.`}
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'Compare account tiers', href: '/account-types' }}
+        title="Start trading indices"
+        lead="Open a live account in minutes, or trade the Nasdaq and the Dow on a free $10,000 demo first."
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'Try a free demo', href: '/auth/login' }}
       />
+
+      <RiskNote />
     </main>
   );
 }

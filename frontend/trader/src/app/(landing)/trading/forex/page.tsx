@@ -1,28 +1,50 @@
 'use client';
 
 /**
- * Trading → Forex. Restyled onto the shared marketing design system;
- * all copy, figures and instrument specs carried over from the previous
- * TradingPageTemplate-driven page.
+ * Trading → Forex. The 16 currency pairs you can trade on PowerTradeFX,
+ * the conditions that apply to them, and how they are traded in the
+ * web terminal.
  */
-import { Zap, DollarSign, Lock } from 'lucide-react';
+import { Zap, Clock, ShieldCheck, ListOrdered, Gauge, Layers } from 'lucide-react';
 import { Section, SectionHeading, PageHero, FeatureGrid, CtaBanner } from '@/marketing/components';
 import { BRAND_NAME } from '@/lib/brand';
+import {
+  StatStrip, InstrumentTable, MarketIllustration, TerminalShot, RiskNote, type InstrumentRow,
+} from '../_components/MarketPageParts';
 
 const STATS = [
-  { label: 'Spread From', value: '0.0 pips' },
-  { label: 'Leverage', value: '1:500' },
-  { label: 'Market Hours', value: '24/7' },
-  { label: 'Currency Pairs', value: '60+' },
+  { label: 'Currency pairs', value: '16' },
+  { label: 'Leverage', value: 'Up to 1:500' },
+  { label: 'Lot size from', value: '0.01' },
+  { label: 'Market hours', value: '24/5' },
 ];
 
-const INSTRUMENTS = [
-  { symbol: 'EUR/USD', spread: '0.0 pips', leverage: '1:500', margin: '0.2%' },
-  { symbol: 'GBP/USD', spread: '0.1 pips', leverage: '1:500', margin: '0.2%' },
-  { symbol: 'USD/JPY', spread: '0.1 pips', leverage: '1:500', margin: '0.2%' },
-  { symbol: 'AUD/USD', spread: '0.2 pips', leverage: '1:500', margin: '0.2%' },
-  { symbol: 'USD/CHF', spread: '0.2 pips', leverage: '1:500', margin: '0.2%' },
-  { symbol: 'EUR/GBP', spread: '0.3 pips', leverage: '1:500', margin: '0.2%' },
+const HOURS = '24h, Mon–Fri';
+
+const INSTRUMENTS: InstrumentRow[] = [
+  { symbol: 'EURUSD', name: 'Euro / US Dollar', hours: HOURS },
+  { symbol: 'GBPUSD', name: 'British Pound / US Dollar', hours: HOURS },
+  { symbol: 'USDJPY', name: 'US Dollar / Japanese Yen', hours: HOURS },
+  { symbol: 'AUDUSD', name: 'Australian Dollar / US Dollar', hours: HOURS },
+  { symbol: 'USDCAD', name: 'US Dollar / Canadian Dollar', hours: HOURS },
+  { symbol: 'USDCHF', name: 'US Dollar / Swiss Franc', hours: HOURS },
+  { symbol: 'NZDUSD', name: 'New Zealand Dollar / US Dollar', hours: HOURS },
+  { symbol: 'EURGBP', name: 'Euro / British Pound', hours: HOURS },
+  { symbol: 'EURJPY', name: 'Euro / Japanese Yen', hours: HOURS },
+  { symbol: 'GBPJPY', name: 'British Pound / Japanese Yen', hours: HOURS },
+  { symbol: 'EURCHF', name: 'Euro / Swiss Franc', hours: HOURS },
+  { symbol: 'GBPCHF', name: 'British Pound / Swiss Franc', hours: HOURS },
+  { symbol: 'AUDJPY', name: 'Australian Dollar / Japanese Yen', hours: HOURS },
+  { symbol: 'CADJPY', name: 'Canadian Dollar / Japanese Yen', hours: HOURS },
+  { symbol: 'NZDJPY', name: 'New Zealand Dollar / Japanese Yen', hours: HOURS },
+  { symbol: 'USDHKD', name: 'US Dollar / Hong Kong Dollar', hours: HOURS },
+];
+
+const ORDER_TYPES = [
+  { title: 'Market', body: 'Fill at the current bid or ask, straight from the ticket or the one-click widget on the chart.' },
+  { title: 'Limit', body: 'Buy below or sell above the current price. Fills at your limit price when the market reaches it.' },
+  { title: 'Stop', body: 'Enter on a breakout: the order becomes a market order once your stop level trades.' },
+  { title: 'Stop-limit', body: 'When the stop level is hit the order converts to a limit at the price you set, so you control the fill.' },
 ];
 
 export default function ForexPage() {
@@ -30,119 +52,119 @@ export default function ForexPage() {
     <main>
       <PageHero
         kicker="Forex"
-        title="Forex support for your platform"
-        lead="Give your clients 60+ currency pairs with configurable spreads and leverage — forex support built into the platform we deliver under your brand."
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'Explore market coverage', href: '/markets' }}
+        title="Trade 16 currency pairs with leverage up to 1:500"
+        lead={`Majors, crosses and yen pairs on one ${BRAND_NAME} account. Variable spreads shown live, lots from 0.01, and stop-loss and take-profit on every order.`}
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'Try a free demo', href: '/auth/login' }}
       />
 
       <Section raised>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
-          {STATS.map((s) => (
-            <div key={s.label} className="mk-card text-center">
-              <div
-                className="font-extrabold"
-                style={{ fontSize: 'var(--mk-text-h3)', color: 'var(--mk-accent)', lineHeight: 1.15 }}
-              >
-                {s.value}
-              </div>
-              <div
-                className="mt-2"
-                style={{
-                  fontSize: 'var(--mk-text-label)',
-                  letterSpacing: 'var(--mk-tracking-label)',
-                  textTransform: 'uppercase',
-                  color: 'var(--mk-text-faint)',
-                }}
-              >
-                {s.label}
-              </div>
-            </div>
-          ))}
-        </div>
+        <StatStrip stats={STATS} />
 
-        <div className="flex flex-col gap-4 mx-auto max-w-3xl mt-14 text-center">
-          <h2 className="mk-h2">What is Forex Trading?</h2>
-          <p className="mk-lead">
-            {`Forex (foreign exchange) is the world's largest and most liquid financial market, with over $6 trillion traded daily. The platform ${BRAND_NAME} builds supports major, minor and exotic currency pairs, with tight configurable spreads, fast execution and advanced trading tools — everything your clients need in the forex market, delivered under your brand.`}
-          </p>
+        <div className="grid lg:grid-cols-2 gap-10 items-center mt-14">
+          <div className="flex flex-col gap-4">
+            <span className="mk-kicker">What you are trading</span>
+            <h2 className="mk-h2">Forex, in plain terms</h2>
+            <p className="mk-lead">
+              A forex trade is a position on one currency against another. Buy EURUSD and you profit if the euro
+              strengthens against the dollar; sell it and you profit if the euro weakens. Trades are leveraged, so a
+              small margin controls a larger position, and the market runs around the clock from the Sydney open on
+              Monday to the New York close on Friday.
+            </p>
+            <p className="mk-body">
+              On {BRAND_NAME} you trade forex as CFDs: you never take delivery of currency, you can go long or short,
+              and you can size a position from 0.01 lots upwards.
+            </p>
+          </div>
+          <MarketIllustration symbol="EURUSD" side="Buy" ticket="0.10 lot · SL / TP set" />
         </div>
       </Section>
 
       <Section>
-        <SectionHeading kicker="Instruments" title="Popular Currency Pairs" />
-        <div className="mt-12 overflow-x-auto">
-          <div
-            className="min-w-[520px] overflow-hidden"
-            style={{ border: '1px solid var(--mk-line)', borderRadius: 'var(--mk-radius-lg)' }}
-          >
-            <table className="w-full" style={{ borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  {['Instrument', 'Spread From', 'Max Leverage', 'Margin'].map((h, i) => (
-                    <th
-                      key={h}
-                      className={i === 0 ? 'text-left px-5 py-4' : 'text-right px-5 py-4'}
-                      style={{
-                        background: 'var(--mk-surface-2)',
-                        color: 'var(--mk-accent)',
-                        fontSize: 'var(--mk-text-label)',
-                        letterSpacing: 'var(--mk-tracking-label)',
-                        textTransform: 'uppercase',
-                        fontWeight: 700,
-                      }}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {INSTRUMENTS.map((i) => (
-                  <tr key={i.symbol} style={{ borderTop: '1px solid var(--mk-line)', background: 'var(--mk-surface)' }}>
-                    <td className="px-5 py-4 font-semibold" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text)' }}>{i.symbol}</td>
-                    <td className="px-5 py-4 text-right" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)', fontFamily: 'var(--mk-font-mono)' }}>{i.spread}</td>
-                    <td className="px-5 py-4 text-right" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)', fontFamily: 'var(--mk-font-mono)' }}>{i.leverage}</td>
-                    <td className="px-5 py-4 text-right" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)', fontFamily: 'var(--mk-font-mono)' }}>{i.margin}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <SectionHeading
+          kicker="Instruments"
+          title="Every forex pair on the platform"
+          lead="All 16 pairs are available on live and demo accounts, with the same charting, order types and margin rules."
+        />
+        <div className="mt-12">
+          <InstrumentTable rows={INSTRUMENTS} />
         </div>
       </Section>
 
       <Section raised>
-        <SectionHeading kicker="Platform capability" title={`Forex on the ${BRAND_NAME} platform`} />
+        <SectionHeading
+          kicker="Order types"
+          title="Four ways to enter, one way to protect"
+          lead="Every order can carry a stop-loss and take-profit, editable later by dragging the line on the chart."
+        />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mt-12">
+          {ORDER_TYPES.map((o) => (
+            <article key={o.title} className="mk-card flex flex-col gap-2">
+              <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg" style={{ background: 'var(--mk-accent-soft)', color: 'var(--mk-accent)' }}>
+                <ListOrdered size={18} />
+              </span>
+              <h3 className="mk-h3">{o.title}</h3>
+              <p className="mk-body" style={{ fontSize: 'var(--mk-text-sm)' }}>{o.body}</p>
+            </article>
+          ))}
+        </div>
+      </Section>
+
+      <Section>
+        <SectionHeading kicker="Why trade forex here" title={`Forex on ${BRAND_NAME}`} />
         <FeatureGrid
           className="mt-12"
           columns={3}
           items={[
             {
+              icon: Gauge,
+              title: 'Leverage that fits your account',
+              body: 'Default 1:100, up to 1:500 depending on your account group. Margin, free margin and margin level are always on screen.',
+            },
+            {
               icon: Zap,
-              title: 'Fast Execution',
-              body: 'Low-latency execution on institutional-grade infrastructure with zero requotes.',
+              title: 'One-click trading on the chart',
+              body: 'Buy or sell from the widget on the TradingView chart, then drag stop-loss and take-profit lines to adjust them.',
             },
             {
-              icon: DollarSign,
-              title: 'Configurable Spreads',
-              body: 'Set spreads on major pairs with transparent pricing wired to your own liquidity providers.',
+              icon: ShieldCheck,
+              title: 'Orders that outlive your browser',
+              body: 'Pending orders, stop-loss and take-profit are executed server-side by the engine, so they keep working when you close the tab.',
             },
             {
-              icon: Lock,
-              title: 'Secure Platform',
-              body: 'Hardened infrastructure with negative balance protection controls and role-based access built in.',
+              icon: Clock,
+              title: 'News beside the chart',
+              body: 'An economic-news panel inside the terminal shows the releases that move currencies while you trade.',
+            },
+            {
+              icon: Layers,
+              title: 'Live spreads, no surprises',
+              body: 'The watchlist shows live bid, ask and spread for every pair, and the ticket shows the cost before you confirm.',
+            },
+            {
+              icon: ListOrdered,
+              title: 'Practise first',
+              body: 'A $10,000 demo account is one click away, no email needed. Same pairs, same charts, same order ticket.',
             },
           ]}
         />
       </Section>
 
+      <Section raised>
+        <SectionHeading kicker="The terminal" title="Where you trade it" />
+        <div className="mt-12">
+          <TerminalShot alt={`The ${BRAND_NAME} web terminal showing a forex chart, the watchlist and the order ticket`} />
+        </div>
+      </Section>
+
       <CtaBanner
-        title="Add forex to your platform"
-        lead={`Book a demo and see how the ${BRAND_NAME} platform supports major, minor and exotic currency pairs under your brand.`}
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'Compare account tiers', href: '/account-types' }}
+        title="Start trading forex today"
+        lead="Open a live account in minutes, or try the terminal on a free $10,000 demo first."
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'Try a free demo', href: '/auth/login' }}
       />
+
+      <RiskNote />
     </main>
   );
 }

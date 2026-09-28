@@ -1,18 +1,13 @@
 'use client';
 
 /**
- * Trading — the destination of the primary `Trading` nav item.
+ * Account types — the destination of the primary `Trading` nav item.
  *
- * Laid out to the 2026-09-02 reference: hero + wide product shot, own
- * platforms, account types, a tabbed "key features" block, trading
- * conditions, a compare band over the full specification table, FAQs, and
- * a "try these next" row.
- *
- * Content note: the reference devotes a whole band to THIRD-PARTY
- * platforms (MetaTrader, TradingView, L2 Dealer). We ship none of those —
- * the product is a single web application — so that slot carries the
- * account types instead rather than advertising integrations that do not
- * exist. Every figure below already appeared on this page.
+ * Layout kept from the 2026-09-02 reference: hero + wide product shot,
+ * platform surfaces, a tabbed "key features" block, trading conditions,
+ * the Demo / Standard / Pro specification table, FAQs and a "try these
+ * next" row. Copy speaks to the trader; every figure is either a verified
+ * platform fact or a tier figure already published on the tier pages.
  */
 import { useState } from 'react';
 import Image from 'next/image';
@@ -21,97 +16,105 @@ import { ArrowUpRight, CheckCircle2 } from 'lucide-react';
 import { Section, SectionHeading, PageHero, CtaBanner, FaqAccordion } from '@/marketing/components';
 import { BRAND_NAME } from '@/lib/brand';
 
-/** Our own platform surfaces — all browser-based, no installer.
- *  The slot below is 3:2 rather than the 16:9 the placeholders used: the
- *  two sources are 1.50 and 1.56, so 3:2 fits the first exactly and takes
- *  ~3% off the second, where 16:9 would have cropped 15% off both. */
+const RISK_LINE =
+  'Trading leveraged products such as forex and CFDs carries a high level of risk and may not be suitable for all investors. You could lose more than your initial deposit.';
+
+/** Our own platform surfaces — all browser-based, nothing to install. */
 const PLATFORMS = [
   {
-    name: 'Web platform',
+    name: 'Web terminal',
     href: '/platforms/web',
-    body: 'The full trading platform in any modern browser. Nothing to install and nothing to update.',
-    image: '/images/web img.png',
+    body: 'The full terminal in any modern browser: TradingView charts, order ticket, positions and account panel. Nothing to install.',
+    image: '/marketing/screens/dashboard.png',
+    alt: `${BRAND_NAME} dashboard in a desktop browser`,
+    portrait: false,
   },
   {
     name: 'Mobile trading',
     href: '/download',
-    body: 'Installs to the phone home screen and reaches the same account, with positions and watchlists in sync.',
-    image: '/images/mobile img.png',
+    body: 'The same terminal in a phone browser, with a mobile order sheet. Add it to your home screen and it opens like an app.',
+    image: '/marketing/screens/terminal-phone.png',
+    alt: `${BRAND_NAME} in a phone browser`,
+    portrait: true,
   },
 ];
 
-/* ── Key features, as a tab set (reference's tabbed band) ───────────── */
-/* Each tab's artwork is 1672×941 — exactly the 16:9 the placeholder
-   reserved — so the images dropped into the slot without reflow. */
-const FEATURE_TABS: { label: string; lead: string; points: string[]; image: string }[] = [
+/* ── Key features, as a tab set ────────────────────────────────────── */
+const FEATURE_TABS: { label: string; lead: string; points: string[]; image: string; alt: string }[] = [
   {
     label: 'Charts',
-    lead: 'Professional charting with real-time pricing.',
+    lead: 'TradingView charts with live pricing.',
     points: [
-      'Live bid/ask streaming over a persistent connection',
-      'Multiple timeframes from one minute to one day',
-      'Server-side candle aggregation, so charts match the fills',
-      'Full instrument directory across forex, indices, metals and crypto',
+      '100+ indicators, drawing tools and timeframes from 1 minute to 1 month',
+      'Watchlist with live bid, ask and spread',
+      'One-click trading widget on the chart',
+      'Stop-loss and take-profit editable straight from the chart',
     ],
-    image: '/images/hero banner 4.png',
+    image: '/marketing/screens/terminal.png',
+    alt: `${BRAND_NAME} web terminal, dark theme`,
   },
   {
-    label: 'Orders and alerts',
+    label: 'Orders',
     lead: 'Your orders keep working when your browser is closed.',
     points: [
-      'Pending orders held and triggered server-side',
-      'Stop-loss and take-profit monitored continuously',
-      'Margin-call and stop-out alerts as levels are reached',
-      'Trade notifications by email and in-platform',
+      'Market, limit, stop and stop-limit orders',
+      'Stop-loss and take-profit on every order, executed server-side',
+      'Limits fill at the limit price; a stop-limit converts to a limit when the stop is hit',
+      'Positions, pending orders and closed-trade history panels',
     ],
-    image: '/images/features2.png',
+    image: '/marketing/screens/terminal-light.png',
+    alt: `${BRAND_NAME} web terminal, light theme`,
   },
   {
     label: 'Accounts',
-    lead: 'Clients can run more than one account from a single login.',
+    lead: 'Run more than one account from a single login.',
     points: [
       'Live and demo accounts side by side',
-      'Standard, ECN, IB and swap-free account tiers you configure',
-      'Demo accounts funded with a virtual balance',
-      'Instant transfers between a client’s own accounts',
+      'Standard and Pro live accounts, opened from inside the app',
+      'A $10,000 demo account in one click, no email',
+      'Transfer funds between your accounts and your wallet at any time',
     ],
-    image: '/images/features3.png',
+    image: '/marketing/screens/accounts.png',
+    alt: `${BRAND_NAME} accounts page showing a demo account and the Open Account button`,
   },
 ];
 
-/* ── Trading conditions (reference's "integration options" accordion) ── */
+/* ── Trading conditions ────────────────────────────────────────────── */
 const CONDITIONS = [
-  { q: 'Spreads and commission', a: 'Spreads and commission are configured per account tier by the operator and shown on the order ticket before the client confirms. The platform wires pricing to your liquidity providers with no forced markup.' },
-  { q: 'Leverage and margin',    a: 'Leverage limits are set by the operator per account tier and instrument. Required margin is calculated per position and shown before the client confirms. Higher leverage increases both potential gains and potential losses for the end client.' },
-  { q: 'Execution',              a: 'The platform supports the execution models you choose, with orders filled against your configured pricing. Pending orders, stop-loss and take-profit levels are held server-side so they stay active whether or not the client is signed in.' },
-  { q: 'Market hours',           a: 'Forex can be quoted 24 hours a day, five days a week. Indices, metals and digital assets follow their own sessions, shown on each instrument in the platform.' },
+  { q: 'Spreads and commission', a: 'Standard accounts are commission-free and pay only the spread. Pro accounts get tighter spreads with a fixed per-lot commission. The cost of every order is shown on the ticket before you confirm.' },
+  { q: 'Leverage and margin',    a: 'Leverage is flexible up to 1:500; the default is 1:100. Required margin is calculated per position and your balance, equity, margin, free margin and margin level are always visible in the terminal. Higher leverage increases both potential gains and potential losses.' },
+  { q: 'Execution',              a: 'Orders, stop-loss and take-profit are executed server-side by our engine, so they stay active whether or not you are signed in. Pending orders fill at the requested price.' },
+  { q: 'Market hours',           a: 'Crypto trades 24/7. Forex, metals, indices and energy follow their market hours, shown on each instrument in the terminal.' },
 ];
 
 const TRADING_FAQ = [
-  { q: 'Can we set our own minimum deposits?', a: 'Yes. Deposit thresholds are configured per account tier by the operator. The example tiers in the platform show a Standard tier from $50 and an ECN tier from $200, with a virtual-funds demo tier that needs no deposit — all adjustable to your rules.' },
-  { q: 'Which account tiers can we offer?', a: 'The platform ships with configurable tiers such as Standard (no commission, slightly wider spread), ECN (tightest raw spread with a per-lot commission), IB partner accounts, and swap-free accounts for clients who cannot pay or receive rollover interest. You decide which to enable.' },
-  { q: 'Can we see the platform before committing?', a: 'Yes. Book a demo and we will walk you through the platform, the instrument coverage and the execution logic running against live prices, with a virtual balance.' },
-  { q: 'Do clients need to install anything?', a: `No. ${BRAND_NAME} is fully web-based and runs in any modern browser on desktop, tablet or phone. Clients can install it to the phone home screen for an app-like experience, but there is no download and nothing to update.` },
+  { q: 'Which account should I start with?', a: 'Most traders start on Standard: low minimum deposit, no commission, and every feature of the platform. If you trade often or in size, Pro’s tighter spreads with a $3.5 per-lot commission usually work out cheaper. Not sure? Start on the free $10,000 demo.' },
+  { q: 'Can I hold more than one account?', a: 'Yes. You can open several live accounts under one login, keep a demo alongside them, and transfer funds between accounts and your main wallet at any time.' },
+  { q: 'How do I fund my account?', a: 'Deposit by crypto — USDT on TRC20, BEP20 or ERC20 — or by local banking through a bank transfer / UPI payment link. Withdrawals go to USDT or bank / UPI; crypto is typically same-day and bank withdrawals are reviewed by our team. Demo accounts cannot deposit.' },
+  { q: 'Do I need to verify my identity?', a: 'You can open an account and trade a demo without it. To withdraw, complete KYC in the app with a government ID, a selfie and proof of address.' },
+  { q: 'Do I need to install anything?', a: `No. ${BRAND_NAME} runs in any modern browser on desktop, tablet or phone. You can add it to your phone’s home screen for an app-like experience, and a desktop terminal for Windows and macOS is available on request.` },
 ];
 
 const NEXT_STEPS = [
-  { title: 'Explore markets',      body: 'See the instrument coverage the platform can offer your clients.',   href: '/markets' },
-  { title: 'Book a demo',          body: 'See the platform in action against live prices with a virtual balance.', href: '/company/contact' },
-  { title: 'Copy trading',         body: 'A module that lets clients follow and mirror experienced traders.',  href: '/platforms/copy-trading' },
+  { title: 'Explore markets',  body: 'Forex, metals, indices, energy and crypto — 40+ instruments.',     href: '/markets' },
+  { title: 'Try a free demo',  body: 'A $10,000 demo account in one click from the login page.',          href: '/auth/login' },
+  { title: 'Copy trading',     body: 'Follow master traders and mirror their trades automatically.',       href: '/platforms/copy-trading' },
 ];
 
-const INSTRUMENTS = ['Forex', 'Metal', 'Crypto', 'Energies', 'Stocks', 'Indices'];
+const INSTRUMENTS = ['Forex', 'Metals', 'Indices', 'Energy', 'Crypto'];
 
-const COLUMN_HEADERS = ['Standard', 'ECN', 'IB', 'Swap'];
+const COLUMN_HEADERS = ['Demo', 'Standard', 'Pro'];
 
 const FEATURE_ROWS: Array<{ label: string; values: React.ReactNode[] }> = [
-  { label: 'Minimum Deposit',  values: ['$50', '$200', '$50', '$200'] },
-  { label: 'Spread',           values: ['From 1.1 pips', 'From 0.0 pips', 'From 0.8 pips', 'From 0.8 pips'] },
-  { label: 'Commission',       values: ['No Commission', 'Ultra-low per lot', 'Lifetime per-lot earnings', 'No swap charges'] },
-  { label: 'Maximum Leverage', values: ['1:1000', '1:1000', '1:1000', '1:1000'] },
+  { label: 'Minimum deposit',   values: ['None', '$100', '$5,000'] },
+  { label: 'Virtual funds',     values: ['$10,000', '—', '—'] },
+  { label: 'Spread',            values: ['Live spreads', 'From 1.1 pips', 'From 0.0 pips'] },
+  { label: 'Commission',        values: ['None', 'None', '$3.5 / lot'] },
+  { label: 'Leverage',          values: ['Up to 1:500', 'Up to 1:500', 'Up to 1:500'] },
+  { label: 'Lot size from',     values: ['0.01', '0.01', '0.01'] },
   {
     label: 'Instruments',
-    values: [0, 1, 2, 3].map((i) => (
+    values: [0, 1, 2].map((i) => (
       <div key={i} className="flex flex-wrap justify-center gap-1.5 max-w-[220px] mx-auto">
         {INSTRUMENTS.map((inst) => (
           <span
@@ -131,15 +134,14 @@ const FEATURE_ROWS: Array<{ label: string; values: React.ReactNode[] }> = [
       </div>
     )),
   },
-  { label: 'Minimum lot size',            values: ['0.01', '0.01', '0.01', '0.01'] },
-  { label: 'Maximum Number of positions', values: ['Unlimited', 'Unlimited', 'Unlimited', 'Unlimited'] },
-  { label: 'Hedged Margin',               values: ['0%', '0%', '0%', '0%'] },
-  { label: 'Margin call',                 values: ['30%', '30%', '30%', '30%'] },
-  { label: 'Stop out',                    values: ['0% (See details about stocks)', '0% (See details about stocks)', '0% (See details about stocks)', '0% (See details about stocks)'] },
-  { label: 'Order execution',             values: ['Instant', 'Instant', 'Instant', 'Instant'] },
-  // Swap is the dedicated swap-free / Sharia-compliant account.
-  { label: 'Swap-Free',                   values: ['Optional', 'Optional', 'Optional', 'Always-on'] },
-  { label: 'Customer Support',            values: ['24/7', '24/7', '24/7', '24/7'] },
+  { label: 'Order types',       values: ['Market, limit, stop, stop-limit', 'Market, limit, stop, stop-limit', 'Market, limit, stop, stop-limit'] },
+  { label: 'Stop-loss / take-profit', values: ['Server-side', 'Server-side', 'Server-side'] },
+  { label: 'Deposits',          values: ['Not available', 'USDT (TRC20, BEP20, ERC20), bank / UPI', 'USDT (TRC20, BEP20, ERC20), bank / UPI'] },
+  { label: 'Withdrawals',       values: ['Not available', 'USDT or bank / UPI', 'USDT or bank / UPI'] },
+  { label: 'Copy trading',      values: ['—', 'Yes', 'Yes'] },
+  { label: 'AI Strategy Builder & Algo API', values: ['Yes', 'Yes', 'Yes'] },
+  { label: 'Support',           values: ['In-app & email', 'In-app & email', 'Priority'] },
+  { label: 'Sign-up',           values: ['One click, no email', 'Register, then open in-app', 'Register, then open in-app'] },
 ];
 
 export default function AccountTypesPage() {
@@ -149,15 +151,15 @@ export default function AccountTypesPage() {
   return (
     <main>
       <PageHero
-        kicker="Platform"
-        title="Platforms and account tiers"
-        lead={`Every platform surface and account tier ${BRAND_NAME} can build into the trading system we deliver under your brand.`}
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'View platforms', href: '/platforms/web' }}
+        kicker="Account types"
+        title="Demo, Standard or Pro"
+        lead="Start on a free $10,000 demo, trade commission-free on Standard, or take tighter spreads with Pro. Same terminal, same execution, one login."
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'Try a free demo', href: '/auth/login' }}
         image={{
-          src: '/images/trading page banner.png',
-          alt: 'PowerTradeFX brand banner',
-          width: 2400,
+          src: '/marketing/screens/accounts.png',
+          alt: `${BRAND_NAME} accounts page showing an active demo account with $10,000 equity`,
+          width: 1600,
           height: 1000,
           priority: true,
         }}
@@ -165,25 +167,23 @@ export default function AccountTypesPage() {
 
       {/* ── Our platforms ─────────────────────────────────────────────── */}
       <Section>
-        <SectionHeading title={`${BRAND_NAME} trading platforms`} />
+        <SectionHeading title="Where you trade" />
         <div
           className="grid grid-cols-1 md:grid-cols-2"
           style={{ gap: 'var(--mk-space-5)', marginTop: 'var(--mk-space-7)' }}
         >
           {PLATFORMS.map((p) => (
             <Link key={p.name} href={p.href} className="mk-card mk-card--hover flex flex-col gap-5">
-              {/* Decorative — the card heading right below names the surface. */}
               <div
                 className="relative w-full overflow-hidden"
-                style={{ aspectRatio: '3 / 2', borderRadius: 'var(--mk-radius)' }}
+                style={{ aspectRatio: '3 / 2', borderRadius: 'var(--mk-radius)', background: 'var(--mk-surface-2)' }}
               >
                 <Image
                   src={p.image}
-                  alt=""
-                  aria-hidden
+                  alt={p.alt}
                   fill
                   sizes="(max-width: 768px) 100vw, 50vw"
-                  className="object-cover"
+                  className={p.portrait ? 'object-contain' : 'object-cover object-top'}
                 />
               </div>
               <div className="flex flex-col gap-2">
@@ -199,18 +199,42 @@ export default function AccountTypesPage() {
         </div>
       </Section>
 
-      {/* An "Account types" band of four cards sat here — Standard / ECN /
-          IB / Swap, each over a 640×480 placeholder box. Removed: the same
-          four accounts are compared row-by-row in the conditions table
-          further down this page, so the cards restated it, and their
-          artwork never landed. The routes they linked to are still reached
-          from the footer's Trading column. */}
+      {/* ── Account cards ─────────────────────────────────────────────── */}
+      <Section raised>
+        <SectionHeading title="Three account types" lead="Every account trades the same 40+ instruments on the same terminal." />
+        <div
+          className="grid grid-cols-1 md:grid-cols-3"
+          style={{ gap: 'var(--mk-space-5)', marginTop: 'var(--mk-space-7)' }}
+        >
+          {[
+            { name: 'Demo',     href: '/accounts/demo',     price: '$10,000 virtual', body: 'One click on the login page. No email, no card. Full terminal on live prices.' },
+            { name: 'Standard', href: '/accounts/standard', price: 'From $100',       body: 'Commission-free, competitive spreads, leverage up to 1:500. The account most traders start on.', featured: true },
+            { name: 'Pro',      href: '/accounts/pro',      price: 'From $5,000',     body: 'Spreads from 0.0 pips with $3.5 per lot, and priority support.' },
+          ].map((a) => (
+            <Link
+              key={a.name}
+              href={a.href}
+              className="mk-card mk-card--hover flex flex-col gap-3"
+              style={a.featured ? { borderColor: 'var(--mk-accent-line)' } : undefined}
+            >
+              <span className="mk-kicker">{a.name}</span>
+              <span className="font-extrabold" style={{ fontSize: 'var(--mk-text-h3)', color: 'var(--mk-text)', lineHeight: 1.15 }}>
+                {a.price}
+              </span>
+              <p className="mk-body" style={{ fontSize: 'var(--mk-text-sm)' }}>{a.body}</p>
+              <span className="mk-link" style={{ marginTop: 'auto' }}>
+                See the {a.name} account
+                <ArrowUpRight size={15} />
+              </span>
+            </Link>
+          ))}
+        </div>
+      </Section>
 
       {/* ── Key features (tabbed) ─────────────────────────────────────── */}
       <Section>
-        <SectionHeading title={`Key features of the ${BRAND_NAME} platform`} />
+        <SectionHeading title={`Key features of the ${BRAND_NAME} terminal`} />
 
-        {/* Tab bar */}
         <div
           className="flex flex-wrap justify-center"
           style={{ gap: 'var(--mk-space-2)', marginTop: 'var(--mk-space-6)' }}
@@ -254,25 +278,23 @@ export default function AccountTypesPage() {
             ))}
           </ul>
           <div
-            className="relative w-full overflow-hidden"
+            className="overflow-hidden"
             style={{
-              aspectRatio: '16 / 9',
               borderRadius: 'var(--mk-radius)',
+              border: '1px solid var(--mk-line)',
               marginTop: 'var(--mk-space-7)',
             }}
           >
-            {/* Decorative — the tab label and bullets above carry the
-                meaning, so alt stays empty. `key` forces a fresh <img>
-                per tab so switching tabs cannot show the previous
-                image while the next one decodes. */}
+            {/* `key` forces a fresh <img> per tab so switching tabs cannot
+                show the previous image while the next one decodes. */}
             <Image
               key={active.image}
               src={active.image}
-              alt=""
-              aria-hidden
-              fill
+              alt={active.alt}
+              width={1600}
+              height={1000}
               sizes="(max-width: 1200px) 100vw, 1140px"
-              className="object-cover"
+              className="block h-auto w-full"
             />
           </div>
         </div>
@@ -282,28 +304,24 @@ export default function AccountTypesPage() {
       <Section raised>
         <SectionHeading
           title="Trading conditions"
-          lead="Spreads, leverage and execution — the terms your desk configures for every position a client opens."
+          lead="Spreads, leverage and execution — the terms behind every position you open."
         />
         <div
           className="grid grid-cols-1 items-start lg:grid-cols-2"
           style={{ gap: 'var(--mk-space-8)', marginTop: 'var(--mk-space-7)' }}
         >
           <FaqAccordion items={CONDITIONS} />
-          {/* Artwork replaces the reserved box. The source is 1448×1086 —
-              4:3, the exact ratio the slot was built at — so the accordion
-              beside it keeps its alignment. Decorative: the accordion
-              carries the actual conditions. */}
           <div
-            className="relative w-full overflow-hidden"
-            style={{ aspectRatio: '4 / 3', borderRadius: 'var(--mk-radius)' }}
+            className="overflow-hidden"
+            style={{ borderRadius: 'var(--mk-radius)', border: '1px solid var(--mk-line)' }}
           >
             <Image
-              src="/images/condition.png"
-              alt=""
-              aria-hidden
-              fill
+              src="/marketing/screens/dashboard-light.png"
+              alt={`${BRAND_NAME} dashboard, light theme`}
+              width={1600}
+              height={1000}
               sizes="(max-width: 1024px) 100vw, 50vw"
-              className="object-cover"
+              className="block h-auto w-full"
             />
           </div>
         </div>
@@ -311,9 +329,9 @@ export default function AccountTypesPage() {
 
       {/* ── Full specification table ──────────────────────────────────── */}
       <Section id="comparison" raised>
-        <SectionHeading kicker="Specifications" title="Feature comparison" />
+        <SectionHeading kicker="Specifications" title="Account comparison" />
         <div className="overflow-x-auto" style={{ marginTop: 'var(--mk-space-7)' }}>
-          <table className="w-full min-w-[760px] border-collapse text-center">
+          <table className="w-full min-w-[720px] border-collapse text-center">
             <thead>
               <tr>
                 <th
@@ -377,11 +395,15 @@ export default function AccountTypesPage() {
             </tbody>
           </table>
         </div>
+        <div className="flex flex-wrap justify-center gap-3" style={{ marginTop: 'var(--mk-space-6)' }}>
+          <Link href="/auth/register" className="mk-btn mk-btn--primary">Open account</Link>
+          <Link href="/auth/login" className="mk-btn mk-btn--ghost">Try a free demo</Link>
+        </div>
       </Section>
 
       {/* ── FAQs ──────────────────────────────────────────────────────── */}
       <Section>
-        <SectionHeading title="Platform FAQs" />
+        <SectionHeading title="Account FAQs" />
         <div className="mx-auto" style={{ maxWidth: 820, marginTop: 'var(--mk-space-7)' }}>
           <FaqAccordion items={TRADING_FAQ} />
         </div>
@@ -407,11 +429,20 @@ export default function AccountTypesPage() {
         </div>
       </Section>
 
+      <Section className="mk-section--tight">
+        <p
+          className="mk-body mx-auto text-center"
+          style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)', maxWidth: '70ch' }}
+        >
+          <strong>Risk warning:</strong> {RISK_LINE}
+        </p>
+      </Section>
+
       <CtaBanner
-        title="Your brand, our engine"
-        lead={`Every ${BRAND_NAME} account tier runs on the same platform and the same execution — configure the conditions that suit your business.`}
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'View platforms', href: '/platforms/web' }}
+        title="Same terminal, your choice of account"
+        lead="Open a live account in minutes, or start on a $10,000 demo with one click."
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'Try a free demo', href: '/auth/login' }}
       />
     </main>
   );

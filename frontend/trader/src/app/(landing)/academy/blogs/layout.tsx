@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import { BRAND_NAME } from '@/lib/brand';
 
 export const metadata: Metadata = {
-  title: `${BRAND_NAME} Academy — Trading Blog & Market Insights`,
-  description: `Market insights, strategy breakdowns, and platform tips from the ${BRAND_NAME} trading desk. Updated weekly.`,
+  title: `Trader Guides | ${BRAND_NAME}`,
+  description: `Short guides on using the ${BRAND_NAME} platform and on the basics — limit orders, margin and leverage, funding with USDT, copy trading, the AI strategy builder and the Algo Connector.`,
 };
 
 export default function Layout({ children }: { children: React.ReactNode }) {

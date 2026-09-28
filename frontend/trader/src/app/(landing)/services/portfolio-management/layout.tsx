@@ -2,9 +2,9 @@ import type { Metadata } from 'next';
 import { BRAND_NAME } from '@/lib/brand';
 
 export const metadata: Metadata = {
-  title: `Portfolio Management — MAM & PAMM | ${BRAND_NAME}`,
+  title: `PAMM — Managed Accounts | ${BRAND_NAME}`,
   description:
-    'Expert-managed portfolios with MAM (Multi-Account Manager) or PAMM (Percentage Allocation) models. Verified managers, transparent fees, daily reporting.',
+    `Invest with approved PAMM managers sorted by ROI, or apply to manage a pooled account. Performance-fee based, run from inside your ${BRAND_NAME} account.`,
 };
 
 export default function Layout({ children }: { children: React.ReactNode }) {

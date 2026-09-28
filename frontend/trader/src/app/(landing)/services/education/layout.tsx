@@ -2,9 +2,9 @@ import type { Metadata } from 'next';
 import { BRAND_NAME } from '@/lib/brand';
 
 export const metadata: Metadata = {
-  title: `Educational Resources | Trading Academy | ${BRAND_NAME}`,
+  title: `Learn to Trade | Guides & Tutorials | ${BRAND_NAME}`,
   description:
-    'Learn to trade — beginner to advanced. Video courses, written guides, live webinars, and a structured curriculum across forex majors, minors and exotics.',
+    `Free guides and tutorials on using the ${BRAND_NAME} platform and on the basics — orders, margin and leverage, funding, copy trading and automation. Practise on a free demo.`,
 };
 
 export default function Layout({ children }: { children: React.ReactNode }) {

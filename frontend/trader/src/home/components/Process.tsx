@@ -4,31 +4,26 @@ import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { ArrowUpRight } from 'lucide-react';
 import { Section, SectionHeading } from '@/marketing/components';
-import { SIGNUP_HREF } from '../data';
-import { BRAND_NAME } from '@/lib/brand';
+import { HOW_IT_WORKS, SIGNUP_HREF } from '../data';
 
-/* Three steps only — the account tiers / "choose your plan" step was
-   dropped with the pricing section the client asked us to remove. */
-const STEPS = [
-  { n: 1, title: 'Open an Account', body: 'Register and complete verification to activate live trading.' },
-  { n: 2, title: 'Fund',            body: 'Deposit by bank transfer, card, e-wallet or crypto.' },
-  { n: 3, title: 'Trade',           body: `Trade major, minor and exotic currency pairs from your ${BRAND_NAME} account.` },
-];
-
+/**
+ * Three-step "how it works" band. Steps come from HOW_IT_WORKS so this,
+ * the JoinPanel and the /how-it-works page cannot drift apart.
+ */
 export function Process() {
   return (
     <Section id="process">
       <SectionHeading
-        kicker="How It Works"
-        title="From first call to live platform"
-        lead="From registration to your first live position on the currency markets."
+        kicker="How it works"
+        title="Three steps to your first trade"
+        lead="Register, verify and fund, then trade 40+ instruments from the web terminal."
       />
 
       <div
         className="grid grid-cols-1 md:grid-cols-3"
         style={{ gap: 'var(--mk-space-5)', marginTop: 'var(--mk-space-7)' }}
       >
-        {STEPS.map((step, i) => (
+        {HOW_IT_WORKS.map((step, i) => (
           <motion.article
             key={step.n}
             initial={{ opacity: 0, y: 16 }}
@@ -48,7 +43,7 @@ export function Process() {
               }}
               aria-hidden
             >
-              {String(step.n).padStart(2, '0')}
+              {step.n.padStart(2, '0')}
             </span>
             <h3 className="mk-h3">{step.title}</h3>
             <p className="mk-body">{step.body}</p>
@@ -61,11 +56,11 @@ export function Process() {
         style={{ gap: 'var(--mk-space-3)', marginTop: 'var(--mk-space-7)' }}
       >
         <Link href={SIGNUP_HREF} className="mk-btn mk-btn--primary">
-          Book a Demo
+          Open account
           <ArrowUpRight size={16} />
         </Link>
         <Link href="/markets" className="mk-btn mk-btn--ghost">
-          Explore Markets
+          Explore markets
         </Link>
       </div>
     </Section>

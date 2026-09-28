@@ -1,116 +1,88 @@
 'use client';
 
-import { useState } from 'react';
+import Link from 'next/link';
 import { Gem, ShieldCheck, Layers, Users, Lock, Bell, Sparkles } from 'lucide-react';
 import { Section, SectionHeading, PageHero, FeatureGrid, CtaBanner } from '@/marketing/components';
 import { BRAND_NAME } from '@/lib/brand';
 
 /**
- * Services → ICO (coming soon). Restyled onto the shared marketing design
- * system. The early-access notify form keeps its original local-state
- * behaviour; all copy is carried over unchanged.
+ * Services → Token launches (coming soon).
+ *
+ * Not a live feature. The page describes the intended trader benefit,
+ * clearly marked as upcoming, and sends the waitlist to the contact
+ * page. The old on-page notify form was removed: it stored nothing, so
+ * "you're on the list" was not true.
  */
 
+const RISK_LINE =
+  'Trading leveraged products such as forex and CFDs carries a high level of risk and may not be suitable for all investors. You could lose more than your initial deposit.';
+
+const WAITLIST_HREF = '/company/contact';
+
 export default function IcoComingSoonPage() {
-  const [email, setEmail] = useState('');
-  const [submitted, setSubmitted] = useState(false);
-
-  const onSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email) return;
-    setSubmitted(true);
-  };
-
   return (
     <main>
       <PageHero
-        kicker="Coming Soon"
-        title={<>Token Launch &amp; ICO <span style={{ color: 'var(--mk-accent)' }}>Tooling</span></>}
-        lead={`A launchpad module for running vetted token sales on your platform — due-diligence workflow, multi-stage rounds, vesting, and on-chain claims. Coming soon — join the ${BRAND_NAME} early-access list to hear the moment it ships.`}
+        kicker="Coming soon"
+        title={<>Token launches <span style={{ color: 'var(--mk-accent)' }}>from your account</span></>}
+        lead={`We are building early access to vetted token sales for ${BRAND_NAME} account holders. It is not live yet. Join the waitlist and we will email you when it opens.`}
       >
-        {/* Notify form */}
-        <form onSubmit={onSubmit} className="w-full max-w-xl mt-4">
-          {submitted ? (
-            <div
-              className="font-bold"
-              style={{
-                background: 'var(--mk-surface)',
-                border: '1px solid var(--mk-accent-line)',
-                borderRadius: 'var(--mk-radius-pill)',
-                padding: '0.85rem 1.25rem',
-                fontSize: 'var(--mk-text-sm)',
-                color: 'var(--mk-accent)',
-              }}
-            >
-              You&apos;re on the list. We&apos;ll email{' '}
-              <span style={{ color: 'var(--mk-text)' }}>{email}</span> at launch.
-            </div>
-          ) : (
-            <div
-              className="flex items-center gap-2"
-              style={{
-                background: 'var(--mk-surface)',
-                border: '1px solid var(--mk-line)',
-                borderRadius: 'var(--mk-radius-pill)',
-                padding: '0.35rem',
-              }}
-            >
-              <input
-                type="email"
-                required
-                placeholder="you@email.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="flex-1 min-w-0 bg-transparent px-4 py-2 outline-none"
-                style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text)' }}
-                aria-label="Email address for ICO launch notification"
-              />
-              <button type="submit" className="mk-btn mk-btn--primary shrink-0">
-                Notify Me <Bell size={16} />
-              </button>
-            </div>
-          )}
-          <p className="mt-3" style={{ fontSize: 'var(--mk-text-xs)', color: 'var(--mk-text-faint)' }}>
-            No spam. One email at launch. You can unsubscribe with one click.
-          </p>
-        </form>
+        <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+          <Link href={WAITLIST_HREF} className="mk-btn mk-btn--primary mk-btn--lg">
+            Join the waitlist <Bell size={16} />
+          </Link>
+          <Link href="/auth/register" className="mk-btn mk-btn--ghost mk-btn--lg">
+            Open account
+          </Link>
+        </div>
+        <p className="mt-2" style={{ fontSize: 'var(--mk-text-xs)', color: 'var(--mk-text-faint)' }}>
+          Pick &quot;Something else&quot; on the contact form and mention token launches. One email when it opens.
+        </p>
       </PageHero>
 
-      {/* Countdown / target */}
+      {/* What is planned */}
       <Section raised>
-        <SectionHeading kicker="Launch" title="Coming Soon" />
+        <SectionHeading
+          kicker="Planned"
+          title="What we are building"
+          lead="Everything below is the intent, not a live feature. Details may change before launch."
+        />
         <FeatureGrid
           className="mt-12"
           columns={3}
           items={[
-            { icon: ShieldCheck, title: 'Built-In Due Diligence', body: 'A structured review workflow — team, tokenomics, audit, treasury, market fit, and legal — before a project can be listed.' },
-            { icon: Layers,      title: 'Multi-Stage Rounds',  body: 'Configure seed, private, and public tranches with transparent pricing and vesting schedules.' },
-            { icon: Lock,        title: 'On-Chain Claims',     body: 'Allocations settle straight to investor wallets, on-chain.' },
+            { icon: ShieldCheck, title: 'Vetted projects only',  body: 'A review of team, tokenomics, audit and legal standing before a sale is listed. Quality over quantity.' },
+            { icon: Layers,      title: 'Clear rounds and pricing', body: 'Each sale shows its stage, price and vesting schedule before you commit anything.' },
+            { icon: Lock,        title: 'Allocations you can see', body: 'Your allocation, its vesting and its unlock dates, visible from your account.' },
           ]}
         />
       </Section>
 
       {/* What to expect */}
       <Section>
-        <SectionHeading kicker="Roadmap" title="What to Expect at Launch" />
+        <SectionHeading kicker="At launch" title="What to expect when it opens" />
         <FeatureGrid
           className="mt-12"
           columns={3}
           items={[
-            { icon: Sparkles,    title: 'Curated Launchpad',    body: 'Quality over quantity — the module is built for a handful of vetted projects, not a daily firehose.' },
-            { icon: Users,       title: 'Loyalty-Based Tiers',  body: 'Reward your most active clients with priority access and higher allocation caps, tied to the loyalty rules you set.' },
-            { icon: Gem,         title: 'Strategic-Round Pricing', body: 'Offer strategic-round pricing to selected clients — below public-sale rates, with vesting to align incentives.' },
-            { icon: ShieldCheck, title: 'Audit Requirements',   body: 'Enforce listing rules — a clean contract audit and a published bug-bounty programme — before a project goes live.' },
-            { icon: Lock,        title: 'Vesting Transparency', body: 'Vesting schedules are published on-chain, so every team and investor unlock is visible before anyone commits.' },
-            { icon: Layers,      title: 'Secondary Liquidity',  body: 'Tokens settle to investor wallets — tradable on any DEX from the moment vesting unlocks.' },
+            { icon: Sparkles,    title: 'A short list',            body: 'A handful of reviewed sales, not a daily firehose.' },
+            { icon: Users,       title: 'Account holders first',   body: 'Access from an existing, KYC-verified account — the same login you trade with.' },
+            { icon: Gem,         title: 'Terms up front',          body: 'Price, vesting and unlock schedule published before the sale opens.' },
+            { icon: ShieldCheck, title: 'Audit requirements',      body: 'A contract audit as a listing condition.' },
+            { icon: Lock,        title: 'Vesting transparency',    body: 'Team and investor unlocks visible before anyone commits.' },
+            { icon: Layers,      title: 'Funded from your wallet', body: 'Participate with the balance you already hold — no separate sign-up.' },
           ]}
         />
+        <p className="mk-meta mx-auto text-center" style={{ marginTop: 'var(--mk-space-8)', maxWidth: '72ch' }}>
+          Token sales carry their own risks, including total loss. {RISK_LINE}
+        </p>
       </Section>
 
       <CtaBanner
-        title="Be First in Line"
-        lead={`Book a demo to see the ${BRAND_NAME} launchpad roadmap and how token-sale tooling will fit into your platform.`}
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
+        title="Be first to hear"
+        lead="Join the waitlist through the contact page, or open an account now so you are verified when it opens."
+        primary={{ label: 'Join the waitlist', href: WAITLIST_HREF }}
+        secondary={{ label: 'Open account', href: '/auth/register' }}
       />
     </main>
   );

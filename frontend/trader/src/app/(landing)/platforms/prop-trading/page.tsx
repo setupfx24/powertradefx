@@ -1,87 +1,84 @@
-'use client';
-
-import { Bell, ShieldCheck, Target, TrendingUp, Award, Layers } from 'lucide-react';
+import type { Metadata } from 'next';
+import { Target, ShieldCheck, TrendingUp, Bell } from 'lucide-react';
 import { Section, SectionHeading, PageHero, FeatureGrid, CtaBanner } from '@/marketing/components';
 import { BRAND_NAME } from '@/lib/brand';
 
 /**
- * Platforms → Prop Trading (coming soon). Restyled onto the shared
- * marketing design system. The early-access form keeps its original
- * submit behaviour and every line of copy is carried over.
+ * Platforms → Prop Trading. NOT a live feature. This page says so plainly,
+ * sketches the intended trader benefit as upcoming, and sends interested
+ * traders to the contact page to join the waitlist. The old fake
+ * "Notify me" form (it only raised an alert) is gone.
  */
+
+export const metadata: Metadata = {
+  title: `Prop Trading — Coming Soon | ${BRAND_NAME}`,
+  description: `Funded trading accounts on ${BRAND_NAME} are in development. Join the waitlist to hear when they launch.`,
+};
+
+const RISK_LINE =
+  'Trading leveraged products such as forex and CFDs carries a high level of risk and may not be suitable for all investors. You could lose more than your initial deposit.';
 
 export default function PropTradingPage() {
   return (
     <main>
       <PageHero
-        kicker="Coming Soon"
-        title={<>Prop Trading <span style={{ color: 'var(--mk-accent)' }}>Module</span></>}
-        lead={
-          <>
-            Run funded-trader challenges under your brand. Our prop-trading module handles
-            evaluations, risk rules, profit splits, and scaling. The {BRAND_NAME} Prop module is
-            launching in{' '}
-            <span style={{ color: 'var(--mk-accent)', fontWeight: 700 }}>Q3 2026</span>. Join the
-            early-access list to be the first to add it to your platform.
-          </>
-        }
-      >
-        <form
-          className="w-full max-w-xl mt-4"
-          onSubmit={(e) => { e.preventDefault(); alert('You are on the early-access list.'); }}
-        >
-          <div
-            className="flex items-center gap-2"
-            style={{
-              background: 'var(--mk-surface)',
-              border: '1px solid var(--mk-line)',
-              borderRadius: 'var(--mk-radius-pill)',
-              padding: '0.35rem',
-            }}
-          >
-            <input
-              type="email"
-              required
-              placeholder="you@email.com"
-              aria-label="Email address for Prop Program launch notification"
-              className="flex-1 min-w-0 bg-transparent px-4 py-2 outline-none"
-              style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text)' }}
-            />
-            <button type="submit" className="mk-btn mk-btn--primary shrink-0">
-              Notify Me <Bell size={16} />
-            </button>
-          </div>
-          <p className="mt-3" style={{ fontSize: 'var(--mk-text-xs)', color: 'var(--mk-text-faint)' }}>
-            One email at launch. Unsubscribe in one click.
-          </p>
-        </form>
-      </PageHero>
+        kicker="Coming soon"
+        title={<>Prop Trading <span style={{ color: 'var(--mk-accent)' }}>— Coming soon</span></>}
+        lead={`Funded trading accounts are not available on ${BRAND_NAME} yet. We are building them. If you would like to trade our capital once they launch, join the waitlist and we will email you when it opens.`}
+        primary={{ label: 'Join the waitlist', href: '/company/contact' }}
+        secondary={{ label: 'Trade a live account today', href: '/auth/register' }}
+      />
 
-      {/* What to expect */}
       <Section raised>
         <SectionHeading
-          kicker="At Launch"
-          title="What the Module Delivers"
-          lead="A modern evaluation engine, configurable rules, and flexible profit splits you control."
+          kicker="What we are building"
+          title="What to expect at launch"
+          lead="Plans, not promises. Details below are the intended design and may change before release."
         />
         <FeatureGrid
           className="mt-12"
           columns={3}
           items={[
-            { icon: Target,      title: 'Configurable Profit Targets', body: 'Set achievable profit targets without aggressive deadlines or hidden disqualification rules.' },
-            { icon: ShieldCheck, title: 'Transparent Risk Rules',    body: 'Clear daily and total drawdown limits — every rule visible on the trader dashboard at all times.' },
-            { icon: TrendingUp,  title: 'Flexible Profit Splits',    body: 'Set the profit split traders keep on funded accounts, with automated payout scheduling.' },
-            { icon: Award,       title: 'Scaling Plans',             body: 'Built-in scaling lets consistent traders grow their funded capital on the terms you define.' },
-            { icon: Layers,      title: 'Optional Evaluation Clocks', body: 'Offer funded traders no time limits, or set your own — the rules are yours to configure.' },
-            { icon: Bell,        title: 'Early Access',              body: 'Operators on the launch list get first access to the module and preferred onboarding terms.' },
+            { icon: Target,      title: 'An evaluation you can pass', body: 'Upcoming: a profit target and clear drawdown limits, shown on your dashboard the whole time.' },
+            { icon: ShieldCheck, title: 'Rules in plain sight',       body: 'Upcoming: daily and total loss limits visible in the terminal, with the same server-side execution as every other account.' },
+            { icon: TrendingUp,  title: 'A share of the profit',      body: 'Upcoming: keep an agreed share of what you make on a funded account, paid to your wallet.' },
           ]}
         />
       </Section>
 
+      <Section>
+        <div className="mk-card flex flex-col md:flex-row items-start md:items-center gap-5">
+          <span
+            className="inline-flex h-12 w-12 items-center justify-center rounded-xl shrink-0"
+            style={{ background: 'var(--mk-accent-soft)', color: 'var(--mk-accent)' }}
+          >
+            <Bell size={22} />
+          </span>
+          <div className="flex-1 flex flex-col gap-1">
+            <h3 className="mk-h3">Want to hear first?</h3>
+            <p className="mk-body" style={{ fontSize: 'var(--mk-text-sm)' }}>
+              Send us a message with the subject “Prop trading waitlist”. One email when it
+              launches, nothing else. In the meantime the full terminal is open on a $10,000
+              demo.
+            </p>
+          </div>
+        </div>
+      </Section>
+
+      <Section className="mk-section--tight">
+        <p
+          className="mk-body mx-auto text-center"
+          style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)', maxWidth: '70ch' }}
+        >
+          <strong>Risk warning:</strong> {RISK_LINE}
+        </p>
+      </Section>
+
       <CtaBanner
-        title="Be First in Line"
-        lead={`Join the early-access list and be first to add a white-label prop-trading module to your ${BRAND_NAME} platform when it goes live.`}
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
+        title="Join the waitlist"
+        lead="Tell us you are interested and we will let you know when funded accounts go live."
+        primary={{ label: 'Join the waitlist', href: '/company/contact' }}
+        secondary={{ label: 'Try a free demo', href: '/auth/login' }}
       />
     </main>
   );

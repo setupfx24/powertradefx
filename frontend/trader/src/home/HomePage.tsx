@@ -18,14 +18,14 @@ import { CtaFooter } from './components/CtaFooter';
  *
  * Section order follows the reference layout (2026-09-02):
  *
- *   1. Hero            headline, CTA pair, reserved product shot
+ *   1. Hero            headline, CTA pair, terminal screenshot, trust pills
  *   2. Ticker          live market strip (rendered inside <Hero />)
- *   3. MarketsGrid     3×2 market tiles + CTA pair
- *   4. Rewards         two image-led offer cards + CTA pair
- *   5. PlatformShowcase  screenshot left, ticked capability list right
- *   6. Stats           tinted rounded trust panel
- *   7. TraderPaths     "everything you need", split by audience
- *   8. JoinPanel       numbered signup steps + portrait image
+ *   3. MarketsGrid     four market tiles (forex, metals, indices & energy, crypto)
+ *   4. Rewards         copy trading + IB programme cards + CTA pair
+ *   5. PlatformShowcase  terminal screenshot left, ticked capability list right
+ *   6. Stats           tinted rounded platform-facts panel
+ *   7. TraderPaths     "everything you need", split traders / partners
+ *   8. JoinPanel       numbered signup steps + phone dashboard shot
  *   9. CtaFooter       closing CTA band + black footer
  *
  * `Pourquoi` (why-choose-us) and `Faq` have no counterpart in the

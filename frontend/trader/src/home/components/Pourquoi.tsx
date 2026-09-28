@@ -14,6 +14,8 @@ import {
   ShieldCheck,
   ShieldPlus,
   TrendingDown,
+  Users,
+  Wallet,
   Zap,
   type LucideIcon,
 } from 'lucide-react';
@@ -23,7 +25,7 @@ import { BRAND_NAME } from '@/lib/brand';
 
 const iconMap: Record<string, LucideIcon> = {
   ShieldCheck, ShieldPlus, Zap, TrendingDown, Headphones, Network, Gift, Lock, Brain, Gauge,
-  BadgeCheck, Cpu, MonitorSmartphone, Briefcase,
+  BadgeCheck, Cpu, MonitorSmartphone, Briefcase, Users, Wallet,
 };
 
 const items: FeatureItem[] = WHY_US.map(({ icon, title, body }) => ({
@@ -36,9 +38,9 @@ export function Pourquoi() {
   return (
     <Section id="why-choose" raised>
       <SectionHeading
-        kicker={`Why Choose ${BRAND_NAME}`}
-        title="Why brokers and prop firms build with us"
-        lead="In-house engineering, fast delivery and a platform branded entirely as yours -- the things that matter when you launch a trading business."
+        kicker={`Why choose ${BRAND_NAME}`}
+        title="Why traders choose us"
+        lead="Flexible leverage, an instant demo, orders that keep working after you close the browser, and funding by crypto or local banking -- the things that matter day to day."
       />
       <div style={{ marginTop: 'var(--mk-space-7)' }}>
         <FeatureGrid items={items} columns={3} />

@@ -9,9 +9,8 @@ import {
   CTA,
   COPYRIGHT,
   BRAND,
-  FOOTER_EXPLORE,
-  FOOTER_PLATFORM,
-  FOOTER_COMPANY,
+  FOOTER_COLUMNS,
+  FOOTER_LEGAL,
   RISK_DISCLAIMER,
 } from '../data';
 import { BRAND_DOMAIN, BRAND_SUPPORT_EMAIL } from '@/lib/brand';
@@ -19,14 +18,9 @@ import { BRAND_DOMAIN, BRAND_SUPPORT_EMAIL } from '@/lib/brand';
 /**
  * Closing CTA + site footer.
  *
- * 2026-09-01 redesign. Previously one `min-h-screen` section painted with a
- * black radial gradient and a translucent overlay: on the light canvas that
- * resolved to a full-viewport grey void with the footer floating inside it.
- * Split into the two bands the reference actually uses —
- *   1. a light CTA band, and
- *   2. a true black footer —
- * with the viewport-height minimum dropped so the section is only as tall
- * as its content. Copy, links and ordering are unchanged.
+ * Two bands: a light CTA band, then a true black footer with four link
+ * columns (derived from NAV_ITEMS so they cannot drift from the header),
+ * the legal links and the risk warning.
  */
 export function CtaFooter() {
   return (
@@ -67,16 +61,12 @@ export function CtaFooter() {
                 <ArrowUpRight className="ml-1 size-4" />
               </Link>
             </Button>
+            <Button variant="heroGlass" asChild>
+              <Link href={CTA.secondaryHref}>{CTA.secondary}</Link>
+            </Button>
           </motion.div>
         </div>
       </div>
-
-      {/* An App Store / Play Store badge row and a "Trusted By" partner
-          marquee used to sit here. Both were carried over from the site
-          this was cloned from: the store badges linked to "#" because no
-          native app exists (see /download), and the partner logos were
-          that site's marks, since deleted from public/images. Neither had
-          any Bullza artwork to fall back on, so both are gone. */}
 
       {/* ── Footer ──────────────────────────────────────────────────── */}
       {/* Black band. `.text-foreground` resolves to ink inside .brand-home,
@@ -87,10 +77,10 @@ export function CtaFooter() {
           className="mx-auto max-w-[1320px] pb-10 pt-16"
           style={{ paddingLeft: 'var(--gutter)', paddingRight: 'var(--gutter)' }}
         >
-          {/* Tablet: brand takes a full row above the three link columns.
-              Desktop: brand sits beside them, 2 + 1 + 1 + 1. */}
-          <div className="mb-12 grid grid-cols-1 gap-10 md:grid-cols-3 md:gap-8 lg:grid-cols-5">
-            <div className="flex flex-col gap-4 md:col-span-3 lg:col-span-2">
+          {/* Tablet: brand takes a full row above the link columns.
+              Desktop: brand sits beside them, 2 + 1 + 1 + 1 + 1. */}
+          <div className="mb-12 grid grid-cols-2 gap-10 md:grid-cols-4 md:gap-8 lg:grid-cols-6">
+            <div className="col-span-2 flex flex-col gap-4 md:col-span-4 lg:col-span-2">
               <Link href="/" className="flex items-center gap-2">
                 {BRAND.logoLight ? (
                   <img src={BRAND.logoLight} alt={BRAND.name} className="h-9 w-auto object-contain" />
@@ -100,12 +90,9 @@ export function CtaFooter() {
                   </span>
                 )}
               </Link>
-              {/* One line, not the two paragraphs that used to sit here.
-                  A footer blurb is a signature, not an About page — the
-                  detail it repeated already lives on /company/about. */}
               <p className="max-w-xs font-body text-sm leading-relaxed text-white/60">
-                A software development company building white-label trading
-                platforms, back offices and risk engines for brokers and prop firms.
+                {BRAND.tagline} 40+ instruments, leverage up to 1:500, an
+                instant demo and a web terminal that works on any device.
               </p>
               <div className="mt-2 flex items-center gap-3">
                 {[
@@ -128,13 +115,8 @@ export function CtaFooter() {
               </div>
             </div>
 
-            {/* Three columns of four. The first is NAV_ITEMS itself, so
-                the footer opens with exactly what the header offers. */}
-            {[
-              { title: 'Explore',  links: FOOTER_EXPLORE },
-              { title: 'Platform', links: FOOTER_PLATFORM },
-              { title: 'Company',  links: FOOTER_COMPANY },
-            ].map(({ title, links }) => (
+            {/* Four columns, derived from the header's NAV_ITEMS. */}
+            {FOOTER_COLUMNS.map(({ title, links }) => (
               <div key={title} className="flex flex-col gap-3">
                 <span className="mb-1 font-body text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">
                   {title}
@@ -152,43 +134,29 @@ export function CtaFooter() {
             ))}
           </div>
 
-          {/* Legal / policy links. Demoted to fine print: six of them in
-              body size read as a second navigation column, which is what
-              made this band look busy. */}
+          {/* Legal / policy links, as fine print. */}
           <nav
             aria-label="Legal documents"
             className="flex flex-wrap gap-x-6 gap-y-2 border-t border-white/12 pt-8"
           >
-            {[
-              { name: 'Privacy Policy',     href: '/privacy' },
-              { name: 'Terms of Service',   href: '/terms' },
-              { name: 'Disclaimer',         href: '/risk' },
-            ].map((doc) => (
-              <a
-                key={doc.name}
+            {FOOTER_LEGAL.map((doc) => (
+              <Link
+                key={doc.href}
                 href={doc.href}
-                target="_blank"
-                rel="noopener noreferrer"
                 className="font-body text-xs text-white/45 transition-colors hover:text-white/80 hover:underline"
               >
-                {doc.name}
-              </a>
+                {doc.label}
+              </Link>
             ))}
           </nav>
 
           <div className="mt-6 flex flex-col gap-4 border-t border-white/12 pt-8">
-            {/* Contact used to be a fourth grid column carrying an email,
-                a three-line address and "24/7 Available". It is reference
-                detail, not navigation — the Contact page in the Company
-                column is the route for reaching us — so it sits here as
-                one line instead. */}
             <div className="flex flex-col items-start justify-between gap-3 md:flex-row md:items-center">
               <span className="max-w-2xl font-body text-xs text-white/50">{COPYRIGHT}</span>
               <span className="font-body text-xs text-white/50">
                 <a href={`mailto:${BRAND_SUPPORT_EMAIL}`} className="transition-colors hover:text-white/80">
                   {BRAND_SUPPORT_EMAIL}
                 </a>
-                {' · '}Software for trading businesses
               </span>
             </div>
             <p className="max-w-4xl font-body text-[11px] leading-relaxed text-white/40">

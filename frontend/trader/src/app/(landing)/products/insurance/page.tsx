@@ -1,205 +1,70 @@
 'use client';
 
 /**
- * Trade Insurance — public marketing surface, restyled onto the shared
- * marketing design system.
- *
- * The IB Account Tiers grid that briefly lived here has been moved to
- * the IB referral page (/products/ib-referral) where it belongs. This
- * page pitches Insurance: hero, value props, the two coverage
- * tiers (50% Standard / 70% Premium promo — both share the same bullet
- * list, only the cover % and promo flag differ), and a CTA. Exact
- * premiums/caps are still confirmed on the order ticket at activation.
+ * Trade Insurance — coming soon. Not a live feature: this page describes
+ * the intended benefit, clearly marked as upcoming, and collects
+ * interest through the contact page. No pricing, tiers or promos.
  */
-import Link from 'next/link';
-import { ShieldCheck, Zap, Lock, ScrollText, Check } from 'lucide-react';
+import { ShieldCheck, Zap, ScrollText } from 'lucide-react';
 import { Section, SectionHeading, PageHero, FeatureGrid, CtaBanner } from '@/marketing/components';
 import { BRAND_NAME } from '@/lib/brand';
-
-// Two coverage tiers shown on the order ticket. Per the client, both cards
-// carry the SAME bullet list — only the headline cover % and the promo flag
-// differ between Standard (50%) and Premium (70%).
-const COVER_BULLETS = [
-  'Higher policy caps for verified accounts',
-  'Same one-click activation, no paperwork',
-  'Cover applies from the very first covered trade',
-];
-const COVER_TIERS = [
-  {
-    pct: '50%',
-    label: 'Standard Cover',
-    sub: 'From 2% of trade size',
-    promo: false,
-    bullets: ['Refunds up to 50% of any covered losing trade', ...COVER_BULLETS],
-  },
-  {
-    pct: '70%',
-    label: 'Premium Cover (Promo)',
-    sub: 'Limited-time offer',
-    promo: true,
-    bullets: ['Refunds up to 70% of any covered losing trade', ...COVER_BULLETS],
-  },
-];
-
-/** Gold flag reserved for the limited promo tier — carried over from the
- *  previous design so the promo card keeps reading as the promo card. */
-const PROMO_TONE = '#e8b923';
 
 export default function InsurancePage() {
   return (
     <main>
       <PageHero
-        kicker="Trade Insurance"
-        title={<>Give clients <span style={{ color: 'var(--mk-accent)' }}>loss protection</span>.</>}
-        lead="A trade-insurance module the platform ships with — your clients can activate cover on the order ticket, and when a covered trade closes at a loss within the policy terms, an approved claim is credited back to their account as tradable funds. On-chain, transparent, and configurable by you."
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'See Coverage Tiers', href: '#coverage' }}
+        kicker="Coming soon"
+        title={<>Trade Insurance <span style={{ color: 'var(--mk-accent)' }}>is on its way</span>.</>}
+        lead={`We are building optional loss cover for individual trades on ${BRAND_NAME}. It is not available yet. Join the waitlist and we will tell you when it goes live.`}
+        primary={{ label: 'Join the waitlist', href: '/company/contact' }}
+        secondary={{ label: 'Open account', href: '/auth/register' }}
       />
 
-      {/* Hero banner. The previous image came from the cloned site and was
-          deleted with its other assets; this reserves the same footprint
-          until PowerTradeFX artwork replaces it. */}
-      <Section>
-        <div className="mk-media mk-media--ratio-21x9">
-          Trade insurance — 2560×1100
-        </div>
-      </Section>
-
-      {/* Features */}
       <Section raised>
-        <SectionHeading kicker="How It Works" title="Cover that lives on the order ticket" />
+        <SectionHeading
+          kicker="What we are building"
+          title="Cover you switch on per trade"
+          lead="The plan, in outline. Terms, cover levels and any cost will be published before launch and shown on the order ticket before you opt in."
+        />
         <FeatureGrid
           className="mt-12"
-          columns={4}
+          columns={3}
           items={[
             {
-              icon: ShieldCheck,
-              title: 'On-Chain Policy Backing',
-              body: 'Every covered position is backed by an on-chain insurance contract. Eligible losses are claimable — once approved, the payout is credited to the client account as tradable funds.',
-            },
-            {
               icon: Zap,
-              title: 'One-Click Activation',
-              body: 'Traders toggle Insurance on the order ticket as they place a trade. Premium is deducted at fill and cover is live the same second.',
+              title: 'Planned: one toggle on the ticket',
+              body: 'Choose cover as you place a trade. No forms, no separate product to set up.',
             },
             {
-              icon: Lock,
-              title: 'Claimable Tradable Credit',
-              body: 'When a covered trade closes at a loss within the policy terms, the client files a claim from their account. Once approved the payout is issued as a credit — tradable only (usable on new positions), not directly withdrawable as cash.',
+              icon: ShieldCheck,
+              title: 'Planned: part of a loss back',
+              body: 'If a covered trade closes at a loss within the policy terms, an approved claim is credited back to your account.',
             },
             {
               icon: ScrollText,
-              title: 'Transparent Terms',
-              body: 'Cover percentage, premium, cap, and minimum trade duration are all shown on the order ticket before a trader opts in.',
+              title: 'Planned: terms up front',
+              body: 'Cover percentage, cap and minimum trade duration shown before you confirm, so there is nothing to guess.',
             },
           ]}
         />
-
-        <p
-          className="mt-8 text-center mx-auto max-w-2xl"
-          style={{ fontSize: 'var(--mk-text-xs)', lineHeight: 'var(--mk-leading-body)', color: 'var(--mk-text-faint)' }}
-        >
-          Insurance premiums apply per trade and are non-refundable. Coverage percentages, caps, and
-          minimum trade durations are shown on the order ticket at activation time and may change
-          without notice.
-        </p>
-      </Section>
-
-      {/* Coverage tiers */}
-      <Section id="coverage">
-        <SectionHeading
-          kicker="Coverage"
-          title="Coverage Tiers"
-          lead="Configure the cover levels your clients can choose from. The module ships with two example tiers — set the cover percentage, premium, and caps to fit your risk model."
-        />
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 max-w-4xl mx-auto mt-12">
-          {COVER_TIERS.map((t) => {
-            const tone = t.promo ? PROMO_TONE : 'var(--mk-accent)';
-            return (
-              <article
-                key={t.label}
-                className="mk-card mk-card--hover relative flex flex-col gap-3"
-                style={{ borderColor: t.promo ? `${PROMO_TONE}66` : 'var(--mk-accent-line)' }}
-              >
-                {t.promo && (
-                  <span
-                    className="absolute top-5 right-5 inline-flex items-center rounded-full px-2.5 py-1 font-bold uppercase"
-                    style={{
-                      background: `${PROMO_TONE}26`,
-                      color: PROMO_TONE,
-                      fontSize: '10px',
-                      letterSpacing: '0.12em',
-                    }}
-                  >
-                    Limited Promo
-                  </span>
-                )}
-                <div className="flex items-baseline gap-2">
-                  <span
-                    className="font-extrabold"
-                    style={{ fontSize: 'var(--mk-text-h1)', color: tone, lineHeight: 1 }}
-                  >
-                    {t.pct}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 'var(--mk-text-label)',
-                      letterSpacing: 'var(--mk-tracking-label)',
-                      textTransform: 'uppercase',
-                      color: 'var(--mk-text-faint)',
-                    }}
-                  >
-                    loss cover
-                  </span>
-                </div>
-                <div>
-                  <h3 className="mk-h3">{t.label}</h3>
-                  <p
-                    style={{
-                      fontSize: 'var(--mk-text-label)',
-                      letterSpacing: 'var(--mk-tracking-label)',
-                      textTransform: 'uppercase',
-                      color: 'var(--mk-text-faint)',
-                    }}
-                  >
-                    {t.sub}
-                  </p>
-                </div>
-                <ul className="flex flex-col gap-2.5 flex-1 mt-2">
-                  {t.bullets.map((b) => (
-                    <li key={b} className="flex items-start gap-2 mk-body" style={{ fontSize: 'var(--mk-text-sm)' }}>
-                      <Check size={16} className="mt-1 shrink-0" style={{ color: tone }} />
-                      <span>{b}</span>
-                    </li>
-                  ))}
-                </ul>
-                <Link
-                  href="/company/contact"
-                  className={t.promo ? 'mk-btn mt-4' : 'mk-btn mk-btn--primary mt-4'}
-                  style={t.promo ? { background: PROMO_TONE, color: '#0a0a0a' } : undefined}
-                >
-                  Book a demo
-                </Link>
-              </article>
-            );
-          })}
-        </div>
-
-        <p
-          className="mt-6 text-center mx-auto max-w-2xl"
-          style={{ fontSize: 'var(--mk-text-xs)', lineHeight: 'var(--mk-leading-body)', color: 'var(--mk-text-faint)' }}
-        >
-          Insurance fees apply per trade and are non-refundable. Coverage payouts are subject to
-          minimum trade duration and the policy terms shown on the order ticket at activation time.
+        <p className="mk-meta mt-8 text-center mx-auto max-w-2xl">
+          Trade Insurance is in development and is not offered on any account today. Details above may change before launch.
         </p>
       </Section>
 
       <CtaBanner
-        title="Add Loss Protection to Your Platform"
-        lead={`Book a demo and we'll show you how the ${BRAND_NAME} insurance module works and how to configure cover for your clients.`}
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
+        title="Want to know when it launches?"
+        lead="Leave your details and we will email you when Trade Insurance is available on your account."
+        primary={{ label: 'Join the waitlist', href: '/company/contact' }}
+        secondary={{ label: 'Try a free demo', href: '/auth/login' }}
       />
+
+      <div className="mk-container" style={{ paddingTop: 'var(--mk-space-6)', paddingBottom: 'var(--mk-space-8)' }}>
+        <p className="mk-meta mx-auto max-w-3xl text-center">
+          Trading leveraged products such as forex and CFDs carries a high level of risk and may not be suitable
+          for all investors. You could lose more than your initial deposit.
+        </p>
+      </div>
     </main>
   );
 }

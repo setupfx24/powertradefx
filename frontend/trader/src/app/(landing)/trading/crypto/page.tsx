@@ -1,148 +1,131 @@
 'use client';
 
 /**
- * Trading → Crypto CFDs. Restyled onto the shared marketing design system;
- * all copy, figures and instrument specs carried over from the previous
- * TradingPageTemplate-driven page.
+ * Trading → Crypto. BTC, ETH, LTC, SOL and XRP against the US dollar as
+ * CFDs on PowerTradeFX, 24/7.
  */
-import { ShieldCheck, Zap, TrendingDown } from 'lucide-react';
+import { ShieldCheck, Zap, TrendingDown, Clock, Gauge, KeyRound } from 'lucide-react';
 import { Section, SectionHeading, PageHero, FeatureGrid, CtaBanner } from '@/marketing/components';
 import { BRAND_NAME } from '@/lib/brand';
+import {
+  StatStrip, InstrumentTable, MarketIllustration, TerminalShot, RiskNote, type InstrumentRow,
+} from '../_components/MarketPageParts';
 
 const STATS = [
-  { label: 'Spread From', value: '0.5%' },
-  { label: 'Leverage', value: '1:50' },
-  { label: 'Cryptocurrencies', value: '25+' },
-  { label: 'Market Hours', value: '24/7' },
+  { label: 'Crypto pairs', value: '5' },
+  { label: 'Market hours', value: '24/7' },
+  { label: 'Leverage', value: 'Up to 1:500' },
+  { label: 'Lot size from', value: '0.01' },
 ];
 
-const INSTRUMENTS = [
-  { symbol: 'BTC/USD (Bitcoin)', spread: '0.5%', leverage: '1:50', margin: '2.0%' },
-  { symbol: 'ETH/USD (Ethereum)', spread: '0.6%', leverage: '1:50', margin: '2.0%' },
-  { symbol: 'SOL/USD (Solana)', spread: '0.8%', leverage: '1:25', margin: '4.0%' },
-  { symbol: 'XRP/USD (Ripple)', spread: '0.7%', leverage: '1:25', margin: '4.0%' },
-  { symbol: 'BNB/USD (Binance)', spread: '0.7%', leverage: '1:25', margin: '4.0%' },
-  { symbol: 'ADA/USD (Cardano)', spread: '0.8%', leverage: '1:25', margin: '4.0%' },
+const HOURS = '24/7';
+
+const INSTRUMENTS: InstrumentRow[] = [
+  { symbol: 'BTCUSD', name: 'Bitcoin / US Dollar', hours: HOURS },
+  { symbol: 'ETHUSD', name: 'Ethereum / US Dollar', hours: HOURS },
+  { symbol: 'LTCUSD', name: 'Litecoin / US Dollar', hours: HOURS },
+  { symbol: 'SOLUSD', name: 'Solana / US Dollar', hours: HOURS },
+  { symbol: 'XRPUSD', name: 'XRP / US Dollar', hours: HOURS },
 ];
 
 export default function CryptoPage() {
   return (
     <main>
       <PageHero
-        kicker="Crypto CFDs"
-        title="Crypto CFD support for your platform"
-        lead="Let your clients trade Bitcoin, Ethereum and top altcoins as CFDs without owning the asset — crypto support built into the platform we deliver under your brand."
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'Explore market coverage', href: '/markets' }}
+        kicker="Crypto"
+        title="Trade Bitcoin, Ethereum, Litecoin, Solana and XRP, 24/7"
+        lead={`Five crypto CFDs on one ${BRAND_NAME} account. No wallet, no exchange, no keys to lose: go long or short from 0.01 lots, any day of the week.`}
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'Try a free demo', href: '/auth/login' }}
       />
 
       <Section raised>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
-          {STATS.map((s) => (
-            <div key={s.label} className="mk-card text-center">
-              <div
-                className="font-extrabold"
-                style={{ fontSize: 'var(--mk-text-h3)', color: 'var(--mk-accent)', lineHeight: 1.15 }}
-              >
-                {s.value}
-              </div>
-              <div
-                className="mt-2"
-                style={{
-                  fontSize: 'var(--mk-text-label)',
-                  letterSpacing: 'var(--mk-tracking-label)',
-                  textTransform: 'uppercase',
-                  color: 'var(--mk-text-faint)',
-                }}
-              >
-                {s.label}
-              </div>
-            </div>
-          ))}
-        </div>
+        <StatStrip stats={STATS} />
 
-        <div className="flex flex-col gap-4 mx-auto max-w-3xl mt-14 text-center">
-          <h2 className="mk-h2">Why offer Crypto CFDs?</h2>
-          <p className="mk-lead">
-            {`Cryptocurrency CFDs let clients speculate on the price movements of Bitcoin, Ethereum and other digital assets without the complexity of owning and storing them. The ${BRAND_NAME} platform supports crypto CFDs around the clock, long or short, with a secure engine and configurable spreads — ideal for the clients you serve who want crypto exposure with the flexibility of traditional CFD trading.`}
-          </p>
+        <div className="grid lg:grid-cols-2 gap-10 items-center mt-14">
+          <div className="flex flex-col gap-4">
+            <span className="mk-kicker">What you are trading</span>
+            <h2 className="mk-h2">Crypto CFDs, in plain terms</h2>
+            <p className="mk-lead">
+              A crypto CFD is a position on the dollar price of a coin. Buy BTCUSD and you profit if bitcoin rises;
+              sell it and you profit if it falls. You never hold the coin, so there is nothing to store, transfer or
+              secure, and the position sits in the same account as your forex, metals and index trades.
+            </p>
+            <p className="mk-body">
+              Crypto is the one market on {BRAND_NAME} that never closes. Prices stream and orders fill 24 hours a day,
+              seven days a week, including weekends.
+            </p>
+          </div>
+          <MarketIllustration symbol="BTCUSD" side="Buy" ticket="0.01 lot · SL / TP set" />
         </div>
       </Section>
 
       <Section>
-        <SectionHeading kicker="Instruments" title="Popular Crypto CFDs" />
-        <div className="mt-12 overflow-x-auto">
-          <div
-            className="min-w-[520px] overflow-hidden"
-            style={{ border: '1px solid var(--mk-line)', borderRadius: 'var(--mk-radius-lg)' }}
-          >
-            <table className="w-full" style={{ borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  {['Instrument', 'Spread From', 'Max Leverage', 'Margin'].map((h, i) => (
-                    <th
-                      key={h}
-                      className={i === 0 ? 'text-left px-5 py-4' : 'text-right px-5 py-4'}
-                      style={{
-                        background: 'var(--mk-surface-2)',
-                        color: 'var(--mk-accent)',
-                        fontSize: 'var(--mk-text-label)',
-                        letterSpacing: 'var(--mk-tracking-label)',
-                        textTransform: 'uppercase',
-                        fontWeight: 700,
-                      }}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {INSTRUMENTS.map((i) => (
-                  <tr key={i.symbol} style={{ borderTop: '1px solid var(--mk-line)', background: 'var(--mk-surface)' }}>
-                    <td className="px-5 py-4 font-semibold" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text)' }}>{i.symbol}</td>
-                    <td className="px-5 py-4 text-right" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)', fontFamily: 'var(--mk-font-mono)' }}>{i.spread}</td>
-                    <td className="px-5 py-4 text-right" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)', fontFamily: 'var(--mk-font-mono)' }}>{i.leverage}</td>
-                    <td className="px-5 py-4 text-right" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)', fontFamily: 'var(--mk-font-mono)' }}>{i.margin}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <SectionHeading
+          kicker="Instruments"
+          title="Every crypto pair on the platform"
+          lead="All five are available on live and demo accounts, with the same charting, order types and margin rules."
+        />
+        <div className="mt-12">
+          <InstrumentTable rows={INSTRUMENTS} />
         </div>
       </Section>
 
       <Section raised>
-        <SectionHeading kicker="Platform capability" title={`Crypto CFDs on the ${BRAND_NAME} platform`} />
+        <SectionHeading kicker="Why trade crypto here" title={`Crypto on ${BRAND_NAME}`} />
         <FeatureGrid
           className="mt-12"
           columns={3}
           items={[
             {
-              icon: ShieldCheck,
-              title: 'No Wallet Needed',
-              body: 'Clients trade crypto CFDs without managing wallets, private keys or exchange accounts.',
+              icon: KeyRound,
+              title: 'No wallet, no keys',
+              body: 'Trade the price without holding the coin. Nothing to store, nothing to lose, and your funds stay in your trading account.',
             },
             {
-              icon: Zap,
-              title: '24/7 Markets',
-              body: 'Around-the-clock access to cryptocurrency markets, every day of the week, with instant execution.',
+              icon: Clock,
+              title: 'Open every day',
+              body: 'Crypto trades 24/7. Weekend moves are tradable, and server-side stop-loss and take-profit cover you while you are away.',
             },
             {
               icon: TrendingDown,
-              title: 'Go Long or Short',
-              body: 'Clients can act on both rising and falling crypto prices, with the ability to short-sell any instrument.',
+              title: 'Short as easily as you buy',
+              body: 'Sell from the ticket or the one-click widget on the chart. Falling prices are a trade, not a wait.',
+            },
+            {
+              icon: Gauge,
+              title: 'Leverage set per account group',
+              body: 'Default 1:100, up to 1:500 depending on your account group. Margin and margin level are always visible.',
+            },
+            {
+              icon: Zap,
+              title: 'Every order type',
+              body: 'Market, limit, stop and stop-limit orders, each with a stop-loss and take-profit you can drag on the chart.',
+            },
+            {
+              icon: ShieldCheck,
+              title: 'One account, five markets',
+              body: 'Crypto sits alongside forex, metals, indices and energy in the same terminal, with one balance and one history.',
             },
           ]}
         />
       </Section>
 
+      <Section>
+        <SectionHeading kicker="The terminal" title="Where you trade it" />
+        <div className="mt-12">
+          <TerminalShot alt={`The ${BRAND_NAME} web terminal showing a bitcoin chart, the watchlist and the order ticket`} />
+        </div>
+      </Section>
+
       <CtaBanner
-        title="Add crypto CFDs to your platform"
-        lead={`Book a demo and see how the ${BRAND_NAME} platform supports Bitcoin, Ethereum and top altcoins as CFDs under your brand.`}
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'Compare account tiers', href: '/account-types' }}
+        title="Start trading crypto"
+        lead="Open a live account in minutes, or trade bitcoin on a free $10,000 demo first."
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'Try a free demo', href: '/auth/login' }}
       />
+
+      <RiskNote />
     </main>
   );
 }

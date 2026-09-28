@@ -2,36 +2,8 @@ import Link from 'next/link'
 import { Facebook, Instagram, Linkedin, Youtube, Mail, Cookie } from 'lucide-react'
 import ScrollReveal from './animations/ScrollReveal'
 import { openCookieSettings } from '@/home/components/CookieConsent'
-import { BRAND_NAME, BRAND_DOMAIN, BRAND_LOGO_LIGHT, BRAND_SUPPORT_EMAIL, BRAND_COPYRIGHT } from '@/lib/brand'
-
-const columns = {
-  Platforms: [
-    { name: 'Global Trading Platform', path: '/platforms/web' },
-    { name: 'Copy Trading',            path: '/platforms/copy-trading' },
-    { name: 'IB Management',           path: '/platforms/ib-management' },
-    { name: 'Prop Trading',            path: '/platforms/prop-trading' },
-  ],
-  'Back Office': [
-    { name: 'Admin & Back Office', path: '/platforms/super-admin' },
-    { name: 'Download',            path: '/download' },
-  ],
-  Solutions: [
-    { name: 'Market Research',       path: '/services/market-research' },
-    { name: 'Portfolio Management',  path: '/services/portfolio-management' },
-    { name: 'Education',             path: '/services/education' },
-  ],
-  Resources: [
-    { name: 'Guides',    path: '/academy/pdfs' },
-    { name: 'Blog',      path: '/academy/blogs' },
-    { name: 'Tutorials', path: '/education/tutorials' },
-  ],
-  Company: [
-    { name: 'About Us',  path: '/company/about' },
-    { name: 'Contact',   path: '/company/contact' },
-    { name: 'Careers',   path: '/careers' },
-    { name: 'FAQ',       path: '/faq' },
-  ],
-}
+import { FOOTER_COLUMNS, FOOTER_LEGAL, RISK_DISCLAIMER, COPYRIGHT } from '@/home/data'
+import { BRAND_NAME, BRAND_DOMAIN, BRAND_LOGO_LIGHT, BRAND_SUPPORT_EMAIL } from '@/lib/brand'
 
 const socials = [
   { icon: Facebook,  href: `https://${BRAND_DOMAIN}`, label: 'Facebook' },
@@ -40,16 +12,16 @@ const socials = [
   { icon: Youtube,   href: `https://${BRAND_DOMAIN}`, label: 'YouTube' },
 ]
 
+/**
+ * Shared footer for every (landing) page except the home page, which
+ * renders its own in CtaFooter. Link columns and legal links come from
+ * src/home/data.ts so the two footers and the header cannot drift apart.
+ */
 export default function Footer() {
   return (
-    /* 2026-09-01 redesign — solid black band, matching the homepage footer
-       and the reference. Previously a white→near-black vertical gradient,
-       which after the light retheme faded the ink copy straight into the
-       black half and left the lower half of the footer unreadable.
-
-       Rather than recolouring every descendant, the --fx-* text/surface
-       tokens are re-pointed to their inverted values for this subtree, so
-       every child that reads them (and there are many) follows. */
+    /* Solid black band, matching the homepage footer. The --fx-* text and
+       surface tokens are re-pointed to their inverted values for this
+       subtree so every child that reads them follows. */
     <footer
       className="relative"
       style={{
@@ -81,13 +53,9 @@ export default function Footer() {
                 )}
               </Link>
               <p className="text-sm leading-relaxed max-w-sm mb-6" style={{ color: 'var(--fx-text-2)' }}>
-                {BRAND_NAME} is a software development company. We build and license
-                trading platforms, back offices and risk engines to brokers and prop
-                firms — delivered white-label, under your own brand.
-              </p>
-              <p className="text-sm leading-relaxed max-w-sm mb-6" style={{ color: 'var(--fx-text-2)' }}>
-                One engineering team, from first call to live platform — and long after,
-                with the monitoring and enhancement cycles that follow launch.
+                {BRAND_NAME} is an online multi-asset broker. Trade forex, gold and
+                metals, indices, oil and crypto from one account, with leverage up to
+                1:500, an instant $10,000 demo and a web terminal that works on any device.
               </p>
 
               <div className="flex items-center gap-2 text-sm mb-5" style={{ color: 'var(--fx-text-3)' }}>
@@ -127,26 +95,26 @@ export default function Footer() {
             </ScrollReveal>
           </div>
 
-          {/* Link columns */}
-          {Object.entries(columns).map(([heading, links], i) => (
-            <ScrollReveal key={heading} variant="fadeUp" delay={0.05 + i * 0.05}>
+          {/* Link columns — Trading / Platform / Partners & Learn / Company */}
+          {FOOTER_COLUMNS.map(({ title, links }, i) => (
+            <ScrollReveal key={title} variant="fadeUp" delay={0.05 + i * 0.05}>
               <h3
                 className="text-xs uppercase tracking-[0.16em] font-semibold mb-4"
                 style={{ color: 'var(--fx-gold-light)' }}
               >
-                {heading}
+                {title}
               </h3>
               <ul className="space-y-2.5">
                 {links.map((link) => (
-                  <li key={link.path}>
+                  <li key={link.href}>
                     <Link
-                      href={link.path}
+                      href={link.href}
                       className="text-sm transition-colors"
                       style={{ color: 'var(--fx-text-2)' }}
                       onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--fx-text)' }}
                       onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--fx-text-2)' }}
                     >
-                      {link.name}
+                      {link.label}
                     </Link>
                   </li>
                 ))}
@@ -155,7 +123,7 @@ export default function Footer() {
           ))}
         </div>
 
-        {/* Risk warning + Restricted regions */}
+        {/* Risk warning */}
         <div
           className="mt-12 md:mt-16 p-6 md:p-8 rounded-2xl space-y-7"
           style={{
@@ -168,43 +136,29 @@ export default function Footer() {
               className="text-lg md:text-xl font-semibold mb-3"
               style={{ color: 'var(--fx-text)' }}
             >
-              Disclaimer
+              Risk warning
             </h3>
             <p className="text-xs md:text-[13px] leading-relaxed" style={{ color: 'var(--fx-text-3)' }}>
-              {BRAND_NAME} is a software development company. We build and license trading
-              technology to licensed operators; we are not a broker, exchange or financial
-              institution and we do not provide financial, investment, tax or advisory
-              services. Any platform in production is operated by our client under their own
-              licence and their own regulatory obligations. Trading leveraged products carries
-              a significant level of risk. Nothing on this site is an offer, solicitation or
-              recommendation to trade.
+              {RISK_DISCLAIMER}
             </p>
           </div>
         </div>
 
-        {/* Legal / Policy quick-links — each opens the official signed
-            PDF in a new tab. Drop replacement files at /public/pdfs/terms/
-            with the exact filenames used below. */}
+        {/* Legal / policy quick-links */}
         <nav
           aria-label="Legal documents"
           className="mt-10 pt-6 flex flex-wrap gap-x-7 gap-y-3"
           style={{ borderTop: '1px solid var(--fx-line)' }}
         >
-          {[
-            { name: 'Privacy Policy',   href: '/privacy' },
-            { name: 'Terms of Service', href: '/terms' },
-            { name: 'Disclaimer',       href: '/risk' },
-          ].map((doc) => (
-            <a
-              key={doc.name}
+          {FOOTER_LEGAL.map((doc) => (
+            <Link
+              key={doc.href}
               href={doc.href}
-              target="_blank"
-              rel="noopener noreferrer"
               className="text-sm font-semibold hover:underline transition-colors"
               style={{ color: 'var(--fx-text)' }}
             >
-              {doc.name}
-            </a>
+              {doc.label}
+            </Link>
           ))}
         </nav>
 
@@ -214,7 +168,7 @@ export default function Footer() {
           style={{ borderTop: '1px solid var(--fx-line)' }}
         >
           <p className="text-xs" style={{ color: 'var(--fx-text-3)' }}>
-            {BRAND_COPYRIGHT} · Software for trading businesses since 2010
+            {COPYRIGHT}
           </p>
           {/* Cookie Settings — surfaces the consent modal even after
               the user has already accepted/saved a preference, so the

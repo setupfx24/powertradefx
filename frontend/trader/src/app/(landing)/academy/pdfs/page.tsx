@@ -1,56 +1,134 @@
 'use client';
 
 /**
- * Academy → Downloadable PDFs. Restyled onto the shared marketing design
- * system. The PDF data, the category tab filtering and the email-gate form
- * logic are carried over unchanged — only the shell and cards were restyled.
+ * Academy → Guides. Reference guides on the platform, read inline. There
+ * are no PDF files to download, so nothing here offers a download; the
+ * category tab filtering is carried over.
  */
 import { useMemo, useState } from 'react';
-import { FileText, Download, ArrowUpRight, Mail } from 'lucide-react';
+import Link from 'next/link';
+import { FileText, ArrowRight, ArrowUpRight } from 'lucide-react';
+import { clsx } from 'clsx';
 import { Section, SectionHeading, PageHero, CtaBanner } from '@/marketing/components';
 import { BRAND_NAME } from '@/lib/brand';
 
-type Cat = 'Guides' | 'E-books' | 'Reports';
+type Cat = 'Platform' | 'Basics' | 'Automation';
 
-interface Pdf {
+interface Guide {
   id: string;
   title: string;
   description: string;
-  pages: number;
-  size: string;
+  body: string[];
   category: Cat;
 }
 
-const PDFS: Pdf[] = [
-  { id: 'p1', title: 'White-Label Launch Handbook',          description: 'How a branded platform goes from kickoff to live on your domain, step by step.', pages: 42, size: '3.1 MB', category: 'Guides'   },
-  { id: 'p2', title: 'Risk & Back-Office Setup Playbook',    description: 'Configuring account groups, leverage tiers, margin and stop-out rules before launch.', pages: 28, size: '1.8 MB', category: 'Guides'   },
-  { id: 'p3', title: 'Platform Feature Reference',           description: 'Terminal, charting, order types and watchlists — a reference to what the platform ships.', pages: 56, size: '5.4 MB', category: 'Guides'   },
-  { id: 'p4', title: 'Integrations Field Guide',             description: 'Payments, KYC/AML, liquidity bridges and CRM — how the platform connects to the providers you use.', pages: 78, size: '6.9 MB', category: 'E-books'  },
-  { id: 'p5', title: 'AI & Algorithmic Trading Overview',    description: 'Strategy builder, backtesting and live algo — the modules the platform can offer clients.', pages: 64, size: '4.7 MB', category: 'E-books'  },
-  { id: 'p6', title: 'Copy Trading & Managed Accounts',      description: 'How copy trading, MAM and PAMM modules are delivered and run by the operator.', pages: 18, size: '1.2 MB', category: 'Reports'  },
-  { id: 'p7', title: 'IB & Partner Management Brief',        description: 'The IB, referral and partner modules the platform ships for operators to run.', pages: 14, size: '0.9 MB', category: 'Reports'  },
-  { id: 'p8', title: 'Multi-Asset Coverage Guide',           description: 'The asset classes and instruments the platform can support for your clients.', pages: 36, size: '2.6 MB', category: 'Guides'   },
+const RISK_LINE =
+  'Trading leveraged products such as forex and CFDs carries a high level of risk and may not be suitable for all investors. You could lose more than your initial deposit.';
+
+const GUIDES: Guide[] = [
+  {
+    id: 'p1', category: 'Platform',
+    title: 'The web terminal, panel by panel',
+    description: 'Watchlist, chart, order ticket, positions, pending orders, history and the account panel — what each one shows and does.',
+    body: [
+      'Watchlist: every instrument with live bid, ask and spread. Click one to load it on the chart and in the ticket.',
+      'Chart: TradingView-powered, with 100+ indicators, drawing tools and timeframes from 1m to 1M. Open positions show as lines; drag SL/TP directly. A one-click widget on the chart buys or sells at the live price.',
+      'Order ticket: market, limit, stop or stop-limit, lot size from 0.01, stop-loss and take-profit. Positions, Pending orders and History panels sit under the chart. The account panel keeps balance, equity, margin, free margin and margin level visible.',
+      'Dark and light themes; an economic-news panel; share-a-trade cards for one trade, all open trades or your full history. Works in a phone browser with a mobile order sheet.',
+    ],
+  },
+  {
+    id: 'p2', category: 'Basics',
+    title: 'Order types: market, limit, stop, stop-limit',
+    description: 'When each order type fills, and at what price.',
+    body: [
+      'Market: fills now, at the live quote.',
+      'Limit: waits for a better price. A buy limit sits below the market; a sell limit above. Fills at the limit price.',
+      'Stop: waits for the market to move through a level. A buy stop sits above the market; a sell stop below. Used for breakouts or for exits.',
+      'Stop-limit: when the stop price is hit, it becomes a limit order at your limit price, and fills at that price or better. All pending orders are held server-side and keep working with the browser closed.',
+    ],
+  },
+  {
+    id: 'p3', category: 'Basics',
+    title: 'Understanding margin and leverage',
+    description: 'How leverage sets the margin a trade needs, and how to read balance, equity, margin and margin level.',
+    body: [
+      'Leverage on the platform is flexible up to 1:500 (default 1:100), set per account group. At 1:100 a position needs 1% of its notional value as margin; at 1:500, 0.2%.',
+      'Balance is your cash. Equity is balance plus open P/L. Margin is what open positions lock. Free margin is what is left. Margin level is equity ÷ margin as a percentage, and it is the number that tells you how close you are to trouble.',
+      'Use the margin calculator on the Risk calculator page before you size a trade, and set the lot size from the loss you accept, not from the margin you are allowed.',
+    ],
+  },
+  {
+    id: 'p4', category: 'Basics',
+    title: 'Funding your account with USDT',
+    description: 'Deposit on TRC20, BEP20 or ERC20, move funds between accounts, and withdraw.',
+    body: [
+      'Wallet → Deposit → USDT. Choose the network that matches the sending wallet (TRC20, BEP20 or ERC20), copy the address, send, and wait for confirmations. The deposit shows in your history when credited.',
+      'Funds land in your main wallet; use Internal transfer to move them to a trading account, or between your accounts.',
+      'Withdrawals go to USDT or to bank/UPI and need a KYC-verified account. Crypto is typically same-day; bank and UPI withdrawals are reviewed by our team. Bank transfer and UPI deposits are also available through a payment link. Demo accounts cannot deposit.',
+    ],
+  },
+  {
+    id: 'p5', category: 'Automation',
+    title: 'Using the AI strategy builder',
+    description: 'From a plain-language description to a backtested strategy running on your account.',
+    body: [
+      'Open AI strategies. Start from a template (trend following, mean reversion, breakout, conservative risk, London open, gold scalper) or describe your own idea in plain language.',
+      'The assistant turns the description into rules you can read. Backtest, refine, backtest again.',
+      'Deploy it to your account. Its trades are tagged separately from your manual ones, so you always know which is which. Stop it whenever you like. Try it on the demo first.',
+    ],
+  },
+  {
+    id: 'p6', category: 'Automation',
+    title: 'Connecting a bot with the Algo Connector',
+    description: 'Per-account API keys, REST order endpoints and a WebSocket tick stream.',
+    body: [
+      'Open Algo connector and generate an API key and secret for the account the bot should trade. Keys are per account.',
+      'REST: place BUY, SELL and CLOSE orders; read the account and positions. WebSocket: live ticks for the instruments you subscribe to.',
+      'API orders take the same execution path and the same risk checks as the terminal. Any language that speaks HTTP and WebSocket works — Python, or a bot ported from an MT-style platform.',
+    ],
+  },
+  {
+    id: 'p7', category: 'Platform',
+    title: 'Copy trading explained',
+    description: 'Following a master trader, choosing an allocation, and stopping.',
+    body: [
+      'The Social page lists master traders on a leaderboard sorted by return, followers or Sharpe ratio. Each profile shows the performance fee the master charges.',
+      'Follow with an allocation you choose. The master\'s trades are mirrored into your account automatically, scaled to that allocation, and appear in your Positions and history.',
+      'Stop following at any time. Copy trading needs a live account. Losses are mirrored too — allocate only what you can afford to lose.',
+    ],
+  },
+  {
+    id: 'p8', category: 'Platform',
+    title: 'Your first day: register, demo, KYC',
+    description: 'The three things to do before you fund anything.',
+    body: [
+      'Register with email and password or Google. Enter a referral code at sign-up if you have one.',
+      'On the sign-in page, press "Try with demo" for a $10,000 demo account — no email needed. Use it to learn the terminal with virtual money.',
+      'Open KYC from your dashboard and upload a government ID, a selfie and proof of address. You will need a verified account before your first withdrawal, so do it early.',
+    ],
+  },
 ];
 
-const TABS: Array<'All' | Cat> = ['All', 'Guides', 'E-books', 'Reports'];
+const TABS: Array<'All' | Cat> = ['All', 'Platform', 'Basics', 'Automation'];
 
 export default function AcademyPdfsPage() {
   const [tab, setTab] = useState<'All' | Cat>('All');
-  const [email, setEmail] = useState('');
+  const [open, setOpen] = useState<string | null>(null);
 
-  const list = useMemo(() => (tab === 'All' ? PDFS : PDFS.filter((p) => p.category === tab)), [tab]);
+  const list = useMemo(() => (tab === 'All' ? GUIDES : GUIDES.filter((p) => p.category === tab)), [tab]);
 
   return (
     <main>
       <PageHero
-        kicker={`${BRAND_NAME} Academy`}
-        title="Downloadable PDFs"
-        lead="Downloadable guides, e-books, and reports on building and running a white-label trading platform — read offline, refer back any time."
-        primary={{ label: 'Browse the Library', href: '#pdfs' }}
+        kicker={`${BRAND_NAME} guides`}
+        title="Trading guides"
+        lead="Reference guides to the platform and the basics — read them here, no download needed. Each one describes what is actually on the screen."
+        primary={{ label: 'Browse the guides', href: '#guides' }}
       />
 
       <Section raised id="categories">
-        <SectionHeading kicker="Library" title="Guides, E-books & Reports" />
+        <SectionHeading kicker="Library" title="Platform, basics and automation" />
 
         {/* Category tabs */}
         <div
@@ -77,98 +155,85 @@ export default function AcademyPdfsPage() {
           ))}
         </div>
 
-        {/* PDF grid */}
-        <div id="pdfs" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 mt-10">
-          {list.map((p) => (
-            <article key={p.id} className="mk-card mk-card--hover overflow-hidden flex flex-col" style={{ padding: 0 }}>
-              {/* TODO: PDF cover thumbnail yahan aayega */}
-              <div
-                className="relative aspect-[3/4] flex items-center justify-center"
-                style={{ background: 'var(--mk-surface-2)' }}
-                aria-label={`${p.title} cover`}
-              >
-                <FileText size={44} style={{ color: 'var(--mk-text-faint)' }} aria-hidden />
-                <span
-                  className="absolute top-3 left-3 px-2 py-0.5 font-bold uppercase"
-                  style={{
-                    fontSize: '10px',
-                    letterSpacing: '0.12em',
-                    borderRadius: 'var(--mk-radius-sm)',
-                    background: 'var(--mk-accent-soft)',
-                    color: 'var(--mk-accent)',
-                  }}
-                >
-                  {p.category}
-                </span>
-              </div>
-              <div className="flex flex-col gap-3 flex-1" style={{ padding: 'var(--mk-space-5)' }}>
-                <h3 className="mk-h3">{p.title}</h3>
-                <p className="mk-body flex-1" style={{ fontSize: 'var(--mk-text-sm)' }}>{p.description}</p>
-                <div
-                  className="flex items-center justify-between"
-                  style={{ fontSize: 'var(--mk-text-xs)', color: 'var(--mk-text-faint)' }}
-                >
-                  <span>{p.pages} pages</span>
-                  <span>{p.size}</span>
+        {/* Guide grid */}
+        <div id="guides" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 mt-10">
+          {list.map((p) => {
+            const isOpen = open === p.id;
+            return (
+              <article key={p.id} className="mk-card mk-card--hover flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <span
+                    className="inline-flex h-11 w-11 items-center justify-center rounded-xl shrink-0"
+                    style={{ background: 'var(--mk-accent-soft)', color: 'var(--mk-accent)' }}
+                    aria-hidden
+                  >
+                    <FileText size={20} />
+                  </span>
+                  <span
+                    className="px-2 py-0.5 font-bold uppercase"
+                    style={{
+                      fontSize: '10px',
+                      letterSpacing: '0.12em',
+                      borderRadius: 'var(--mk-radius-sm)',
+                      background: 'var(--mk-accent-soft)',
+                      color: 'var(--mk-accent)',
+                    }}
+                  >
+                    {p.category}
+                  </span>
                 </div>
+                <h3 className="mk-h3">{p.title}</h3>
+                <p className="mk-body" style={{ fontSize: 'var(--mk-text-sm)' }}>{p.description}</p>
+                {isOpen && (
+                  <div className="flex flex-col gap-3 pl-4" style={{ borderLeft: '2px solid var(--mk-accent-line)' }}>
+                    {p.body.map((para) => (
+                      <p key={para} className="mk-body" style={{ fontSize: 'var(--mk-text-sm)' }}>{para}</p>
+                    ))}
+                  </div>
+                )}
                 <button
                   type="button"
-                  className="mk-btn mk-btn--ghost w-full mt-2"
-                  aria-label={`Download ${p.title}`}
+                  onClick={() => setOpen(isOpen ? null : p.id)}
+                  aria-expanded={isOpen}
+                  className="mk-btn mk-btn--ghost w-full mt-auto"
                 >
-                  <Download size={16} /> Download
+                  {isOpen ? 'Show less' : 'Read guide'}
+                  <ArrowRight size={16} className={clsx('transition-transform', isOpen && 'rotate-90')} />
                 </button>
-              </div>
-            </article>
-          ))}
+              </article>
+            );
+          })}
         </div>
       </Section>
 
-      {/* Email-gate form */}
-      <Section id="gate">
+      {/* Try it */}
+      <Section id="try">
         <div className="mk-card grid md:grid-cols-2 gap-8 items-center">
           <div className="flex flex-col gap-3">
-            <span className="mk-kicker"><Mail size={13} /> Premium Library</span>
-            <h2 className="mk-h2">Get every new release in your inbox</h2>
+            <span className="mk-kicker">Practise</span>
+            <h2 className="mk-h2">Read a guide, then do it on a demo</h2>
             <p className="mk-lead">
-              {'Drop your email — we send each new guide, e-book, and quarterly report as soon as it\'s published. No spam, unsubscribe anytime.'}
+              Every guide describes the real terminal. A $10,000 demo account is one click away on the
+              sign-in page — no email, no risk to real money.
             </p>
           </div>
-          <form
-            onSubmit={(e) => { e.preventDefault(); alert('Thanks — we\'ll add you to the list. (Demo only.)'); setEmail(''); }}
-            className="flex flex-col sm:flex-row gap-3"
-            aria-label="Subscribe for new PDFs"
-          >
-            <label className="flex-1 min-w-0">
-              <span className="sr-only">Email address</span>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                className="w-full px-4 py-3 bg-transparent outline-none"
-                style={{
-                  border: '1px solid var(--mk-line)',
-                  borderRadius: 'var(--mk-radius-pill)',
-                  background: 'var(--mk-surface-2)',
-                  fontSize: 'var(--mk-text-sm)',
-                  color: 'var(--mk-text)',
-                }}
-              />
-            </label>
-            <button type="submit" className="mk-btn mk-btn--primary shrink-0">
-              Subscribe <ArrowUpRight size={16} />
-            </button>
-          </form>
+          <div className="flex flex-col sm:flex-row gap-3 md:justify-end">
+            <Link href="/auth/login" className="mk-btn mk-btn--primary">
+              Try a free demo <ArrowUpRight size={16} />
+            </Link>
+            <Link href="/education/tutorials" className="mk-btn mk-btn--ghost">
+              Platform tutorials
+            </Link>
+          </div>
         </div>
+        <p className="mk-meta mx-auto text-center" style={{ marginTop: 'var(--mk-space-8)', maxWidth: '72ch' }}>{RISK_LINE}</p>
       </Section>
 
       <CtaBanner
-        title="See the platform in action"
-        lead={`Book a demo and see how ${BRAND_NAME} builds these features into your own branded platform.`}
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'Read the Academy Blog', href: '/academy/blogs' }}
+        title="Ready to trade for real?"
+        lead="Open a live account in minutes. Standard is commission-free; Pro has tighter spreads and priority support."
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'More guides', href: '/academy/blogs' }}
       />
     </main>
   );

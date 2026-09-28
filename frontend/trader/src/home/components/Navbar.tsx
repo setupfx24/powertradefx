@@ -5,9 +5,9 @@ import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion, useScroll, useMotionValueEvent, AnimatePresence } from 'framer-motion';
-import { ArrowUpRight, Menu, X, ChevronDown, Download } from 'lucide-react';
+import { ArrowUpRight, Menu, X, ChevronDown } from 'lucide-react';
 import { Button } from '../ui/Button';
-import { NAV_ITEMS, BRAND, SIGNUP_HREF, APK_HREF, type NavItem } from '../data';
+import { NAV_ITEMS, BRAND, SIGNUP_HREF, LOGIN_HREF, type NavItem } from '../data';
 
 const useIsomorphicLayoutEffect =
   typeof window !== 'undefined' ? useLayoutEffect : useEffect;
@@ -85,7 +85,7 @@ function DesktopNavLink({ item, pathname }: { item: NavItem; pathname: string })
     const linkClass = `relative whitespace-nowrap rounded px-3 py-5 font-body text-[15px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
       active ? 'text-foreground' : 'text-foreground/70 hover:text-foreground'
     }`;
-    // External items (e.g. the liquidity subdomain) open in a new tab.
+    // External items open in a new tab. None today; kept for the type.
     if (item.external) {
       return (
         <a href={item.href} target="_blank" rel="noopener noreferrer" className={linkClass}>
@@ -292,25 +292,15 @@ export function Navbar() {
             </div>
 
             <div className="ml-auto hidden shrink-0 items-center gap-2 lg:flex">
-              {/* Direct Android APK download. Plain <a download> so the file
-                  downloads instead of navigating. */}
-              <a
-                href={APK_HREF}
-                download
-                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-[hsl(var(--border)/0.2)] px-4 py-2.5 font-body text-[15px] font-medium text-foreground/80 transition-colors hover:text-foreground hover:bg-[hsl(var(--muted))]"
-              >
-                <Download className="size-4" />
-                Download App
-              </a>
               <Link
-                href="/auth/login"
+                href={LOGIN_HREF}
                 className="whitespace-nowrap rounded-full px-4 py-2.5 font-body text-[15px] font-medium text-foreground/70 transition-colors hover:text-foreground"
               >
-                Client Login
+                Sign in
               </Link>
               <Button variant="hero" className="h-auto rounded-full px-5 py-2.5 text-sm" asChild>
                 <Link href={SIGNUP_HREF}>
-                  Book a Demo
+                  Open account
                   <ArrowUpRight className="ml-1 size-4" />
                 </Link>
               </Button>
@@ -361,25 +351,16 @@ export function Navbar() {
                   <MobileNavRow item={item} onSelect={() => setOpen(false)} />
                 </motion.div>
               ))}
-              <a
-                href={APK_HREF}
-                download
-                onClick={() => setOpen(false)}
-                className="inline-flex items-center gap-2 font-display uppercase text-2xl tracking-tight text-foreground/85 hover:text-foreground py-2 mt-4"
-              >
-                <Download className="size-5" />
-                Download App
-              </a>
               <Link
-                href="/auth/login"
+                href={LOGIN_HREF}
                 onClick={() => setOpen(false)}
-                className="font-display uppercase text-2xl tracking-tight text-foreground/85 hover:text-foreground py-2 block mt-2"
+                className="font-display uppercase text-2xl tracking-tight text-foreground/85 hover:text-foreground py-2 block mt-4"
               >
-                Client Login
+                Sign in
               </Link>
               <Button variant="hero" asChild className="mt-2">
                 <Link href={SIGNUP_HREF} onClick={() => setOpen(false)}>
-                  Book a Demo
+                  Open account
                   <ArrowUpRight className="ml-1 size-4" />
                 </Link>
               </Button>

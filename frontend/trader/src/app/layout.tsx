@@ -17,8 +17,8 @@ import { fontVariableClass } from '@/styles/fonts';
  * here would beat the file convention).
  */
 export const metadata: Metadata = {
-  title: 'PowerTradeFX',
-  description: 'PowerTradeFX — a software development company building white-label trading platforms, back offices and risk engines for brokers and prop firms.',
+  title: 'PowerTradeFX — Trade Forex, Gold, Indices, Oil & Crypto',
+  description: 'PowerTradeFX is an online multi-asset broker. Trade 40+ forex, metals, indices, energy and crypto instruments with leverage up to 1:500 on a web terminal with TradingView charts. Open an account or start with a free $10,000 demo.',
 };
 
 export const viewport: Viewport = {

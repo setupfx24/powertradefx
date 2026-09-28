@@ -1,39 +1,38 @@
 import type { Metadata } from 'next';
+import Image from 'next/image';
 import Link from 'next/link';
-import { Globe, Share, Plus, MonitorSmartphone, Wifi, RefreshCw } from 'lucide-react';
+import { Globe, Smartphone, Monitor, Plus, Wifi, RefreshCw, Server, MonitorSmartphone } from 'lucide-react';
 import { Section, SectionHeading, PageHero, FeatureGrid, CtaBanner } from '@/marketing/components';
 import { BRAND_NAME } from '@/lib/brand';
 
 /**
- * Download / Install.
+ * Download / Trade anywhere.
  *
- * The platform is web-based and ships as a PWA (see src/app/manifest.ts —
- * standalone display, /dashboard start URL, 192/512 icons). There are no
- * native store builds: IOS_APP_URL / ANDROID_APP_URL are empty in the
- * backend config, so this page deliberately links to NO App Store or
- * Play Store listing. Everything below describes what actually exists:
- * the browser platform and the add-to-home-screen install flow.
- *
- * The AppStoreButtons badge row that the (landing) layout used to render
- * under every page has been deleted — it linked to "#" because no native
- * app exists, which is exactly what this page explains. Re-add a store
- * badge row here, wired to real listing URLs, if native apps ever ship.
+ * What exists today: the web terminal (/trade) in any modern browser, on
+ * desktop and in phone browsers, installable to the home screen as a PWA
+ * (src/app/manifest.ts). A native Windows/macOS desktop terminal exists in
+ * the codebase and is available on request — no file is linked. The
+ * Android app is coming soon; the old APK link returned 404, so it is not
+ * linked either. No App Store / Play Store listing exists.
  */
 
 export const metadata: Metadata = {
-  title: `Platform Apps & Install | ${BRAND_NAME}`,
-  description: `The ${BRAND_NAME} platform runs in any modern browser and installs to the home screen as an app on iOS and Android — web, mobile and desktop from one build. Book a demo to see it.`,
+  title: `Trade Anywhere — Web, Mobile & Desktop | ${BRAND_NAME}`,
+  description: `Trade with ${BRAND_NAME} in any browser, on your phone, or on the desktop terminal. One account, the same server-side execution everywhere.`,
 };
 
+const RISK_LINE =
+  'Trading leveraged products such as forex and CFDs carries a high level of risk and may not be suitable for all investors. You could lose more than your initial deposit.';
+
 const IOS_STEPS = [
-  'Open the platform in Safari on your iPhone or iPad.',
+  'Open the terminal in Safari on your iPhone or iPad.',
   'Tap the Share button in the browser toolbar.',
   'Scroll down and choose “Add to Home Screen”.',
   'Confirm the name, then tap “Add”. The icon appears on your home screen.',
 ];
 
 const ANDROID_STEPS = [
-  'Open the platform in Chrome on your Android device.',
+  'Open the terminal in Chrome on your Android phone.',
   'Tap the ⋮ menu in the top-right corner.',
   'Choose “Install app” (or “Add to Home screen”).',
   'Confirm, and the app is added to your launcher.',
@@ -68,119 +67,183 @@ function InstallSteps({ title, steps }: { title: string; steps: string[] }) {
   );
 }
 
+function StatusBadge({ children }: { children: React.ReactNode }) {
+  return <span className="mk-badge mk-badge--accent">{children}</span>;
+}
+
 export default function DownloadPage() {
   return (
     <main>
       <PageHero
-        kicker="Get the platform"
-        title="Nothing to download"
-        lead={`The ${BRAND_NAME} platform runs in any modern browser and installs to a phone's home screen in a few taps — same platform on desktop, tablet and mobile, no app store required. It's the platform we build for you to offer your clients.`}
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'How it works', href: '/how-it-works' }}
+        kicker="Trade anywhere"
+        title="One account. Every screen."
+        lead={`The ${BRAND_NAME} terminal runs in any modern browser, fits a phone screen, and is available as a desktop terminal on request. Orders and stop levels run on our servers, so they stay live whichever device you close.`}
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'Open the web terminal', href: '/trade' }}
       />
 
-      {/* Browser-first — the real primary entry point. */}
+      {/* The four ways in */}
       <Section raised>
-        <div className="grid lg:grid-cols-2 gap-10 items-start">
-          <SectionHeading
-            align="left"
-            kicker="In your browser"
-            title="Runs in any modern browser"
-            lead={`The ${BRAND_NAME} platform is fully web-based. Your clients sign in from Chrome, Safari, Edge or Firefox on desktop, tablet or phone — there is no installer, no update to chase, and accounts, positions and watchlists follow them to whichever device they sign in from.`}
-          />
-          <div className="flex flex-col gap-5">
-            <div className="mk-card flex flex-col gap-4">
+        <SectionHeading kicker="Platforms" title="Choose how you trade" />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-12">
+          <article className="mk-card mk-card--hover flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-3">
               <span
                 className="inline-flex h-11 w-11 items-center justify-center rounded-xl shrink-0"
                 style={{ background: 'var(--mk-accent-soft)', color: 'var(--mk-accent)' }}
               >
                 <Globe size={20} />
               </span>
-              <h3 className="mk-h3">Open the web platform</h3>
-              <p className="mk-body">
-                One codebase, delivered white-label under your brand and domain — no download step
-                between opening the platform and using it.
-              </p>
-              <div className="flex flex-wrap gap-3">
-                <Link href="/company/contact" className="mk-btn mk-btn--primary">
-                  Book a demo
-                </Link>
-                <Link href="/platforms/web" className="mk-btn mk-btn--ghost">
-                  View platforms
-                </Link>
-              </div>
+              <StatusBadge>Available now</StatusBadge>
             </div>
+            <h3 className="mk-h3">Web terminal</h3>
+            <p className="mk-body">
+              Nothing to download. Sign in from Chrome, Safari, Edge or Firefox and the full
+              terminal — TradingView charts, order ticket, positions, account panel — is there.
+            </p>
+            <div className="flex flex-wrap gap-3 mt-auto">
+              <Link href="/trade" className="mk-btn mk-btn--primary">Open the terminal</Link>
+              <Link href="/platforms/web" className="mk-btn mk-btn--ghost">What is inside</Link>
+            </div>
+          </article>
+
+          <article className="mk-card mk-card--hover flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-3">
+              <span
+                className="inline-flex h-11 w-11 items-center justify-center rounded-xl shrink-0"
+                style={{ background: 'var(--mk-accent-soft)', color: 'var(--mk-accent)' }}
+              >
+                <Smartphone size={20} />
+              </span>
+              <StatusBadge>Available now</StatusBadge>
+            </div>
+            <h3 className="mk-h3">Phone browser</h3>
+            <p className="mk-body">
+              The same terminal, laid out for a phone: chart, watchlist and a mobile order sheet.
+              Add it to your home screen and it opens like an app.
+            </p>
+            <div className="flex flex-wrap gap-3 mt-auto">
+              <Link href="#install" className="mk-btn mk-btn--ghost">Add to home screen</Link>
+            </div>
+          </article>
+
+          <article className="mk-card mk-card--hover flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-3">
+              <span
+                className="inline-flex h-11 w-11 items-center justify-center rounded-xl shrink-0"
+                style={{ background: 'var(--mk-accent-soft)', color: 'var(--mk-accent)' }}
+              >
+                <Monitor size={20} />
+              </span>
+              <span className="mk-badge">On request</span>
+            </div>
+            <h3 className="mk-h3">Desktop terminal for Windows and macOS</h3>
+            <p className="mk-body">
+              A native desktop terminal with live watchlist, charts, order ticket and account
+              panel. Available on request — ask support from your account and we will set you up.
+            </p>
+            <div className="flex flex-wrap gap-3 mt-auto">
+              <Link href="/auth/login" className="mk-btn mk-btn--ghost">Sign in and ask support</Link>
+            </div>
+          </article>
+
+          <article className="mk-card mk-card--hover flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-3">
+              <span
+                className="inline-flex h-11 w-11 items-center justify-center rounded-xl shrink-0"
+                style={{ background: 'var(--mk-accent-soft)', color: 'var(--mk-accent)' }}
+              >
+                <MonitorSmartphone size={20} />
+              </span>
+              <span className="mk-badge">Coming soon</span>
+            </div>
+            <h3 className="mk-h3">Android app</h3>
+            <p className="mk-body">
+              A native Android app is in the works. Until it ships, the terminal in your phone
+              browser gives you every feature, with the same account and the same execution.
+            </p>
+          </article>
+        </div>
+      </Section>
+
+      {/* Phone section with the real capture */}
+      <Section>
+        <div className="grid lg:grid-cols-2 gap-10 items-center">
+          <div className="mx-auto w-full" style={{ maxWidth: 320 }}>
+            <Image
+              src="/marketing/screens/terminal-phone.png"
+              alt={`${BRAND_NAME} in a phone browser`}
+              width={390}
+              height={844}
+              sizes="(max-width: 1024px) 80vw, 320px"
+              className="block h-auto w-full"
+              style={{ borderRadius: 'var(--mk-radius-lg)', border: '1px solid var(--mk-line)' }}
+            />
+          </div>
+          <div className="flex flex-col gap-4 items-start">
+            <span className="mk-kicker">On your phone</span>
+            <h2 className="mk-h2">Full terminal, phone-sized</h2>
+            <p className="mk-lead">
+              Open the terminal in your phone browser and trade the same 40+ instruments with
+              market, limit, stop and stop-limit orders. Stop-loss and take-profit run on the
+              server, so a locked phone never means an unprotected position.
+            </p>
+            <Link href="/trade" className="mk-btn mk-btn--primary">Open the terminal</Link>
           </div>
         </div>
       </Section>
 
-      {/* PWA install — the honest "app" story. */}
-      <Section id="install">
+      {/* PWA install */}
+      <Section id="install" raised>
         <SectionHeading
           kicker="Install as an app"
           title="Add it to your home screen"
-          lead={`The ${BRAND_NAME} platform is a Progressive Web App. Add it to the home screen and it launches full-screen from its own icon, straight to the dashboard — exactly like a native app, without waiting on a store download.`}
+          lead="The web terminal installs to the home screen and launches full-screen from its own icon — no app store, no download."
         />
         <div className="grid md:grid-cols-2 gap-5 mt-12">
           <InstallSteps title="iPhone & iPad (Safari)" steps={IOS_STEPS} />
           <InstallSteps title="Android (Chrome)" steps={ANDROID_STEPS} />
         </div>
         <p className="mk-body mt-6" style={{ fontSize: 'var(--mk-text-sm)' }}>
-          Menu wording varies slightly between browser versions. If you do not see the option, check
-          that you are using Safari on iOS or Chrome on Android — other browsers may not offer
-          home-screen installation.
+          Menu wording varies slightly between browser versions. If you do not see the option,
+          check that you are using Safari on iOS or Chrome on Android — other browsers may not
+          offer home-screen installation.
         </p>
       </Section>
 
-      <Section raised>
+      <Section>
         <SectionHeading
-          kicker="Why install"
-          title="What the installed app gives you"
-          lead="Installing does not change the platform — it changes how you get to it."
+          kicker="Same everywhere"
+          title="What stays the same on every device"
         />
         <FeatureGrid
           className="mt-12"
           columns={3}
           items={[
-            {
-              icon: MonitorSmartphone,
-              title: 'Full-screen launch',
-              body: 'The installed app opens standalone, without browser address bars or tabs, straight into your dashboard.',
-            },
-            {
-              icon: Plus,
-              title: 'One tap from your home screen',
-              body: 'A dedicated icon on your home screen or launcher, so you are not hunting for a bookmark when a position needs attention.',
-            },
-            {
-              icon: RefreshCw,
-              title: 'Always up to date',
-              body: 'Because it is the web platform, you always load the current version. There is no app update to install and no version to fall behind on.',
-            },
-            {
-              icon: Share,
-              title: 'Nothing extra to trust',
-              body: 'No installer package and no store account required — the install is a shortcut to the same site you already signed in to.',
-            },
-            {
-              icon: Wifi,
-              title: 'Same account everywhere',
-              body: 'Desktop browser, installed phone app, or tablet — one login, and your positions and settings stay in sync.',
-            },
-            {
-              icon: Globe,
-              title: 'Works on any modern browser',
-              body: 'Chrome, Safari, Edge and Firefox are all supported for trading in the browser, on desktop and mobile.',
-            },
+            { icon: Wifi,      title: 'One login, one account',  body: 'Desktop browser, installed phone app or desktop terminal — your accounts, positions and watchlist follow you.' },
+            { icon: Server,    title: 'Server-side execution',   body: 'Pending orders, stop-loss and take-profit are held by the engine, not by your device. Close the tab and they keep working.' },
+            { icon: RefreshCw, title: 'Always current',          body: 'The web terminal loads the latest version every time. There is no update to install.' },
+            { icon: Plus,      title: 'A tap away on mobile',    body: 'Once installed, the terminal sits on your home screen and opens straight to your account.' },
+            { icon: Globe,     title: 'Any modern browser',      body: 'Chrome, Safari, Edge and Firefox on desktop and mobile.' },
+            { icon: Monitor,   title: 'Desktop when you want it', body: 'The native Windows/macOS terminal is available on request from support.' },
           ]}
         />
       </Section>
 
+      <Section className="mk-section--tight">
+        <p
+          className="mk-body mx-auto text-center"
+          style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)', maxWidth: '70ch' }}
+        >
+          <strong>Risk warning:</strong> {RISK_LINE}
+        </p>
+      </Section>
+
       <CtaBanner
-        title="See the platform in action"
-        lead={`Book a demo and we'll show you the ${BRAND_NAME} platform running on web, mobile and desktop.`}
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'Read the FAQ', href: '/faq' }}
+        title="Trade from wherever you are"
+        lead="Open an account, or try the terminal on a $10,000 demo — one click, no email."
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'Try a free demo', href: '/auth/login' }}
       />
     </main>
   );

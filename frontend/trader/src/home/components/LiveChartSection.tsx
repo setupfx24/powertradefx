@@ -9,62 +9,47 @@ import { TradingViewChart } from './TradingViewChart';
 const DEFAULT_SYMBOL   = 'EUR/USD';
 const DEFAULT_TV       = 'FX:EURUSD';
 
-/* TradingView symbol mapping for every directory item below. */
+/* TradingView symbol mapping for every directory item below. The
+   directory lists exactly the instruments the platform offers — nothing
+   here that a trader cannot open in the terminal. */
 const INSTRUMENT_MAP: Record<string, string> = {
+  // Forex — majors
+  'EUR/USD':   'FX:EURUSD',
+  'GBP/USD':   'FX:GBPUSD',
+  'USD/JPY':   'FX:USDJPY',
+  'AUD/USD':   'FX:AUDUSD',
+  'USD/CAD':   'FX:USDCAD',
+  'USD/CHF':   'FX:USDCHF',
+  'NZD/USD':   'FX:NZDUSD',
+  // Forex — crosses
+  'EUR/GBP':   'FX:EURGBP',
+  'EUR/JPY':   'FX:EURJPY',
+  'GBP/JPY':   'FX:GBPJPY',
+  'EUR/CHF':   'FX:EURCHF',
+  'GBP/CHF':   'FX:GBPCHF',
+  'AUD/JPY':   'FX:AUDJPY',
+  'CAD/JPY':   'FX:CADJPY',
+  'NZD/JPY':   'FX:NZDJPY',
+  'USD/HKD':   'FX:USDHKD',
+  // Metals
+  'Gold':      'OANDA:XAUUSD',
+  'Silver':    'OANDA:XAGUSD',
+  'Platinum':  'OANDA:XPTUSD',
+  'Palladium': 'OANDA:XPDUSD',
   // Indices
-  'US30':         'OANDA:US30USD',
-  'US100':        'OANDA:NAS100USD',
-  'US500':        'OANDA:SPX500USD',
-  // Commodities
-  'Gold':         'OANDA:XAUUSD',
-  'Silver':       'OANDA:XAGUSD',
-  'Copper':       'OANDA:XCUUSD',
-  'Crude Oil':    'OANDA:WTICOUSD',
-  'Brent Oil':    'OANDA:BCOUSD',
-  'Wheat':        'CBOT:ZW1!',
-  'Corn':         'CBOT:ZC1!',
-  'Natural Gas':  'BLACKBULL:NGAS',
-  'Gasoline':     'NYMEX:RB1!',
-  'Heating Oil':  'NYMEX:HO1!',
-  // Stocks
-  'Tesla':        'NASDAQ:TSLA',
-  'AT&T':         'NYSE:T',
-  'Google':       'NASDAQ:GOOGL',
-  'Netflix':      'NASDAQ:NFLX',
-  'Nvidia':       'NASDAQ:NVDA',
-  'Amazon':       'NASDAQ:AMZN',
-  'Apple':        'NASDAQ:AAPL',
-  'Meta':         'NASDAQ:META',
-  // Forex — Major
-  'AUD/USD':      'FX:AUDUSD',
-  'EUR/USD':      'FX:EURUSD',
-  'GBP/USD':      'FX:GBPUSD',
-  'NZD/USD':      'FX:NZDUSD',
-  'USD/CAD':      'FX:USDCAD',
-  'USD/CHF':      'FX:USDCHF',
-  'USD/JPY':      'FX:USDJPY',
-  // Forex — Minor
-  'AUD/CAD':      'FX:AUDCAD',
-  'AUD/CHF':      'FX:AUDCHF',
-  'AUD/JPY':      'FX:AUDJPY',
-  'AUD/NZD':      'FX:AUDNZD',
-  'CAD/CHF':      'FX:CADCHF',
-  'CAD/JPY':      'FX:CADJPY',
-  'CHF/JPY':      'FX:CHFJPY',
-  'EUR/AUD':      'FX:EURAUD',
-  'EUR/CAD':      'FX:EURCAD',
-  'EUR/CHF':      'FX:EURCHF',
-  'EUR/GBP':      'FX:EURGBP',
-  'EUR/JPY':      'FX:EURJPY',
-  'EUR/NZD':      'FX:EURNZD',
-  'GBP/AUD':      'FX:GBPAUD',
-  'GBP/CAD':      'FX:GBPCAD',
-  'GBP/CHF':      'FX:GBPCHF',
-  'GBP/JPY':      'FX:GBPJPY',
-  'GBP/NZD':      'FX:GBPNZD',
-  'NZD/CAD':      'FX:NZDCAD',
-  'NZD/CHF':      'FX:NZDCHF',
-  'NZD/JPY':      'FX:NZDJPY',
+  'US30':      'OANDA:US30USD',
+  'NAS100':    'OANDA:NAS100USD',
+  'GER40':     'OANDA:DE30EUR',
+  'UK100':     'OANDA:UK100GBP',
+  // Energy
+  'US Oil':    'TVC:USOIL',
+  'UK Oil':    'TVC:UKOIL',
+  // Crypto
+  'BTC/USD':   'BINANCE:BTCUSDT',
+  'ETH/USD':   'BINANCE:ETHUSDT',
+  'LTC/USD':   'BINANCE:LTCUSDT',
+  'SOL/USD':   'BINANCE:SOLUSDT',
+  'XRP/USD':   'BINANCE:XRPUSDT',
 };
 
 interface Column {
@@ -75,34 +60,29 @@ interface Column {
 
 const COLUMNS: Column[] = [
   {
-    heading: 'Forex Major',
+    heading: 'Forex Majors',
     viewAllHref: '/trading/forex',
-    items: ['AUD/USD', 'EUR/USD', 'GBP/USD', 'NZD/USD', 'USD/CAD', 'USD/CHF', 'USD/JPY'],
+    items: ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD', 'USD/CHF', 'NZD/USD'],
   },
   {
-    heading: 'Forex Minor',
+    heading: 'Forex Crosses',
     viewAllHref: '/trading/forex',
-    items: [
-      'AUD/CAD', 'AUD/CHF', 'AUD/JPY', 'AUD/NZD', 'CAD/CHF', 'CAD/JPY', 'CHF/JPY',
-      'EUR/AUD', 'EUR/CAD', 'EUR/CHF', 'EUR/GBP', 'EUR/JPY', 'EUR/NZD',
-      'GBP/AUD', 'GBP/CAD', 'GBP/CHF', 'GBP/JPY', 'GBP/NZD',
-      'NZD/CAD', 'NZD/CHF', 'NZD/JPY',
-    ],
+    items: ['EUR/GBP', 'EUR/JPY', 'GBP/JPY', 'EUR/CHF', 'GBP/CHF', 'AUD/JPY', 'CAD/JPY', 'NZD/JPY', 'USD/HKD'],
   },
   {
-    heading: 'Indices',
-    viewAllHref: '/trading/indices',
-    items: ['US30', 'US100', 'US500'],
-  },
-  {
-    heading: 'Commodities',
+    heading: 'Metals',
     viewAllHref: '/trading/commodities',
-    items: ['Gold', 'Silver', 'Copper', 'Crude Oil', 'Brent Oil', 'Wheat', 'Corn', 'Natural Gas', 'Gasoline', 'Heating Oil'],
+    items: ['Gold', 'Silver', 'Platinum', 'Palladium'],
   },
   {
-    heading: 'Stocks',
-    viewAllHref: '/markets',
-    items: ['Tesla', 'AT&T', 'Google', 'Netflix', 'Nvidia', 'Amazon', 'Apple', 'Meta'],
+    heading: 'Indices & Energy',
+    viewAllHref: '/trading/indices',
+    items: ['US30', 'NAS100', 'GER40', 'UK100', 'US Oil', 'UK Oil'],
+  },
+  {
+    heading: 'Crypto',
+    viewAllHref: '/trading/crypto',
+    items: ['BTC/USD', 'ETH/USD', 'LTC/USD', 'SOL/USD', 'XRP/USD'],
   },
 ];
 
@@ -134,7 +114,7 @@ export function LiveChartSection() {
           Markets at Your Fingertips
         </h2>
         <p className="mt-5 text-foreground/65 max-w-2xl mx-auto text-base sm:text-lg leading-relaxed">
-          Pick any instrument below — the live chart updates instantly. Professional-grade charts. Zero delay. Always on.
+          Pick any instrument below and the chart updates. Every symbol here is one you can trade in the terminal, with TradingView charts and live prices.
         </p>
 
         {/* Instrument directory (now ABOVE the chart) */}

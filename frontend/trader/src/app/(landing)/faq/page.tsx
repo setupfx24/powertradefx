@@ -1,258 +1,286 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { Section, SectionHeading, PageHero, CtaBanner, FaqAccordion, type FaqItem } from '@/marketing/components';
-import { BRAND_NAME } from '@/lib/brand';
+import { BRAND_NAME, BRAND_SUPPORT_EMAIL } from '@/lib/brand';
 
 /**
- * Standalone FAQ.
+ * Standalone trader FAQ.
  *
- * Every answer below is lifted from copy that already exists on the
- * platform — nothing here is newly invented. Provenance per group:
- *
- *   • src/home/data.ts → FAQ[]            (the homepage accordion)
- *   • src/app/(landing)/how-it-works      (STEPS + broker-vs-protocol cards)
- *   • src/app/(landing)/deposit-withdrawal (the signed Deposit & Withdrawal
- *     Policy — authoritative where it conflicts with older marketing copy,
- *     e.g. supported payment methods)
- *   • src/app/(landing)/restricted-countries and /delete-account
- *
- * Questions we could NOT source an answer for were left out.
+ * Organised the way a trader's questions arrive: getting started,
+ * accounts & KYC, deposits & withdrawals, trading & platform, copy
+ * trading & PAMM, partners, security. Every answer describes what the
+ * live platform does; nothing here is a projection or a promise.
  */
 
 export const metadata: Metadata = {
   title: `Frequently Asked Questions | ${BRAND_NAME}`,
-  description: `Answers to the most common questions about ${BRAND_NAME} — what we build, how white-label delivery works, timelines, integrations, and support.`,
+  description: `Answers to the most common questions about trading with ${BRAND_NAME} — demo and live accounts, KYC, deposits and withdrawals, the terminal, copy trading, PAMM, the partner programme and security.`,
 };
 
-/* ── Getting started ───────────────────────────────────────────────────
-   Sources: home/data.ts FAQ[0]; how-it-works hero + broker-vs-protocol
-   cards; how-it-works STEPS. */
+const RISK_LINE =
+  'Trading leveraged products such as forex and CFDs carries a high level of risk and may not be suitable for all investors. You could lose more than your initial deposit.';
+
+function Bullets({ items }: { items: string[] }) {
+  return (
+    <ul className="mt-3 flex flex-col gap-1.5">
+      {items.map((item) => (
+        <li key={item} className="flex items-start gap-3">
+          <span
+            className="shrink-0 rounded-full"
+            style={{ width: '5px', height: '5px', marginTop: '0.62em', background: 'var(--mk-accent)' }}
+          />
+          <span>{item}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/* ── Getting started ─────────────────────────────────────────────────── */
 const GETTING_STARTED: FaqItem[] = [
   {
-    q: 'How long does it take to launch a platform?',
-    a: 'Most white-label platforms go live in weeks, not months. The exact timeline depends on the modules and integrations you need — we agree it with you during scoping, before any work starts.',
+    q: `What is ${BRAND_NAME}?`,
+    a: `${BRAND_NAME} is an online multi-asset broker. You trade forex, metals, indices, energy and crypto CFDs from one account in a web terminal, with copy trading, PAMM, an AI strategy builder, a bot API and a partner programme built in.`,
   },
   {
-    q: `Is ${BRAND_NAME} a broker?`,
+    q: 'How do I try the platform without opening an account?',
     a: (
       <>
         <p>
-          {BRAND_NAME} is a software company, not a broker. We build and license the trading
-          technology; you run the brokerage under your own licence, brand and domain.
+          Go to <Link href="/auth/login" className="mk-link">Sign in</Link> and press{' '}
+          <strong>Try with demo</strong>. A $10,000 demo account is provisioned instantly — no email,
+          no form. You get the full terminal, every instrument and every order type.
         </p>
-        <ul className="mt-3 flex flex-col gap-1.5">
-          {[
-            'Web, mobile and desktop terminals',
-            'Admin back office, CRM and reporting',
-            'Risk controls and liquidity routing',
-            'Payments, KYC/AML and CRM integrations',
-          ].map((item) => (
-            <li key={item} className="flex items-start gap-3">
-              <span
-                className="shrink-0 rounded-full"
-                style={{ width: '5px', height: '5px', marginTop: '0.62em', background: 'var(--mk-accent)' }}
-              />
-              <span>{item}</span>
-            </li>
-          ))}
-        </ul>
       </>
     ),
   },
   {
-    q: 'What are the steps from demo to launch?',
+    q: 'How do I open a live account?',
     a: (
       <>
-        <p>A clear path from first demo to a platform live under your brand.</p>
-        <ol className="mt-3 flex flex-col gap-1.5">
-          {[
-            'Book a demo — see the platform and tell us what your brokerage needs.',
-            'Scope & plan — agree modules, integrations, branding and a launch timeline.',
-            'Brand & configure — your logo, domain and colours across every screen.',
-            'Wire integrations — payments, KYC/AML, liquidity and CRM connected to your setup.',
-            'Test & review — you review the platform end to end before go-live.',
-            'Go live — we launch on your domain, under your brand.',
-            'Ongoing support — the same team keeps it running after launch.',
-          ].map((item, i) => (
-            <li key={item} className="flex items-start gap-3">
-              <span
-                className="shrink-0 font-mono"
-                style={{ color: 'var(--mk-accent)', fontSize: 'var(--mk-text-sm)' }}
-              >
-                {String(i + 1).padStart(2, '0')}
-              </span>
-              <span>{item}</span>
-            </li>
-          ))}
-        </ol>
+        <p>
+          <Link href="/auth/register" className="mk-link">Register</Link> with email and password or
+          Google, then open a live account from inside the app. Two account types are available:
+        </p>
+        <Bullets items={[
+          'Standard — entry level, commission-free, competitive spreads.',
+          'Pro — tighter spreads and priority support.',
+        ]} />
+      </>
+    ),
+  },
+  {
+    q: 'What can I trade?',
+    a: (
+      <>
+        <p>40+ instruments across five classes:</p>
+        <Bullets items={[
+          'Forex — EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, USDCHF, NZDUSD and the main crosses.',
+          'Metals — gold, silver, platinum, palladium.',
+          'Indices — US30, NAS100, GER40, UK100.',
+          'Energy — US oil, UK oil.',
+          'Crypto — BTC, ETH, LTC, SOL, XRP (trades 24/7).',
+        ]} />
       </>
     ),
   },
 ];
 
-/* ── Funding ───────────────────────────────────────────────────────────
-   Sources: deposit-withdrawal policy §2, §4.3, §7, §8, §10. */
+/* ── Accounts & KYC ──────────────────────────────────────────────────── */
+const ACCOUNTS: FaqItem[] = [
+  {
+    q: 'What does KYC involve?',
+    a: 'A government-issued ID, a selfie and proof of address, uploaded from the KYC page inside your account. You can trade on a demo without it; a verified account is required before your first withdrawal.',
+  },
+  {
+    q: 'Can I hold more than one trading account?',
+    a: 'Yes. You can open several accounts under one login — for example a Standard and a Pro account, or separate accounts for manual and copy trading — and move funds between them and your main wallet with internal transfers.',
+  },
+  {
+    q: 'What leverage do I get?',
+    a: 'Leverage is flexible up to 1:500 and set per account group; the default is 1:100. Higher leverage increases both potential gains and potential losses, so size positions with the margin calculator before you trade.',
+  },
+  {
+    q: 'Is there a minimum deposit?',
+    a: 'Live accounts have a low minimum deposit. The exact figure is shown on the deposit screen for the method you choose. Demo accounts cannot deposit at all — they are for practice only.',
+  },
+  {
+    q: 'How do I delete my account?',
+    a: (
+      <>
+        Request deletion from the{' '}
+        <Link href="/delete-account" className="mk-link">delete account</Link> page. Withdraw any
+        balance first; we cannot release funds after the account is closed.
+      </>
+    ),
+  },
+];
+
+/* ── Deposits & withdrawals ──────────────────────────────────────────── */
 const FUNDING: FaqItem[] = [
   {
-    q: 'Which payment integrations can the platform support?',
+    q: 'How can I deposit?',
     a: (
       <>
-        <p>The platforms we build can integrate a range of payment and wallet providers, wired to your setup.</p>
-        <p className="mt-3">Common integrations include:</p>
-        <p className="mt-1">
-          Card and bank-transfer processors · Cryptocurrency wallets (BTC, ETH, USDT, USDC) · KYC/AML
-          providers · CRM and liquidity bridges.
-        </p>
-        <p className="mt-3">
-          The exact providers depend on your licence and jurisdiction. We wire in the integrations you
-          choose; your brokerage runs the payment flows under your own brand.
-        </p>
+        <p>From the Wallet page in your account:</p>
+        <Bullets items={[
+          'Crypto — USDT on TRC20, BEP20 or ERC20.',
+          'Local banking — bank transfer or UPI via a payment link.',
+        ]} />
+        <p className="mt-3">Every deposit appears in your transaction history as soon as it is credited.</p>
       </>
     ),
   },
   {
-    q: 'Can you integrate our existing providers?',
-    a: (
-      <>
-        <p>
-          Yes. We can integrate the payment, KYC, liquidity and CRM providers you already use, or
-          recommend ones that fit your setup.
-        </p>
-        <p className="mt-3">
-          Integration work is scoped up front, so you know the timeline before we start.
-        </p>
-      </>
-    ),
+    q: 'How do withdrawals work?',
+    a: 'Request a withdrawal from your wallet to USDT or to bank/UPI. Crypto withdrawals are typically same-day; bank and UPI withdrawals are reviewed by our team before they are released. You need a KYC-verified account to withdraw.',
   },
   {
-    q: 'What does the admin back office include?',
-    a: (
-      <>
-        <p>
-          {BRAND_NAME} builds a full back office into your platform: client CRM, KYC/AML workflows,
-          risk controls, liquidity routing, reporting and partner management — everything your team
-          needs to run the brokerage.
-        </p>
-      </>
-    ),
+    q: 'Can I move money between my accounts?',
+    a: 'Yes. Internal transfers move funds between any of your trading accounts and your main wallet instantly, and each transfer is logged in your history.',
   },
   {
-    q: 'Can we start with some modules and add more later?',
-    a: (
-      <>
-        <p>
-          Yes. You can launch with the modules you need and add copy trading, prop trading, IB
-          management, MAM/PAMM and more as you grow.
-        </p>
-        <p className="mt-3">
-          Because the platform is built in-house, new modules fit the same system rather than being
-          bolted on.
-        </p>
-      </>
-    ),
-  },
-  {
-    q: 'Who owns the branding and domain?',
-    a: (
-      <>
-        <p>
-          You do. Everything ships white-label: your name, logo, colours and domain across web, mobile
-          and desktop. Nothing carries our brand.
-        </p>
-        <p className="mt-3">
-          Your clients see your brokerage, not us.
-        </p>
-      </>
-    ),
+    q: 'Why can I not deposit into my demo account?',
+    a: 'Demo accounts hold virtual funds only. To trade with real money, open a live account from inside the app and fund it from the wallet.',
   },
 ];
 
-/* ── Trading ───────────────────────────────────────────────────────────
-   Sources: home/data.ts FAQ[4], FAQ[5], FAQ[6]. */
+/* ── Trading & platform ──────────────────────────────────────────────── */
 const TRADING: FaqItem[] = [
   {
-    q: 'Which asset classes can the platform support?',
-    a: `The platforms we build can support multi-asset trading — forex majors, minors and exotics, stock indices, commodities such as gold and silver, and major digital assets — all from a single account for your clients.`,
+    q: 'What does the web terminal include?',
+    a: (
+      <>
+        <Bullets items={[
+          'TradingView-powered charts — 100+ indicators, drawing tools, timeframes from 1m to 1M.',
+          'Watchlist with live bid, ask and spread.',
+          'Order ticket with market, limit, stop and stop-limit orders; stop-loss and take-profit on every order.',
+          'One-click trading widget on the chart; SL/TP editable from the chart.',
+          'Positions, pending orders and closed-trade history; balance, equity, margin, free margin and margin level always visible.',
+          'Economic-news panel, share-a-trade cards, dark and light themes.',
+        ]} />
+        <p className="mt-3">
+          It runs in any browser, including on a phone, with a mobile order sheet. Open it at{' '}
+          <Link href="/trade" className="mk-link">/trade</Link> after sign-in.
+        </p>
+      </>
+    ),
   },
   {
-    q: 'Can we set our own spreads, leverage and pricing?',
-    a: 'Yes. Spreads, commissions, leverage and instrument settings are all configurable, so your team sets the trading conditions your clients see. Higher leverage increases both potential gains and potential losses for the end client.',
+    q: 'What happens to my orders if I close the browser?',
+    a: 'Nothing changes. Orders, stop-loss and take-profit are held and executed server-side by the engine, so they keep working when your browser is closed or your connection drops.',
   },
   {
-    q: 'How does order execution work on the platform?',
-    a: 'The engine fills market orders at the live quote and holds pending orders, stop-loss and take-profit levels server-side, so they stay active even when the client’s browser is closed. Execution runs under your brokerage’s setup, not ours.',
+    q: 'At what price do pending orders fill?',
+    a: 'Limit orders fill at the limit price. A stop-limit order converts to a limit order when the stop price is hit, and then fills at the limit price. Market orders fill at the live quote.',
   },
   {
-    q: 'Does the platform include partner and IB management?',
-    a: 'Yes. IB and partner management ships as part of the platform: referral links, marketing kits, per-lot commission tracking and payouts, all run by your team from the admin back office. You configure the programme; your partners work under your brand.',
+    q: 'Is there a mobile or desktop app?',
+    a: 'The web terminal is fully usable in a phone browser today. An Android app is coming soon. A native desktop terminal for Windows and macOS is available on request.',
+  },
+  {
+    q: 'Can I run a bot or an automated strategy?',
+    a: (
+      <>
+        <p>Two ways:</p>
+        <Bullets items={[
+          'AI Strategy Builder — describe a strategy in plain language (or start from a template such as trend following, breakout or gold scalper), backtest it, then deploy it on your account. AI trades are tagged separately from manual ones.',
+          'Algo Connector — a per-account API key and secret, REST endpoints for BUY / SELL / CLOSE, account and positions, and a WebSocket tick stream. Same execution path and risk checks as the terminal.',
+        ]} />
+      </>
+    ),
+  },
+  {
+    q: 'Where do I find the economic calendar and news?',
+    a: 'Inside your account on the News page — an economic calendar with impact levels plus live headlines — and in the news panel of the terminal.',
   },
 ];
 
-/* ── Account & security ────────────────────────────────────────────────
-   Sources: deposit-withdrawal policy §5 and §6; restricted-countries §2;
-   delete-account page. */
-const ACCOUNT: FaqItem[] = [
+/* ── Copy trading & PAMM ─────────────────────────────────────────────── */
+const COPY: FaqItem[] = [
   {
-    q: 'How is KYC/AML handled in the platform?',
+    q: 'How does copy trading work?',
+    a: 'Browse the leaderboard of master traders, sorted by return, followers or Sharpe ratio. Follow one with an allocation you choose and their trades are mirrored to your account automatically. You can stop following at any time. Copy trading requires a live account.',
+  },
+  {
+    q: 'What does a master trader charge?',
+    a: 'Masters can set a performance fee, shown on their profile before you follow. There is no fee on losing periods.',
+  },
+  {
+    q: 'What is PAMM and how is it different?',
+    a: 'PAMM is a pooled managed account. You invest with an approved manager and gains and losses are shared in proportion to your share of the pool. Managers apply in-app, are reviewed before they are listed, and are paid a performance fee. The PAMM page sorts managers by ROI.',
+  },
+  {
+    q: 'Can a master or a manager withdraw my money?',
+    a: 'No. Following a master or investing with a PAMM manager gives them no access to your wallet. Deposits and withdrawals are always yours to make.',
+  },
+];
+
+/* ── Partners ────────────────────────────────────────────────────────── */
+const PARTNERS: FaqItem[] = [
+  {
+    q: 'How do I become an IB or affiliate?',
+    a: 'Apply from the Business page inside your account. Once approved you get a personal referral link and code, and a live dashboard of your network, trading volume and earnings.',
+  },
+  {
+    q: 'How is IB commission calculated?',
+    a: 'Per lot, at the moment a referred trade fills. The commission is released when that trade closes. Payouts are reviewed and approved by the team. Demo trades never earn commission.',
+  },
+  {
+    q: 'Do I earn on traders my sub-partners bring in?',
+    a: 'Yes. The programme is multi-level, so you earn on the network your sub-partners build as well as on the traders you refer directly.',
+  },
+  {
+    q: 'Is there a refer-a-friend programme for ordinary traders?',
     a: (
       <>
-        <p>
-          We build KYC and AML workflows into the platform — document capture, identity checks, selfie
-          verification and compliance review queues — wired to the providers you choose.
-        </p>
-        <p className="mt-3">
-          Your compliance team runs these workflows under your licence; {BRAND_NAME} builds the
-          tooling.
-        </p>
+        Yes. Every account has a share link and referral code; a friend who signs up with it is linked
+        to you. Details are on the{' '}
+        <Link href="/products/referral" className="mk-link">referral</Link> page.
+      </>
+    ),
+  },
+];
+
+/* ── Security ────────────────────────────────────────────────────────── */
+const SECURITY: FaqItem[] = [
+  {
+    q: 'How is my account protected?',
+    a: 'Password plus optional TOTP two-factor authentication, Google sign-in, session protection and encrypted connections. Turn on two-factor authentication from your account settings — it takes a minute.',
+  },
+  {
+    q: 'Where are my funds and trading data kept?',
+    a: 'On segregated infrastructure, separate from the marketing site. Every deposit, withdrawal and transfer is recorded in your wallet history.',
+  },
+  {
+    q: 'Which countries are restricted?',
+    a: (
+      <>
+        See the <Link href="/restricted-countries" className="mk-link">restricted countries</Link> page.
+        We cannot open accounts for residents of the jurisdictions listed there.
       </>
     ),
   },
   {
-    q: 'What risk and compliance controls can we configure?',
+    q: 'How do I reach support?',
     a: (
       <>
-        <p>
-          The back office includes configurable risk and compliance controls: source-of-funds checks,
-          transaction monitoring, review queues, account freezes and reporting. Your team sets the
-          rules and acts on them; we build the controls.
-        </p>
-      </>
-    ),
-  },
-  {
-    q: 'Can we restrict access by country?',
-    a: (
-      <>
-        <p>
-          Yes. The platform can restrict sign-up and access by jurisdiction, so you enforce the list
-          your licence requires.
-        </p>
-        <p className="mt-3">
-          You control which countries are allowed; {BRAND_NAME} provides the tooling to enforce it.
-        </p>
-      </>
-    ),
-  },
-  {
-    q: 'What support do we get after launch?',
-    a: (
-      <>
-        <p>
-          The team that builds your platform supports it after go-live — by live chat, email and phone
-          — covering monitoring, updates and new modules as you grow.
-        </p>
-        <p className="mt-3">
-          We do not disappear at launch; ongoing support is part of how we work.
-        </p>
+        Open a ticket from the Support page inside your account — it is linked to your account, so we
+        can look at the exact deposit, document or trade you mean. Or email{' '}
+        <a href={`mailto:${BRAND_SUPPORT_EMAIL}`} className="mk-link">{BRAND_SUPPORT_EMAIL}</a>.
       </>
     ),
   },
 ];
 
 const GROUPS: { id: string; kicker: string; title: string; items: FaqItem[] }[] = [
-  { id: 'getting-started', kicker: 'Getting started', title: 'Working with us', items: GETTING_STARTED },
-  { id: 'funding', kicker: 'Platform', title: 'Platform & integrations', items: FUNDING },
-  { id: 'trading', kicker: 'Capabilities', title: 'Platform capabilities', items: TRADING },
-  { id: 'account-security', kicker: 'Delivery & support', title: 'Delivery, compliance & support', items: ACCOUNT },
+  { id: 'getting-started', kicker: 'Getting started',          title: 'Getting started',          items: GETTING_STARTED },
+  { id: 'accounts',        kicker: 'Accounts & KYC',           title: 'Accounts & KYC',           items: ACCOUNTS },
+  { id: 'funding',         kicker: 'Deposits & withdrawals',   title: 'Deposits & withdrawals',   items: FUNDING },
+  { id: 'trading',         kicker: 'Trading & platform',       title: 'Trading & platform',       items: TRADING },
+  { id: 'copy-trading',    kicker: 'Copy trading & PAMM',      title: 'Copy trading & PAMM',      items: COPY },
+  { id: 'partners',        kicker: 'Partners',                 title: 'Partners',                 items: PARTNERS },
+  { id: 'security',        kicker: 'Security',                 title: 'Security',                 items: SECURITY },
 ];
 
 export default function FaqPage() {
@@ -260,10 +288,10 @@ export default function FaqPage() {
     <main>
       <PageHero
         kicker="Support"
-        title="Frequently Asked Questions"
-        lead={`Everything you need to know about launching a white-label platform with ${BRAND_NAME}. Still have questions? Book a demo.`}
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'View platforms', href: '/platforms/web' }}
+        title="Frequently asked questions"
+        lead={`Everything traders ask before and after opening a ${BRAND_NAME} account. Can't find it here? Open a ticket or email us.`}
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'Try a free demo', href: '/auth/login' }}
       />
 
       {GROUPS.map((group, i) => (
@@ -275,11 +303,15 @@ export default function FaqPage() {
         </Section>
       ))}
 
+      <Section raised={GROUPS.length % 2 === 0} className="mk-section--tight">
+        <p className="mk-meta" style={{ maxWidth: '72ch' }}>{RISK_LINE}</p>
+      </Section>
+
       <CtaBanner
         title="Still have a question?"
-        lead={`Our team is here to help — or book a demo and see the ${BRAND_NAME} platform for yourself.`}
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'View platforms', href: '/platforms/web' }}
+        lead={`Open a ticket from your account, or email ${BRAND_SUPPORT_EMAIL} — a person replies.`}
+        primary={{ label: 'Contact us', href: '/company/contact' }}
+        secondary={{ label: 'Try a free demo', href: '/auth/login' }}
       />
     </main>
   );

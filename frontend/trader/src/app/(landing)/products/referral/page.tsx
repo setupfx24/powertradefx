@@ -2,23 +2,24 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Users, Zap, Wallet, CheckCircle2 } from 'lucide-react';
+import { Users, Zap, Wallet, CheckCircle2, Link2, Gift } from 'lucide-react';
 import {
   Section, SectionHeading, PageHero, FeatureGrid, CtaBanner, FaqAccordion,
 } from '@/marketing/components';
 import { BRAND_NAME } from '@/lib/brand';
 
 /**
- * Products → Referral. Restyled onto the shared marketing design system.
- * Copy, links and the admin-driven tier/qualification wiring are carried
- * over from the previous page untouched — only the presentation changed.
+ * Products → Refer a friend. PowerTradeFX's own referral programme for
+ * traders: share your link or code, and earn a reward when a friend
+ * signs up and qualifies. The ladder and the qualification rules are
+ * read from the live engine so the page never drifts from what pays.
  */
 
-const SIGNUP_HREF = '/company/contact';
+const SIGNUP_HREF = '/auth/register';
 
-/** Wire shape from /api/v1/referral/tiers — kept lean: only the fields
- *  the marketing page actually renders. Admin owns the data in
- *  /config/referral-tiers (system_settings.referral_tiers).
+/** Wire shape from /api/v1/referral/tiers — only the fields this page
+ *  renders. Admin owns the data in /config/referral-tiers
+ *  (system_settings.referral_tiers).
  *
  *  These names must match the API exactly. The referral ladder used to share
  *  the IB key and shipped `per_lot` / `min_activations`; when it moved to its
@@ -35,15 +36,14 @@ type ApiTier = {
 
 type DisplayTier = {
   label: string;        // "Bronze"
-  perLot: string;       // commission shown in the table, e.g. "$5"
+  perLot: string;       // reward shown in the table, e.g. "$5"
   requirement: string;  // "5+ activations"
   range: string;        // activation count range shown in the header, e.g. "1-20", "101+"
 };
 
-/** Admin-driven qualification conditions surfaced under the table.
- *  Server enforces these in referral_service.maybe_pay_referral_after_trades —
- *  this object is just what the marketing page renders so trader copy
- *  always matches the live engine. */
+/** Qualification conditions surfaced under the table. The server enforces
+ *  these in referral_service.maybe_pay_referral_after_trades — this is
+ *  what the page renders so the copy always matches the live engine. */
 type Qualification = {
   requires_kyc: boolean;
   requires_funded_account: boolean;
@@ -56,9 +56,8 @@ const DEFAULT_QUALIFICATION: Qualification = {
   required_trades: 3,
 };
 
-/** Fallback shown while the API is loading or empty. Mirrors the visual
- *  design the client signed off on, so a fresh install still renders the
- *  ladder rather than going blank. */
+/** Fallback shown while the API is loading or empty, so a fresh install
+ *  still renders the ladder rather than going blank. */
 const FALLBACK_TIERS: DisplayTier[] = [
   { label: 'Bronze', perLot: '$5',  requirement: '5+ activations',  range: '1-20' },
   { label: 'Silver', perLot: '$7',  requirement: '20+ activations', range: '21-100' },
@@ -107,10 +106,38 @@ function ordinal(n: number): string {
   return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
 }
 
+/** Inline "share card" illustration: a referral link, a code and the
+ *  friend who signs up through it. Decorative. */
+function ShareCard() {
+  return (
+    <svg viewBox="0 0 560 370" aria-hidden className="w-full h-auto" style={{ borderRadius: 'var(--mk-radius-lg)', display: 'block' }}>
+      <rect x="0" y="0" width="560" height="370" fill="var(--mk-surface-2)" />
+      {/* link card */}
+      <rect x="40" y="40" width="480" height="120" rx="14" fill="var(--mk-bg)" stroke="var(--mk-line)" />
+      <text x="64" y="72" fill="var(--mk-text-faint)" fontSize="11" fontFamily="var(--mk-font-mono)" letterSpacing="1">YOUR REFERRAL LINK</text>
+      <rect x="64" y="86" width="312" height="40" rx="8" fill="var(--mk-surface)" />
+      <text x="80" y="111" fill="var(--mk-text)" fontSize="13" fontFamily="var(--mk-font-mono)">powertradefx.com/s/YOURCODE</text>
+      <rect x="388" y="86" width="108" height="40" rx="8" fill="var(--mk-accent)" />
+      <text x="442" y="111" textAnchor="middle" fill="#ffffff" fontSize="12" fontWeight="700" fontFamily="var(--mk-font-mono)">COPY</text>
+      {/* arrow */}
+      <line x1="280" y1="176" x2="280" y2="214" stroke="var(--mk-line-strong)" strokeWidth="2" strokeDasharray="4 4" />
+      <polygon points="272,212 288,212 280,224" fill="var(--mk-line-strong)" />
+      {/* sign-up card */}
+      <rect x="120" y="236" width="320" height="96" rx="14" fill="var(--mk-bg)" stroke="var(--mk-line)" />
+      <circle cx="160" cy="284" r="20" fill="var(--mk-ink)" />
+      <text x="160" y="289" textAnchor="middle" fill="#ffffff" fontSize="12" fontWeight="700" fontFamily="var(--mk-font-mono)">A</text>
+      <text x="196" y="276" fill="var(--mk-text)" fontSize="13" fontWeight="700">Your friend signs up</text>
+      <text x="196" y="298" fill="var(--mk-text-muted)" fontSize="11" fontFamily="var(--mk-font-mono)">referral code: YOURCODE</text>
+      <rect x="352" y="270" width="68" height="26" rx="13" fill="var(--mk-accent-soft)" stroke="var(--mk-accent-line)" />
+      <text x="386" y="287" textAnchor="middle" fill="var(--mk-accent)" fontSize="10" fontWeight="700" fontFamily="var(--mk-font-mono)">LINKED</text>
+    </svg>
+  );
+}
+
 export default function ReferralPage() {
   // Admin-managed tiers + qualification gates. Both fall back to the
-  // documented defaults if the API is unreachable so the marketing page
-  // never goes blank or out-of-sync with backend reality on first deploy.
+  // documented defaults if the API is unreachable so the page never goes
+  // blank or out of sync with the engine on first deploy.
   const [tiers, setTiers] = useState<DisplayTier[]>(FALLBACK_TIERS);
   const [qual, setQual] = useState<Qualification>(DEFAULT_QUALIFICATION);
 
@@ -143,59 +170,53 @@ export default function ReferralPage() {
     return () => { cancelled = true; };
   }, []);
 
-  // Compose the activation copy from the admin gates so the card stays
-  // accurate when admin flips KYC / funded off for a promo. Always lists
-  // "signs up via your referral link" — that's structural, not a toggle.
-  const activationBits: string[] = ['signs up via your referral link'];
+  // Compose the activation copy from the live gates so the card stays
+  // accurate when KYC / funded are switched off for a promotion. Always
+  // lists "signs up via your referral link" — that's structural, not a toggle.
+  const activationBits: string[] = ['signs up through your referral link or code'];
   if (qual.requires_kyc) activationBits.push('completes KYC verification');
-  if (qual.requires_funded_account) activationBits.push('funds their account');
+  if (qual.requires_funded_account) activationBits.push('funds a live account');
   const activationSentence = `Your friend ${joinClauses(activationBits)}.`;
   const tradesTitle = `Minimum ${qual.required_trades} trade${qual.required_trades === 1 ? '' : 's'}`;
-  const tradesBody = `Your friend places at least ${qual.required_trades} trade${qual.required_trades === 1 ? '' : 's'} after activation. The moment the ${ordinal(qual.required_trades)} trade closes, your bounty is paid instantly.`;
+  const tradesBody = `Your friend places at least ${qual.required_trades} trade${qual.required_trades === 1 ? '' : 's'} after activation. When the ${ordinal(qual.required_trades)} trade closes, your reward is credited to your account.`;
 
   return (
     <main>
       <PageHero
-        kicker="Referral Module"
-        title="Referral & Loyalty, Built In"
-        lead="A configurable referral and loyalty module ships with the platform — so your brokerage can reward clients for bringing in new traders, with per-referral bounties that pay out automatically when your rules are met."
-        primary={{ label: 'Book a demo', href: SIGNUP_HREF }}
-        secondary={{ label: 'See how payouts work', href: '#tiers' }}
+        kicker="Refer a friend"
+        title="Share your link. Earn when they trade."
+        lead={`Every ${BRAND_NAME} account comes with a personal referral link and code. When a friend signs up through it and starts trading, you earn a reward, credited straight to your account.`}
+        primary={{ label: 'Open account', href: SIGNUP_HREF }}
+        secondary={{ label: 'See the rewards', href: '#tiers' }}
       />
 
       {/* Intro */}
       <Section raised>
         <div className="grid lg:grid-cols-[1.2fr_1fr] gap-8 items-center">
           <div className="flex flex-col gap-4 items-start">
-            <span className="mk-kicker">Automated Per-Referral Bounties</span>
+            <span className="mk-kicker">How it works</span>
             <h2 className="mk-h2">
-              Refer. Activate. <span style={{ color: 'var(--mk-accent)' }}>Rewarded automatically.</span>
+              Share. They trade. <span style={{ color: 'var(--mk-accent)' }}>You are rewarded.</span>
             </h2>
             <p className="mk-lead">
-              When a referred client signs up, activates, and meets the trade threshold you set, the module credits
-              a one-time bounty to the referring client automatically. You define the rules, the tiers, and the
-              payout — the platform handles the rest.
+              Copy your link from the platform or give a friend your code to enter on the sign-up page. Once they
+              activate and meet the trade threshold, the reward is credited to you automatically. No forms, no claims.
             </p>
             <div className="flex flex-wrap gap-3 pt-2">
-              <Link href={SIGNUP_HREF} className="mk-btn mk-btn--primary">Book a demo</Link>
-              <Link href="#tiers" className="mk-btn mk-btn--ghost">See how payouts work</Link>
+              <Link href={SIGNUP_HREF} className="mk-btn mk-btn--primary">Open account</Link>
+              <Link href="/auth/login" className="mk-btn mk-btn--ghost">Sign in to get your link</Link>
             </div>
           </div>
-          {/* Reserved illustration area. The previous artwork came from the
-              cloned site and was deleted with the rest of its images, so
-              this holds the exact footprint until PowerTradeFX artwork exists. */}
-          <div className="mk-media mk-media--ratio-3x2">
-            Referral programme — 1120×740
-          </div>
+          <ShareCard />
         </div>
       </Section>
 
-      {/* Referral payout tiers */}
+      {/* Reward ladder */}
       <Section id="tiers">
         <SectionHeading
-          kicker="Payouts"
-          title="Referral Payouts"
-          lead="Reward your most active referrers with higher bounties. The module moves clients up the ladder automatically as their active referrals grow — the example figures below are yours to configure."
+          kicker="Rewards"
+          title="Rewards that grow with your referrals"
+          lead="The more friends who activate, the higher your reward for each new one. You move up the ladder automatically."
         />
 
         <div className="overflow-x-auto mt-12">
@@ -217,7 +238,7 @@ export default function ReferralPage() {
                       color: 'var(--mk-text-faint)',
                     }}
                   >
-                    Activation
+                    Activations
                   </th>
                   {tiers.map((t, i) => {
                     const top = i === tiers.length - 1;
@@ -252,7 +273,7 @@ export default function ReferralPage() {
                       color: 'var(--mk-text-muted)',
                     }}
                   >
-                    Reward
+                    Reward per activation
                   </td>
                   {tiers.map((t, i) => {
                     const top = i === tiers.length - 1;
@@ -281,24 +302,23 @@ export default function ReferralPage() {
           className="mt-6 text-center mx-auto max-w-2xl"
           style={{ fontSize: 'var(--mk-text-xs)', lineHeight: 'var(--mk-leading-body)', color: 'var(--mk-text-faint)' }}
         >
-          Each referrer earns the reward of the highest tier they reach; a tier unlocks once their
-          activations cross its threshold. An activation is a referred client who completes the
-          qualification you configure — for example KYC plus a minimum number of trades.
-          Top referrers can be set a custom rate.
+          You earn the reward of the highest tier you have reached; a tier unlocks once your activations cross its
+          threshold. An activation is a friend who completes the conditions below. Rewards and thresholds are set by{' '}
+          {BRAND_NAME} and may change; the figures shown are the current ones.
         </p>
       </Section>
 
-      {/* Terms & Conditions */}
+      {/* Qualification */}
       <Section raised>
         <SectionHeading
-          kicker="Terms & Conditions"
-          title="How a Referral Qualifies"
-          lead="Qualification is fully configurable. In this example, two conditions must be met before a referral counts and a bounty is released."
+          kicker="Conditions"
+          title="When a referral counts"
+          lead="Two things have to happen before a reward is released."
         />
         <ol className="grid sm:grid-cols-2 gap-5 mt-12 mx-auto max-w-3xl">
           {[
-            { n: '1', title: 'Referral activation',  body: activationSentence },
-            { n: '2', title: tradesTitle,           body: tradesBody },
+            { n: '1', title: 'Activation',  body: activationSentence },
+            { n: '2', title: tradesTitle,   body: tradesBody },
           ].map((t) => (
             <li key={t.n} className="mk-card mk-card--hover flex flex-col gap-3">
               <div className="flex items-center justify-between">
@@ -319,39 +339,46 @@ export default function ReferralPage() {
 
       {/* Why refer */}
       <Section>
-        <SectionHeading kicker="Benefits" title={`What the ${BRAND_NAME} Referral Module Gives You`} />
+        <SectionHeading kicker="Why refer" title={`Refer a friend to ${BRAND_NAME}`} />
         <FeatureGrid
           className="mt-12"
           columns={3}
           items={[
-            { icon: Zap,    title: 'Automated Payouts',   body: 'No manual batching. Bounties are credited automatically the moment a referral meets the trade threshold you set.' },
-            { icon: Users,  title: 'No Referral Caps',    body: 'Whether a client refers five people or five thousand, the module scales — the per-referral payout only grows with volume.' },
-            { icon: Wallet, title: 'Works Alongside IB',  body: 'Runs side by side with the IB module, so referrals stay credited even when a client graduates to a full introducing-broker role.' },
+            { icon: Link2,  title: 'Link and code, ready now',   body: 'Your referral link and code are in your account from day one. Share the link, or let a friend type the code on the sign-up page.' },
+            { icon: Zap,    title: 'Credited automatically',     body: 'No claim to file. When a friend meets the conditions, the reward lands in your account.' },
+            { icon: Users,  title: 'No limit on friends',        body: 'Refer as many people as you like. Each activation counts, and your tier only moves up.' },
+            { icon: Gift,   title: 'Something for them too',     body: 'Your friend gets the same platform you use: a free $10,000 demo in one click, then a live account when they are ready.' },
+            { icon: Wallet, title: 'Shows up in your history',   body: 'Each reward is credited to your account and listed in your wallet transaction history.' },
+            { icon: CheckCircle2, title: 'Grow into an IB',      body: 'Bringing in a lot of traders? The IB programme pays a per-lot commission on every trade in your network.' },
           ]}
         />
       </Section>
 
       {/* FAQ */}
       <Section raised id="faq">
-        <SectionHeading kicker="Questions" title="FAQ" />
+        <SectionHeading kicker="Questions" title="Referral FAQ" />
         <div className="mt-12 mx-auto max-w-3xl">
           <FaqAccordion
             items={[
               {
-                q: 'How do clients get their referral link?',
-                a: <>Once the module is enabled, each client finds a unique link in their dashboard under the Referrals tab, ready to copy and share. They can also generate QR codes and tracked landing pages from the same screen.</>,
+                q: 'Where do I find my referral link?',
+                a: <>Sign in; your referral link and code are shown in your account, ready to copy. A friend can also enter the code in the referral field on the sign-up page.</>,
               },
               {
-                q: 'When are bounties paid out?',
-                a: <>As soon as a referred client meets the qualification you configure — for example completing a set number of trades — the module credits the bounty automatically to the referrer&apos;s balance.</>,
+                q: 'When is the reward paid?',
+                a: <>As soon as your friend has activated and closed the required number of trades, the reward is credited to your account automatically.</>,
               },
               {
-                q: 'What counts as an active referral for the tier ladder?',
-                a: <>Any referral that clears the conditions you set — for example an activated account plus a minimum number of trades. Thresholds and rewards are configurable; in the example ladder, crossing 21+ actives lifts the per-referral payout to $7, and 100+ takes it to $10.</>,
+                q: 'What counts as an activation?',
+                a: <>A friend who signs up through your link or code and meets the conditions listed above, currently including the trade threshold. Only live-account trades count; demo trades do not.</>,
               },
               {
-                q: "What's the difference between the Referral and IB modules?",
-                a: <>The referral module pays a one-time bounty per qualifying client. The IB module pays a recurring per-lot commission on every trade a partner&apos;s network places. Both ship with the platform and can run side by side.</>,
+                q: 'Can I refer myself or a second account of my own?',
+                a: <>No. Referrals are for other people. Self-referrals are not credited.</>,
+              },
+              {
+                q: 'What is the difference between this and the IB programme?',
+                a: <>Refer a friend pays a one-time reward per qualifying friend. The <Link href="/products/ib-referral" className="underline underline-offset-2">IB programme</Link> pays a per-lot commission on every trade your network places, for as long as they trade. If you plan to bring in many traders, apply for the IB programme from the Business page in the platform.</>,
               },
             ]}
           />
@@ -359,10 +386,18 @@ export default function ReferralPage() {
       </Section>
 
       <CtaBanner
-        title="See the Referral Module in Action"
-        lead="Book a demo and we'll show you how to configure tiers, set qualification rules, and automate bounty payouts on your platform."
-        primary={{ label: 'Book a demo', href: SIGNUP_HREF }}
+        title="Get your referral link"
+        lead={`Open a ${BRAND_NAME} account and your link and code are ready to share the same minute.`}
+        primary={{ label: 'Open account', href: SIGNUP_HREF }}
+        secondary={{ label: 'Sign in', href: '/auth/login' }}
       />
+
+      <div className="mk-container" style={{ paddingTop: 'var(--mk-space-6)', paddingBottom: 'var(--mk-space-8)' }}>
+        <p className="mk-meta mx-auto max-w-3xl text-center">
+          Trading leveraged products such as forex and CFDs carries a high level of risk and may not be suitable
+          for all investors. You could lose more than your initial deposit.
+        </p>
+      </div>
     </main>
   );
 }

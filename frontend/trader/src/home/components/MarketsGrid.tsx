@@ -1,20 +1,19 @@
 'use client';
 
 import Link from 'next/link';
-import Image from 'next/image';
 import { motion } from 'framer-motion';
 import { ArrowUpRight } from 'lucide-react';
 import { Section, SectionHeading } from '@/marketing/components';
+import { MarketArt } from './MarketArt';
 import { INSTRUMENTS } from '../data';
-import { BRAND_NAME } from '@/lib/brand';
 
 /**
- * "All markets in one account" — the reference's 3×2 product grid.
+ * "All markets in one account" — the four asset groups on the platform,
+ * each tile linking to its own landing page.
  *
- * Each tile reserves a 4:3 image area above the title, matching the
- * reference's product artwork. The lucide icon sits inside the reserved
- * box as a marker so the card still reads before real artwork lands;
- * swap the box for an <Image> and nothing reflows.
+ * Each tile carries a 4:3 art slot above the title. The art is an inline
+ * SVG composition in brand colours (see MarketArt) rather than a bitmap,
+ * so there is no asset to ship and it follows the theme tokens.
  */
 export function MarketsGrid() {
   return (
@@ -23,23 +22,23 @@ export function MarketsGrid() {
     // as dead space.
     <Section id="markets" className="mk-section--tight-top">
       <SectionHeading
-        kicker="What ships with it"
-        title="Everything a trading business runs on"
-        lead={`Liquidity routing, managed accounts and copy trading -- all administered from one back office, all shipped white-label under your brand.`}
+        kicker="Markets"
+        title="All markets in one account"
+        lead="Forex, gold and metals, indices, energy and crypto — 40+ instruments on one terminal, with live bid, ask and spread in the watchlist."
       />
 
       <div className="mt-4 flex justify-center">
-        <Link href="/platforms/web" className="mk-link">
-          Explore platforms
+        <Link href="/markets" className="mk-link">
+          See every instrument
           <ArrowUpRight size={15} />
         </Link>
       </div>
 
       <div
-        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"
+        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"
         style={{ gap: 'var(--mk-space-5)', marginTop: 'var(--mk-space-7)' }}
       >
-        {INSTRUMENTS.map(({ image, title, body, href }, i) => (
+        {INSTRUMENTS.map(({ art, title, badge, body, href }, i) => (
           <motion.div
             key={title}
             initial={{ opacity: 0, y: 16 }}
@@ -48,25 +47,24 @@ export function MarketsGrid() {
             transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: 0.05 * i }}
           >
             <Link href={href} className="mk-card mk-card--hover flex h-full flex-col gap-4">
-              {/* Artwork replaces the reserved placeholder box. The source
-                  files are 4:3 (1448×1086), which is the ratio the slot was
-                  built around, so nothing reflowed when they landed.
-                  Decorative: the heading below carries the meaning, so alt
-                  stays empty. */}
+              {/* Decorative: the heading below carries the meaning. */}
               <div
                 className="relative w-full overflow-hidden"
                 style={{ aspectRatio: '4 / 3', borderRadius: 'var(--mk-radius)' }}
               >
-                <Image
-                  src={image}
-                  alt=""
-                  aria-hidden
-                  fill
-                  className="object-cover"
-                  sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
-                />
+                <MarketArt kind={art} />
               </div>
               <div className="flex flex-col gap-2">
+                <span
+                  className="uppercase font-semibold"
+                  style={{
+                    fontSize: 'var(--mk-text-label)',
+                    letterSpacing: 'var(--mk-tracking-label)',
+                    color: 'var(--mk-accent)',
+                  }}
+                >
+                  {badge}
+                </span>
                 <h3 className="mk-h3">{title}</h3>
                 <p className="mk-body" style={{ fontSize: 'var(--mk-text-sm)' }}>{body}</p>
               </div>

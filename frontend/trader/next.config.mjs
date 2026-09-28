@@ -200,25 +200,17 @@ const nextConfig = {
       },
     ];
   },
-  /* Retired broker-product routes.
+  /* Renamed marketing routes.
    *
-   * The site used to sell trading to retail clients, so it carried pages for
-   * currency pairs, precious metals, CFDs, account tiers and a demo account.
-   * SetupFX sells the platform to the businesses that run those markets, so
-   * none of them describe anything we offer.
-   *
-   * They are redirected rather than deleted outright: the pages were linked
-   * from the footer, the marketing sections and each other, and a 404 for a
-   * visitor who followed an old link is a worse outcome than landing on the
-   * page that now answers their question. Permanent, so search engines drop
-   * the old URLs instead of keeping them indexed against us. */
+   * Redirected rather than left to 404: old links may still exist in the
+   * wild, and a visitor who follows one should land on the page that now
+   * answers their question. Permanent, so search engines drop the old URL
+   * instead of keeping it indexed. */
   async redirects() {
-    /* The earlier SetupFX pass retired the broker marketing routes and
-     * redirected them to /platforms. Those routes are now live pages again
-     * (the full site was rebuilt on the new UI, with SetupFX content), and
-     * /platforms is not a page, so redirecting them would break the site.
-     * Nothing to redirect. */
-    return [];
+    return [
+      /* The "why us" page carried the previous brand's slug. */
+      { source: '/company/why-bullza', destination: '/company/why-powertradefx', permanent: true },
+    ];
   },
 };
 

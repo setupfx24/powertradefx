@@ -2,93 +2,111 @@
 
 /**
  * Public marketing page — How It Works.
- * Copy adapted from DETAILED_CONTENT_HOW_IT_WORKS_PAGE.docx (May 2026 client deck).
- * Restyled onto the shared marketing design system; every line of copy is
- * carried over from the previous version of this page.
+ *
+ * The trader journey on the live platform: Register → Try the demo →
+ * Verify (KYC) → Fund → Trade → Withdraw. The comparison blocks name only
+ * things the platform verifiably does; the "typical broker" column is
+ * phrased as questions to ask, not claims about anyone else.
  */
-import { Wallet, ShieldCheck, Cpu, Check, Zap, Headphones, Users, Target, BarChart3 } from 'lucide-react';
+import Image from 'next/image';
+import {
+  ServerCog, ShieldCheck, Headphones, Check, MonitorSmartphone, Layers, Users, Bot, BarChart3, Wallet,
+} from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Section, SectionHeading, PageHero, FeatureGrid, CtaBanner } from '@/marketing/components';
 import { BRAND_NAME } from '@/lib/brand';
 
+const RISK_LINE =
+  'Trading leveraged products such as forex and CFDs carries a high level of risk and may not be suitable for all investors. You could lose more than your initial deposit.';
+
 const STEPS = [
-  { eyebrow: 'Step', title: 'Book a Demo', body: 'See the platform and tell us what your brokerage needs.' },
-  { eyebrow: 'Step', title: 'Scope & Plan', body: 'We agree modules, integrations, branding and a launch timeline.' },
-  { eyebrow: 'Step', title: 'Brand & Configure', body: `Your logo, domain and colours across web, mobile and desktop.` },
-  { eyebrow: 'Step', title: 'Wire Integrations', body: 'Payments, KYC/AML, liquidity and CRM connected to your setup.' },
-  { eyebrow: 'Step', title: 'Test & Review', body: 'You review the platform end to end before anything goes live.' },
-  { eyebrow: 'Step', title: 'Go Live', body: 'We launch on your domain, under your brand — typically in weeks.' },
-  { eyebrow: 'Step', title: 'Ongoing Support', body: 'The same team keeps the platform running and evolving after launch.' },
+  { eyebrow: 'Step', title: 'Register',        body: 'Email and password, or sign in with Google. Have a referral code? Enter it at sign-up.' },
+  { eyebrow: 'Step', title: 'Try the demo',    body: 'One click on the sign-in page provisions a $10,000 demo account — no email, no waiting.' },
+  { eyebrow: 'Step', title: 'Verify (KYC)',    body: 'Upload a government ID, a selfie and proof of address. Required before your first withdrawal.' },
+  { eyebrow: 'Step', title: 'Fund',            body: 'Deposit USDT on TRC20, BEP20 or ERC20, or by bank transfer / UPI through a payment link.' },
+  { eyebrow: 'Step', title: 'Trade',           body: 'Open the web terminal: charts, watchlist, order ticket with SL/TP, positions and history — in any browser.' },
+  { eyebrow: 'Step', title: 'Withdraw',        body: 'Request a withdrawal to USDT or bank/UPI from your wallet. Crypto is typically same-day; bank withdrawals are reviewed by our team.' },
 ];
 
+const SCREENS = [
+  { src: '/marketing/screens/register.png', alt: `${BRAND_NAME} sign-up page`,               caption: 'Register' },
+  { src: '/marketing/screens/kyc.png',      alt: `${BRAND_NAME} KYC verification page`,      caption: 'Verify' },
+  { src: '/marketing/screens/terminal.png', alt: `${BRAND_NAME} web trading terminal`,       caption: 'Trade' },
+];
+
+/** [feature, what PowerTradeFX does, what to ask any other broker]. The
+ *  third column deliberately makes no claim about anyone else. */
 const COMPARE: Array<[string, string, string]> = [
-  ['Branding', 'Fully white-label', 'Their brand, not yours'],
-  ['Delivery', 'Live in weeks', 'Months of integration'],
-  ['Codebase', 'Built in-house', 'Resold template'],
-  ['Back Office', 'CRM, risk & reporting', 'Bolt-on add-ons'],
-  ['Support', 'From the build team', 'Ticket queue'],
+  ['Demo account',      '$10,000 in one click, no email',                                   'Is a form, email or call needed first?'],
+  ['Order execution',   'Server-side; SL/TP keep working with the browser closed',          'Do pending orders live on the server or in the app?'],
+  ['Order types',       'Market, limit, stop, stop-limit — SL/TP on every order',           'Which order types are available on web?'],
+  ['Funding',           'USDT (TRC20 / BEP20 / ERC20), bank transfer / UPI',                'Which rails and currencies are supported?'],
+  ['Copy trading',      'Built in — follow, allocate, stop any time',                       'Is it native or a third-party add-on?'],
+  ['Bots and APIs',     'Algo Connector API + AI strategy builder included',                'Is API access included, and at what cost?'],
+  ['Support',           'In-app tickets linked to your account, plus email',                'How do you reach a person?'],
 ];
 
 const WHY: Array<{ icon: LucideIcon; title: string; sub: string }> = [
-  { icon: Zap,        title: 'Fast, Reliable Engine',   sub: 'built to stay responsive under load' },
-  { icon: Headphones, title: 'Support After Launch',    sub: 'live chat, phone & e-mail' },
-  { icon: Users,      title: 'Copy & Social Trading',   sub: 'built into the platform you launch' },
-  { icon: Target,     title: 'Multi-Asset Ready',       sub: 'forex, CFDs, crypto and more' },
-  { icon: BarChart3,  title: 'Advanced Order Types',    sub: 'limit, stop-limit, one-click trading' },
+  { icon: MonitorSmartphone, title: 'Web terminal, any device', sub: 'TradingView charts, 100+ indicators, phone-friendly' },
+  { icon: Layers,            title: '40+ instruments',          sub: 'forex, metals, indices, energy, crypto' },
+  { icon: BarChart3,         title: 'Advanced order types',     sub: 'limit, stop, stop-limit, one-click trading' },
+  { icon: Users,             title: 'Copy trading & PAMM',      sub: 'follow masters or invest with managers' },
+  { icon: Bot,               title: 'AI & algo trading',        sub: 'strategy builder, backtests, bot API' },
+  { icon: Wallet,            title: 'Multiple accounts',        sub: 'one login, internal transfers, full history' },
 ];
 
 export default function HowItWorksPage() {
   return (
     <main>
       <PageHero
-        kicker={`How ${BRAND_NAME} Works`}
-        title={<>Your Brand.<br /><span style={{ color: 'var(--mk-accent)' }}>Our Engine.</span></>}
-        lead={`${BRAND_NAME} builds white-label trading platforms for brokers and prop firms. Your brand, your domain, our engine — typically live in weeks.`}
-        primary={{ label: 'See the Process', href: '#flow' }}
-        secondary={{ label: 'Book a demo', href: '/company/contact' }}
+        kicker={`How ${BRAND_NAME} works`}
+        title={<>From sign-up<br /><span style={{ color: 'var(--mk-accent)' }}>to your first withdrawal.</span></>}
+        lead={`Six steps. Start on a demo in one click, verify when you are ready to withdraw, and trade from a web terminal that runs in any browser.`}
+        primary={{ label: 'Open account', href: '/auth/register' }}
+        secondary={{ label: 'Try a free demo', href: '/auth/login' }}
       />
 
-      {/* Broker vs Protocol */}
+      {/* Demo vs live */}
       <Section raised>
         <SectionHeading
           align="left"
-          kicker="The Difference"
-          title={`Off-the-Shelf vs ${BRAND_NAME}`}
-          lead={'You bring the licence and the clients. We bring the platform.'}
+          kicker="Two ways in"
+          title="Demo first, or straight to live"
+          lead="Both use the same terminal, the same instruments and the same execution engine."
         />
         <div className="grid md:grid-cols-2 gap-5 mt-12">
           <ComparisonCard
-            title="Off-the-Shelf Platforms"
-            tone="warn"
+            title="Demo account"
+            tone="accent"
             items={[
-              'Generic template under a vendor’s brand',
-              'Slow, costly integration work',
-              'Limited control over the roadmap',
-              'Support through a ticket queue',
+              '$10,000 virtual balance, provisioned in one click',
+              'No email, no KYC — just press "Try with demo" on sign-in',
+              'Every instrument, order type and chart tool',
+              'Cannot deposit or withdraw — it is for practice',
             ]}
           />
           <ComparisonCard
-            title={`The ${BRAND_NAME} Platform`}
+            title="Live account"
             tone="ok"
             items={[
-              'Your brand, your domain, end to end',
-              'Built in-house since 2010',
-              'Web, mobile, desktop and back office',
-              'Typically live in weeks',
+              'Standard (commission-free) or Pro (tighter spreads, priority support)',
+              'Open in-app; hold several accounts under one login',
+              'Fund with USDT or bank transfer / UPI; low minimum deposit',
+              'Complete KYC to unlock withdrawals',
             ]}
           />
         </div>
       </Section>
 
-      {/* 7-step flow */}
+      {/* 6-step flow */}
       <Section id="flow">
         <SectionHeading
           align="left"
-          kicker="The Flow"
-          title="From Demo to Launch — Step by Step"
-          lead="A clear path from first demo to a platform live under your brand."
+          kicker="The flow"
+          title="Register, demo, verify, fund, trade, withdraw"
+          lead="Each step happens inside your account — nothing is handled by email back-and-forth."
         />
-        <ol className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 mt-12">
+        <ol className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 mt-12">
           {STEPS.map((s, i) => (
             <li key={s.title} className="mk-card mk-card--hover flex flex-col gap-2">
               <div className="mk-kicker">
@@ -100,30 +118,53 @@ export default function HowItWorksPage() {
             </li>
           ))}
         </ol>
+
+        {/* Real screens of the three steps that have a page of their own. */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-12">
+          {SCREENS.map((s) => (
+            <figure key={s.src} className="flex flex-col gap-3">
+              <Image
+                src={s.src}
+                alt={s.alt}
+                width={1600}
+                height={1000}
+                sizes="(max-width: 768px) 100vw, 33vw"
+                className="block h-auto w-full"
+                style={{ borderRadius: 'var(--mk-radius)', border: '1px solid var(--mk-line)' }}
+              />
+              <figcaption className="mk-kicker">{s.caption}</figcaption>
+            </figure>
+          ))}
+        </div>
       </Section>
 
-      {/* Security pillars */}
+      {/* What stays the same at every step */}
       <Section raised>
         <SectionHeading
           align="left"
-          kicker="Principles"
-          title="Built In-House, Delivered White-Label"
-          lead="Engineered by our own team and shipped under your brand."
+          kicker="At every step"
+          title="Three things that never change"
+          lead="Whether you are on the demo or a funded Pro account."
         />
         <FeatureGrid
           className="mt-12"
           columns={3}
           items={[
-            { icon: Wallet, title: 'Your Brand', body: 'Your logo, domain and design across every screen — web, mobile and desktop.' },
-            { icon: Cpu, title: 'One Engine', body: 'A single platform powering the trading terminals, admin back office and integrations.' },
-            { icon: ShieldCheck, title: 'Supported After Launch', body: 'The team that builds your platform keeps it running and secure after go-live.' },
+            { icon: ServerCog,   title: 'Server-side execution', body: 'Orders, stop-loss and take-profit are held by the engine, not your browser. Pending orders fill at the price you set.' },
+            { icon: ShieldCheck, title: 'Account security',      body: 'Password plus optional two-factor authentication, Google sign-in, session protection and encrypted connections.' },
+            { icon: Headphones,  title: 'Support in-app',        body: 'Open a ticket from your dashboard and it arrives linked to your account. Or email us — a person replies.' },
           ]}
         />
       </Section>
 
       {/* Comparison table */}
       <Section>
-        <SectionHeading align="left" kicker="Side by Side" title={`${BRAND_NAME} vs Off-the-Shelf`} />
+        <SectionHeading
+          align="left"
+          kicker="Side by side"
+          title={`${BRAND_NAME} vs a typical broker`}
+          lead="We can only vouch for our own column. The right-hand column is the list of questions worth asking anyone else."
+        />
         <div
           className="mt-12 overflow-x-auto"
           style={{ border: '1px solid var(--mk-line)', borderRadius: 'var(--mk-radius-lg)' }}
@@ -131,7 +172,7 @@ export default function HowItWorksPage() {
           <table className="w-full min-w-[560px]" style={{ borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                {['Feature', BRAND_NAME, 'Off-the-Shelf Template'].map((h) => (
+                {['Feature', BRAND_NAME, 'A typical broker — what to ask'].map((h) => (
                   <th
                     key={h}
                     className="text-left px-5 py-4"
@@ -153,7 +194,7 @@ export default function HowItWorksPage() {
               {COMPARE.map((r) => (
                 <tr key={r[0]} style={{ borderTop: '1px solid var(--mk-line)' }}>
                   <td className="px-5 py-4 font-semibold" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text)' }}>{r[0]}</td>
-                  <td className="px-5 py-4" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)' }}>{r[1]}</td>
+                  <td className="px-5 py-4" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text)' }}>{r[1]}</td>
                   <td className="px-5 py-4" style={{ fontSize: 'var(--mk-text-sm)', color: 'var(--mk-text-muted)' }}>{r[2]}</td>
                 </tr>
               ))}
@@ -162,9 +203,9 @@ export default function HowItWorksPage() {
         </div>
       </Section>
 
-      {/* Why Trade section */}
+      {/* Why trade here */}
       <Section raised>
-        <SectionHeading kicker="Why Us" title={`Why Build with ${BRAND_NAME}?`} />
+        <SectionHeading kicker="Why here" title={`What you get with ${BRAND_NAME}`} />
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mt-12">
           {WHY.map(({ icon: Icon, title, sub }) => (
             <div key={title} className="mk-card mk-card--hover flex items-center gap-4">
@@ -181,13 +222,14 @@ export default function HowItWorksPage() {
             </div>
           ))}
         </div>
+        <p className="mk-meta" style={{ marginTop: 'var(--mk-space-8)', maxWidth: '72ch' }}>{RISK_LINE}</p>
       </Section>
 
       <CtaBanner
-        title="Launch on Your Own Brand"
-        lead="Your brand, your domain, our engine. Book a demo to see it live."
-        primary={{ label: 'Book a demo', href: '/company/contact' }}
-        secondary={{ label: 'View platforms', href: '/platforms/web' }}
+        title="Start with the demo"
+        lead="One click, $10,000, no email. Open a live account when you are ready."
+        primary={{ label: 'Try a free demo', href: '/auth/login' }}
+        secondary={{ label: 'Open account', href: '/auth/register' }}
       />
     </main>
   );
@@ -195,8 +237,8 @@ export default function HowItWorksPage() {
 
 function ComparisonCard({
   title, items, tone,
-}: { title: string; items: string[]; tone: 'ok' | 'warn' }) {
-  const accent = tone === 'ok' ? 'var(--mk-up)' : 'var(--mk-down)';
+}: { title: string; items: string[]; tone: 'ok' | 'accent' }) {
+  const accent = tone === 'ok' ? 'var(--mk-up)' : 'var(--mk-accent)';
   return (
     <div className="mk-card flex flex-col gap-4">
       <h3 className="mk-h3" style={{ color: accent }}>{title}</h3>

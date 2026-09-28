@@ -2,28 +2,28 @@
 
 import { motion, useInView, animate, useMotionValue, useTransform } from 'framer-motion';
 import { useEffect, useRef } from 'react';
-import { Star } from 'lucide-react';
-import { SOCIAL_PROOF, STATS } from '../data';
+import { STATS, STATS_HEADING } from '../data';
 
 /**
- * Social-proof strip — star rating + the headline counters.
+ * Platform-facts strip — the headline counters.
  *
  * COMPLIANCE NOTE: every figure rendered here comes from `STATS` in
- * data.ts, which is the site's existing set of claims. The star rating is
- * deliberately QUALITATIVE (no "4.9 from 2,412 reviews") because no
- * audited review score exists to cite. Do not add a new number to this
- * section without a verifiable source — a broker publishing invented
- * trader counts or volumes is a regulatory problem, not a design choice.
+ * data.ts, which holds verified platform facts only. There is no star
+ * rating or client count because no audited figure exists to cite. Do not
+ * add a new number to this section without a verifiable source — a broker
+ * publishing invented trader counts or volumes is a regulatory problem,
+ * not a design choice.
  */
 
 function parseStat(raw: string): { num: number | null; suffix: string; prefix: string } {
-  // Handles "90%", "50,000+", "Upto 7%", "24/7".
+  // Handles "40+", "90%", "50,000+", "Upto 7%", "24/7", "1:500".
   const match = raw.match(/^([A-Za-z ]*?)\s*([0-9][0-9,.]*)(.*)$/);
   if (!match) return { num: null, suffix: raw, prefix: '' };
   const num = parseFloat((match[2] ?? '').replace(/,/g, ''));
   if (Number.isNaN(num)) return { num: null, suffix: raw, prefix: '' };
-  // A slash means it's a composite label like "24/7" — never count it up.
-  if ((match[3] ?? '').startsWith('/')) return { num: null, suffix: raw, prefix: '' };
+  // A slash or colon means it's a composite label like "24/7" or "1:500" —
+  // never count it up.
+  if (/^[/:]/.test(match[3] ?? '')) return { num: null, suffix: raw, prefix: '' };
   return { num, suffix: match[3] ?? '', prefix: match[1] ? `${match[1]} ` : '' };
 }
 
@@ -68,13 +68,11 @@ function AnimatedValue({ value }: { value: string }) {
 }
 
 /**
- * Rendered as the reference's tinted, rounded "trust" panel: a centred
- * heading over a single row of figures, inset from the page rather than
- * running full-bleed.
+ * Rendered as a tinted, rounded panel: a centred heading over a single
+ * row of figures, inset from the page rather than running full-bleed.
  *
- * The reference heads this panel with a client count ("Join 400,000+
- * traders"). We have no audited figure to put there, so the heading is
- * qualitative and the numbers below stay platform facts.
+ * The heading is qualitative (no client count) and the numbers below are
+ * verified platform facts.
  */
 export function Stats() {
   return (
@@ -88,14 +86,9 @@ export function Stats() {
           }}
         >
           <div className="flex flex-col items-center text-center" style={{ gap: 'var(--mk-space-3)' }}>
-            <span className="flex" style={{ gap: 2, color: 'var(--mk-accent)' }} aria-hidden>
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Star key={i} size={15} className="fill-current" />
-              ))}
-            </span>
-            <h2 className="mk-h2">A platform traders rely on</h2>
+            <h2 className="mk-h2">{STATS_HEADING.title}</h2>
             <p className="mk-body" style={{ maxWidth: '46ch' }}>
-              {SOCIAL_PROOF.ratingLabel} {SOCIAL_PROOF.ratingSub}.
+              {STATS_HEADING.lead}
             </p>
           </div>
 
