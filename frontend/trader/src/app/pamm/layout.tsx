@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 export const metadata = {
-  title: 'PAMM — SwissCresta',
+  title: 'PAMM — PowerTradeFX',
   description: 'Percentage Allocation Management Module: invest with proven money managers.',
 }
 

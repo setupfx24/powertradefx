@@ -34,7 +34,7 @@ interface Profile {
   // Onboarding flag from /profile (mirror /auth/me) — drives the
   // EmailVerificationCard's "verified" badge and the Change-Email
   // button. `is_wallet_placeholder` removed with the wallet-integration
-  // purge: no SIWE flow means no @wallet.swisscresta.local placeholder
+  // purge: no SIWE flow means no @wallet.powertradefx.local placeholder
   // emails any more.
   email_verified?: boolean;
 }

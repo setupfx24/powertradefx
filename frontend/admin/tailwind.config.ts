@@ -28,7 +28,7 @@ const config: Config = {
           tertiary: 'rgb(var(--c-text-tertiary) / <alpha-value>)',
           inverse: 'rgb(var(--c-text-inverse) / <alpha-value>)',
         },
-        /* SwissCresta brand orange. Admin generic UI accents resolve
+        /* PowerTradeFX brand orange. Admin generic UI accents resolve
          * through `accent.*`, and `buy` was historically used as a
          * generic primary too — so it's repointed to the brand orange
          * to keep every button/icon on-theme (sell stays red). */

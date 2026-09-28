@@ -15,11 +15,11 @@ ENV PYTHONPATH=/app
 # Run as a dedicated unprivileged user so a container escape from a
 # code-execution bug doesn't map to host root (audit H8). uploads/ is
 # the only writable path; everything else is read-only at runtime.
-RUN groupadd --system --gid 1001 swisscresta \
- && useradd  --system --uid 1001 --gid swisscresta --shell /usr/sbin/nologin swisscresta \
+RUN groupadd --system --gid 1001 powertradefx \
+ && useradd  --system --uid 1001 --gid powertradefx --shell /usr/sbin/nologin powertradefx \
  && mkdir -p /app/uploads \
- && chown -R swisscresta:swisscresta /app/uploads
-USER swisscresta
+ && chown -R powertradefx:powertradefx /app/uploads
+USER powertradefx
 
 EXPOSE 8000
 

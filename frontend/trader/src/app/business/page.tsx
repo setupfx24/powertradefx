@@ -118,7 +118,7 @@ export default function BusinessPage() {
                 Partner Programs
               </span>
               <h1 className="mt-3 text-2xl sm:text-3xl font-bold tracking-tight text-text-primary">
-                Grow with SwissCresta
+                Grow with PowerTradeFX
               </h1>
               <p className="mt-2 text-sm text-[#4B5563] leading-relaxed">
                 Refer traders, build a team, or partner as a sub-broker. Earn revenue share on every trade your network places.
@@ -222,7 +222,7 @@ function IBTab() {
       <CtaCard
         eyebrow="IB Program"
         title="Become an Introducing Broker"
-        subtitle="Refer traders to SwissCresta and earn a lifetime share of their trading commissions — up to 5 levels deep."
+        subtitle="Refer traders to PowerTradeFX and earn a lifetime share of their trading commissions — up to 5 levels deep."
         benefits={[
           'Lifetime commission on every trade your referrals place',
           'Multi-level network — earn from sub-referrals too',

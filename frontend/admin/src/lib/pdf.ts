@@ -1,6 +1,6 @@
 /**
  * Shared client-side PDF report builder for the admin panel.
- * SwissCresta-branded header + jspdf-autotable body + page footer.
+ * PowerTradeFX-branded header + jspdf-autotable body + page footer.
  * jspdf is dynamically imported so it isn't in the initial bundle.
  */
 
@@ -67,7 +67,7 @@ export async function downloadReportPdf(opts: ReportPdfOptions): Promise<void> {
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
-  doc.text('SwissCresta', margin, 7);
+  doc.text('PowerTradeFX', margin, 7);
   doc.setFontSize(8);
   doc.setFont('helvetica', 'normal');
   doc.text('Admin report', pageW - margin, 7, { align: 'right' });
@@ -119,7 +119,7 @@ export async function downloadReportPdf(opts: ReportPdfOptions): Promise<void> {
       doc.setFontSize(7);
       doc.setTextColor(140, 140, 140);
       doc.text(`Page ${data.pageNumber} of ${pageCount}`, pageW - margin - 24, pageH - 6);
-      doc.text('SwissCresta — internal report. Confidential.', margin, pageH - 6);
+      doc.text('PowerTradeFX — internal report. Confidential.', margin, pageH - 6);
     },
   });
 

@@ -24,18 +24,18 @@ _BORDER_BRIGHT = "#3a3a3a"
 # attaches the bundled PNG with this exact Content-ID, so the <img> below
 # resolves without an outbound network fetch — works even when the client
 # blocks remote images (Gmail's "Show pictures", Outlook's safe mode, etc).
-LOGO_CID = "swisscresta-logo"
+LOGO_CID = "powertradefx-logo"
 
 
 def platform_name() -> str:
     """Brand name for email BODY copy: the tenant's brand when an
     email_branding context is active, else the platform's. Templates
-    must use this instead of a hard-coded "SwissCresta" literal."""
+    must use this instead of a hard-coded "PowerTradeFX" literal."""
     from ..email_branding import current_email_brand
     brand = current_email_brand()
     if brand and str(brand.get("name") or "").strip():
         return str(brand["name"]).strip()
-    return "SwissCresta"
+    return "PowerTradeFX"
 
 
 def render_layout(
@@ -47,7 +47,7 @@ def render_layout(
     cta_url: str | None = None,
     footer_note: str | None = None,
 ) -> str:
-    """Wraps body content in the standard SwissCresta email shell.
+    """Wraps body content in the standard PowerTradeFX email shell.
 
     Args:
       title:       big headline at the top of the card (escaped)
@@ -83,7 +83,7 @@ def render_layout(
     # When a tenant brand is on the email_branding contextvar, the shell
     # must carry THEIR identity: brand name in the header (no platform
     # logo), their name in the footer, and their support address — or no
-    # support line at all. A tenant's user must never see "SwissCresta".
+    # support line at all. A tenant's user must never see "PowerTradeFX".
     from ..email_branding import current_email_brand
     brand = current_email_brand()
     if brand:
@@ -103,14 +103,14 @@ def render_layout(
               You received this because of activity on your {escape(brand_name)} account.
               {support_line}"""
     else:
-        header_html = f"""<img src="cid:{LOGO_CID}" alt="SwissCresta"
+        header_html = f"""<img src="cid:{LOGO_CID}" alt="PowerTradeFX"
                    height="36"
                    style="display:block;height:36px;width:auto;border:0;outline:none;text-decoration:none;" />"""
-        footer_html = f"""SwissCresta — Trade without giving your money to any broker.<br>
-              You received this because of activity on your SwissCresta account.
+        footer_html = f"""PowerTradeFX — Trade without giving your money to any broker.<br>
+              You received this because of activity on your PowerTradeFX account.
               Need help? Reply to this email or contact
-              <a href="mailto:support@swisscresta.com" style="color:{_ACCENT};text-decoration:none;">
-                support@swisscresta.com</a>."""
+              <a href="mailto:support@powertradefx.com" style="color:{_ACCENT};text-decoration:none;">
+                support@powertradefx.com</a>."""
 
     return f"""<!doctype html>
 <html lang="en">

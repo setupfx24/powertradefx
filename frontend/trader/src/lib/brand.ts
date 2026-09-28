@@ -1,11 +1,11 @@
 /** Dashboard / in-app product name. */
-export const BRAND_NAME = 'SwissCresta';
+export const BRAND_NAME = 'PowerTradeFX';
 
 /** Lowercase machine-safe slug (storage keys, ids). */
-export const BRAND_SLUG = 'swisscresta';
+export const BRAND_SLUG = 'powertradefx';
 
-/** Public web domain (no scheme), e.g. "swisscresta.com". */
-export const BRAND_DOMAIN = 'swisscresta.com';
+/** Public web domain (no scheme), e.g. "powertradefx.com". */
+export const BRAND_DOMAIN = 'powertradefx.com';
 
 /**
  * Logo image path used by the marketing Navbar. Empty string means
@@ -28,7 +28,7 @@ export const BRAND_SUPPORT_EMAIL = `support@${BRAND_DOMAIN}`;
 export const BRAND_COPYRIGHT = `${BRAND_NAME} © ${new Date().getFullYear()}. All rights reserved.`;
 
 /** Zustand persist key for UI preferences (theme, terminal layout). */
-export const STORAGE_KEY_UI = 'swisscresta-ui';
+export const STORAGE_KEY_UI = 'powertradefx-ui';
 
 /** Legacy localStorage keys from earlier brand iterations. The inline
  * migration shim in `app/layout.tsx` checks each in turn on first load

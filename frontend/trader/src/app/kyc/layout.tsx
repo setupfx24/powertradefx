@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 export const metadata = {
-  title: 'Identity Verification — SwissCresta',
+  title: 'Identity Verification — PowerTradeFX',
   description: 'KYC verification: upload ID documents and proof of address.',
 }
 

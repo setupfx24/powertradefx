@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# SwissCresta — daily backup of Postgres + TimescaleDB + uploads/.
+# PowerTradeFX — daily backup of Postgres + TimescaleDB + uploads/.
 #
 # Runs on the host (NOT inside a container) and shells into the running
 # postgres / timescaledb containers via `docker compose exec` to take
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # ─── Config (overridable via env or .env) ─────────────────────────────
-COMPOSE_DIR="${SWISSCRESTA_DIR:-/opt/swisscresta}"
+COMPOSE_DIR="${POWERTRADEFX_DIR:-/opt/powertradefx}"
 
 # H-INF-2: load .env WITHOUT `source` — sourcing executes any command
 # substitution / backticks embedded in a value (arbitrary code as whoever runs
@@ -41,7 +41,7 @@ load_env_file "$COMPOSE_DIR/.env"
 
 DEST="${BACKUP_LOCAL_DIR:-${COMPOSE_DIR}/backups}"
 RETAIN_DAYS="${BACKUP_RETENTION_DAYS:-14}"
-# rclone remote — empty = local-only (NOT recommended for prod). Example: "b2:swisscresta-backups"
+# rclone remote — empty = local-only (NOT recommended for prod). Example: "b2:powertradefx-backups"
 RCLONE_REMOTE="${BACKUP_RCLONE_REMOTE:-}"
 # GPG passphrase for symmetric encryption (`gpg --symmetric --cipher-algo
 # AES256`). MUST be set in production — KYC documents, password hashes,
@@ -94,7 +94,7 @@ cd "$COMPOSE_DIR"
 DUMP="$DEST/postgres-$STAMP.sql.gz"
 log "dumping postgres → $DUMP"
 docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-  exec -T postgres pg_dumpall -U "${POSTGRES_USER:-swisscresta}" \
+  exec -T postgres pg_dumpall -U "${POSTGRES_USER:-powertradefx}" \
   | gzip > "$DUMP"
 encrypt_inplace "$DUMP"
 
@@ -115,7 +115,7 @@ if docker compose -f docker-compose.yml -f docker-compose.prod.yml ps -q timesca
    && [[ -n "$(docker compose -f docker-compose.yml -f docker-compose.prod.yml ps -q timescaledb)" ]]; then
   log "dumping timescaledb → $TS"
   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-    exec -T timescaledb pg_dumpall -U "${TIMESCALE_USER:-swisscresta}" \
+    exec -T timescaledb pg_dumpall -U "${TIMESCALE_USER:-powertradefx}" \
     | gzip > "$TS"
   encrypt_inplace "$TS"
 else

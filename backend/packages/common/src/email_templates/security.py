@@ -10,7 +10,7 @@ def render_new_login(
     user_agent: str | None,
     location: str | None,
     when_utc: str,
-    trader_app_url: str = "https://trade.swisscresta.com",
+    trader_app_url: str = "https://trade.powertradefx.com",
 ) -> tuple[str, str, str]:
     name = (first_name or "trader").strip() or "trader"
     rows: list[tuple[str, str]] = [("When (UTC)", when_utc)]

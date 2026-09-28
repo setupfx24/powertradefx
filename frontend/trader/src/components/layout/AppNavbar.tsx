@@ -214,12 +214,12 @@ export default function AppNavbar() {
               </span>
             )
           ) : (
-            /* Platform lockup. The original's wordmark is black, invisible
-               on the Vantablack canvas, so dark mode uses the generated
-               white-text variant (same red mark, wordmark recoloured). */
+            /* Platform lockup. The lockup's wordmark is black, invisible
+               on the Vantablack canvas, so dark mode uses the white-text
+               PowerTradeFX wordmark variant instead. */
             <Image
-              src={dark ? '/marketing/swisscresta-logo-dark.png' : '/marketing/swisscresta-logo.png'}
-              alt="SwissCresta"
+              src={dark ? '/marketing/powertradefx-logo-dark.png' : '/marketing/powertradefx-logo.png'}
+              alt="PowerTradeFX"
               width={195}
               height={36}
               priority

@@ -1,5 +1,5 @@
 /*
- * SwissCresta Broker API adapter for the TradingView Trading Terminal.
+ * PowerTradeFX Broker API adapter for the TradingView Trading Terminal.
  *
  * This turns the read-only chart into a trading chart: it draws a line for
  * every open position (with live P&L + a close ✕), and lets the user drag the
@@ -30,7 +30,7 @@
   function tickForDigits(d) { return Math.pow(10, -(d == null ? 5 : d)); }
   function pipForDigits(d)  { return Math.pow(10, -((d == null ? 5 : d) - 1)); }
 
-  function SwissCrestaBroker(host, bridge) {
+  function PowerTradeFXBroker(host, bridge) {
     this._host = host;
     this._bridge = bridge;
 
@@ -60,19 +60,19 @@
 
   // ---- helpers ------------------------------------------------------------
 
-  SwissCrestaBroker.prototype._tick = function (symbol) {
+  PowerTradeFXBroker.prototype._tick = function (symbol) {
     var m = this._meta[symbol];
     return tickForDigits(m ? m.digits : 5);
   };
 
-  SwissCrestaBroker.prototype._parsePositions = function () {
+  PowerTradeFXBroker.prototype._parsePositions = function () {
     var arr = [];
     try { arr = JSON.parse(this._bridge.positionsJson || "[]") || []; } catch (e) {}
     return arr;
   };
 
   // Build a TradingView Position object from a bridge position record.
-  SwissCrestaBroker.prototype._toTv = function (p) {
+  PowerTradeFXBroker.prototype._toTv = function (p) {
     var side = (String(p.side).toLowerCase() === "sell") ? Side.Sell : Side.Buy;
     var pos = {
       id: String(p.id),
@@ -89,7 +89,7 @@
   };
 
   // Reconcile the chart's position lines with the latest server snapshot.
-  SwissCrestaBroker.prototype._reconcile = function () {
+  PowerTradeFXBroker.prototype._reconcile = function () {
     var arr = this._parsePositions();
     var seen = {};
     var self = this;
@@ -134,7 +134,7 @@
   };
 
   // Smooth live P&L for positions on `sym` between polls.
-  SwissCrestaBroker.prototype._updatePL = function (sym) {
+  PowerTradeFXBroker.prototype._updatePL = function (sym) {
     var q = this._quotes[sym];
     if (!q) return;
     var self = this;
@@ -152,7 +152,7 @@
     if (touched) this._recomputeTotals();
   };
 
-  SwissCrestaBroker.prototype._recomputeTotals = function () {
+  PowerTradeFXBroker.prototype._recomputeTotals = function () {
     var total = 0;
     var self = this;
     Object.keys(this._positions).forEach(function (id) {
@@ -163,7 +163,7 @@
   };
 
   // Resolve/reject the pending modify/close promise; toast on rejection.
-  SwissCrestaBroker.prototype._onOp = function (id, op, ok, msg) {
+  PowerTradeFXBroker.prototype._onOp = function (id, op, ok, msg) {
     var key = id + "|" + op;
     var pend = this._pending[key];
     if (pend) {
@@ -180,26 +180,26 @@
 
   // ---- IBrokerCommon ------------------------------------------------------
 
-  SwissCrestaBroker.prototype.connectionStatus = function () { return Connected; };
+  PowerTradeFXBroker.prototype.connectionStatus = function () { return Connected; };
 
-  SwissCrestaBroker.prototype.chartContextMenuActions = function (context, options) {
+  PowerTradeFXBroker.prototype.chartContextMenuActions = function (context, options) {
     return this._host.defaultContextMenuActions(context, options);
   };
 
-  SwissCrestaBroker.prototype.isTradable = function (symbol) {
+  PowerTradeFXBroker.prototype.isTradable = function (symbol) {
     return Promise.resolve(true);
   };
 
-  SwissCrestaBroker.prototype.orders = function () { return Promise.resolve([]); };
+  PowerTradeFXBroker.prototype.orders = function () { return Promise.resolve([]); };
 
-  SwissCrestaBroker.prototype.executions = function (symbol) { return Promise.resolve([]); };
+  PowerTradeFXBroker.prototype.executions = function (symbol) { return Promise.resolve([]); };
 
-  SwissCrestaBroker.prototype.positions = function () {
+  PowerTradeFXBroker.prototype.positions = function () {
     var self = this;
     return Promise.resolve(this._parsePositions().map(function (p) { return self._toTv(p); }));
   };
 
-  SwissCrestaBroker.prototype.symbolInfo = function (symbol) {
+  PowerTradeFXBroker.prototype.symbolInfo = function (symbol) {
     var m = this._meta[symbol] || {};
     var d = (m.digits != null) ? m.digits : 5;
     return Promise.resolve({
@@ -213,9 +213,9 @@
     });
   };
 
-  SwissCrestaBroker.prototype.accountManagerInfo = function () {
+  PowerTradeFXBroker.prototype.accountManagerInfo = function () {
     return {
-      accountTitle: "SwissCresta",
+      accountTitle: "PowerTradeFX",
       summary: [
         { text: "Open P&L", wValue: this._openPl, formatter: "profit" },
       ],
@@ -235,26 +235,26 @@
 
   // ---- IBrokerAccountInfo -------------------------------------------------
 
-  SwissCrestaBroker.prototype.accountsMetainfo = function () {
-    return Promise.resolve([{ id: "main", name: "SwissCresta" }]);
+  PowerTradeFXBroker.prototype.accountsMetainfo = function () {
+    return Promise.resolve([{ id: "main", name: "PowerTradeFX" }]);
   };
 
-  SwissCrestaBroker.prototype.currentAccount = function () { return "main"; };
+  PowerTradeFXBroker.prototype.currentAccount = function () { return "main"; };
 
   // ---- IBrokerTerminal ----------------------------------------------------
 
   // Order entry stays in the native Order Ticket; reject any chart order entry.
-  SwissCrestaBroker.prototype.placeOrder = function (order) {
+  PowerTradeFXBroker.prototype.placeOrder = function (order) {
     this._host.showNotification("Use the Order panel",
       "Open new trades from the terminal's Order Ticket.", 1);
     return Promise.reject(new Error("Order entry is disabled on the chart"));
   };
 
-  SwissCrestaBroker.prototype.modifyOrder = function () { return Promise.resolve(); };
-  SwissCrestaBroker.prototype.cancelOrder = function () { return Promise.resolve(); };
+  PowerTradeFXBroker.prototype.modifyOrder = function () { return Promise.resolve(); };
+  PowerTradeFXBroker.prototype.cancelOrder = function () { return Promise.resolve(); };
 
   // Drag SL/TP handle -> modify the real server position.
-  SwissCrestaBroker.prototype.editPositionBrackets = function (positionId, brackets) {
+  PowerTradeFXBroker.prototype.editPositionBrackets = function (positionId, brackets) {
     var id = String(positionId);
     var sl = (brackets && brackets.stopLoss > 0) ? brackets.stopLoss : 0;
     var tp = (brackets && brackets.takeProfit > 0) ? brackets.takeProfit : 0;
@@ -266,7 +266,7 @@
   };
 
   // ✕ on the line -> close the real server position.
-  SwissCrestaBroker.prototype.closePosition = function (positionId) {
+  PowerTradeFXBroker.prototype.closePosition = function (positionId) {
     var id = String(positionId);
     var self = this;
     return new Promise(function (resolve, reject) {
@@ -276,7 +276,7 @@
   };
 
   // Broker config passed to TradingView.widget alongside broker_factory.
-  window.SWISSCRESTA_BROKER_CONFIG = {
+  window.POWERTRADEFX_BROKER_CONFIG = {
     configFlags: {
       supportPositions: true,
       supportPositionBrackets: true,   // draggable SL/TP on positions
@@ -299,5 +299,5 @@
     durations: [],
   };
 
-  window.makeBroker = function (host, bridge) { return new SwissCrestaBroker(host, bridge); };
+  window.makeBroker = function (host, bridge) { return new PowerTradeFXBroker(host, bridge); };
 })();

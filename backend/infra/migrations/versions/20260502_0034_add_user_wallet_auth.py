@@ -8,7 +8,7 @@ Adds:
                                               … RETURNING` on consume guarantees
                                               single-use even under concurrent verifies.
 
-The placeholder email used for wallet-only signups (`wallet_<addr>@wallet.swisscresta.local`)
+The placeholder email used for wallet-only signups (`wallet_<addr>@wallet.powertradefx.local`)
 will not collide with real signups because `.local` is a private TLD.
 
 Revision ID: 0034

@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 /* ═══════════════════════════════════════════════════════════
-   SwissCresta Admin — light + orange (matches the trader app's
+   PowerTradeFX Admin — light + orange (matches the trader app's
    Vantage palette). The dark token block is preserved as a
    fallback for anything that explicitly opts in via .dark, but
    :root is light by default so the whole admin renders white.

@@ -5,8 +5,8 @@
 // ── Trading ──────────────────────────────────────────────
 export const MAX_LEVERAGE = 500;
 export const DEFAULT_LEVERAGE = 100;
-export const SYMBOL_STORAGE_KEY = 'swisscresta-selected-symbol';
-export const AUTH_STORAGE_KEY = 'swisscresta-auth';
+export const SYMBOL_STORAGE_KEY = 'powertradefx-selected-symbol';
+export const AUTH_STORAGE_KEY = 'powertradefx-auth';
 
 // ── UI ───────────────────────────────────────────────────
 export const TOAST_DURATION_MS = 1500;

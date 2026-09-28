@@ -496,7 +496,7 @@ export default function AiStrategyMakerPage() {
             <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-border-primary px-3 sm:px-4">
               <span className="flex items-center gap-1.5 text-[10px] text-text-tertiary">
                 <Sparkles size={11} className="text-[#E94E1B]" aria-hidden />
-                Powered by SwissCresta AI
+                Powered by PowerTradeFX AI
               </span>
               <div className="flex items-center gap-2">
                 <PaneToggle

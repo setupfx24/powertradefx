@@ -28,7 +28,7 @@ from packages.common.src.redis_client import redis_client
 
 logger = logging.getLogger("auth_service")
 
-DEMO_SHARED_EMAIL = "demo@swisscresta.com"
+DEMO_SHARED_EMAIL = "demo@powertradefx.com"
 DEMO_STARTING_BALANCE = Decimal("10000")
 
 _rate_buckets: dict[str, list[float]] = {}
@@ -128,8 +128,8 @@ def _cookie_samesite() -> str:
 def _cookie_domain(request: Request | None = None) -> str | None:
     """Cookie Domain attribute, host-aware for white-label tenants.
 
-    COOKIE_DOMAIN (.swisscresta.com) makes the session span apex +
-    trade subdomain — but a Set-Cookie carrying Domain=.swisscresta.com
+    COOKIE_DOMAIN (.powertradefx.com) makes the session span apex +
+    trade subdomain — but a Set-Cookie carrying Domain=.powertradefx.com
     is silently REJECTED by browsers when the response is served on a
     tenant domain (tarundewangan.com), which broke demo/login on every
     white-label site. When the request's browser host isn't under the
@@ -234,7 +234,7 @@ def _send_welcome_email(user: User, *, via_google: bool) -> None:
         st = get_settings()
         subject, html, text = render_welcome(
             first_name=user.first_name,
-            trader_app_url=st.TRADER_APP_URL or "https://trade.swisscresta.com",
+            trader_app_url=st.TRADER_APP_URL or "https://trade.powertradefx.com",
             via_google=via_google,
         )
         fire_and_forget(send_email(user.email, subject, html, text=text))
@@ -253,7 +253,7 @@ async def _send_login_notification_email(
     Fires on every login (email/password, Google, wallet) so the account
     owner has a paper trail. Best-effort, fire-and-forget — never blocks
     the login response or rolls anything back. Skips wallet-placeholder
-    addresses (@wallet.swisscresta.local) since those aren't real mailboxes;
+    addresses (@wallet.powertradefx.local) since those aren't real mailboxes;
     those users get notified once they add a real email via the profile."""
     try:
         from packages.common.src.smtp_mail import (
@@ -262,8 +262,8 @@ async def _send_login_notification_email(
         if not smtp_configured() or not user.email:
             return
         # Wallet-first signups get a synthesized placeholder email; sending
-        # to wallet.swisscresta.local would just bounce.
-        if user.email.lower().endswith("@wallet.swisscresta.local"):
+        # to wallet.powertradefx.local would just bounce.
+        if user.email.lower().endswith("@wallet.powertradefx.local"):
             return
 
         ua = (request.headers.get("user-agent") or "").strip()
@@ -279,7 +279,7 @@ async def _send_login_notification_email(
             user_agent=ua,
             location=None,
             when_utc=when_utc,
-            trader_app_url=st.TRADER_APP_URL or "https://trade.swisscresta.com",
+            trader_app_url=st.TRADER_APP_URL or "https://trade.powertradefx.com",
         )
         fire_and_forget(send_email(user.email, subject, html, text=text))
     except Exception as e:
@@ -911,7 +911,7 @@ async def refresh_token(request: Request, db: AsyncSession) -> JSONResponse:
     # otherwise a pre-verification session (or one issued by an older build)
     # could be refreshed indefinitely. Demo and wallet-placeholder accounts have
     # no e-mail to verify and are exempt.
-    _is_wallet_placeholder = (user.email or "").lower().endswith("@wallet.swisscresta.local")
+    _is_wallet_placeholder = (user.email or "").lower().endswith("@wallet.powertradefx.local")
     if not getattr(user, "email_verified", False) and not getattr(user, "is_demo", False) and not _is_wallet_placeholder:
         row.revoked = True
         await db.flush()
@@ -984,7 +984,7 @@ def _reset_link_base(request: Request) -> str:
     if origin.startswith("http") and (not allowed or origin in allowed):
         return origin
     cfg = (get_settings().TRADER_APP_URL or "").strip().rstrip("/")
-    return cfg or "https://trade.swisscresta.com"
+    return cfg or "https://trade.powertradefx.com"
 
 
 async def forgot_password(email: str, request: Request, db: AsyncSession) -> dict:
@@ -1153,7 +1153,7 @@ async def setup_2fa(user_id: UUID, db: AsyncSession) -> dict:
         raise AuthServiceError("Two-factor authentication is already enabled", 409)
     secret = pyotp.random_base32()
     totp = pyotp.TOTP(secret)
-    provisioning_uri = totp.provisioning_uri(name=user.email, issuer_name="SwissCresta")
+    provisioning_uri = totp.provisioning_uri(name=user.email, issuer_name="PowerTradeFX")
     user.two_factor_secret = secret
     await db.commit()
     # `otp_uri` is what the trader profile UI reads; `qr_uri` kept for older clients.
@@ -1331,7 +1331,7 @@ async def get_me(user_id: UUID, db: AsyncSession) -> dict:
     # actually try to move money.
     ONBOARDING_RULE_CUTOFF = datetime(2026, 5, 8, tzinfo=timezone.utc)
     is_wallet_placeholder = bool(
-        (user.email or "").lower().endswith("@wallet.swisscresta.local")
+        (user.email or "").lower().endswith("@wallet.powertradefx.local")
     )
     wallet_linked = bool((user.wallet_address or "").strip())
     email_verified = bool(getattr(user, "email_verified", False))

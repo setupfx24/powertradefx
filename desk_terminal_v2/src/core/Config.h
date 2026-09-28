@@ -52,12 +52,12 @@ public:
     QString apiKey;
     QString apiSecret;
 
-    // REST base, e.g. https://api.swisscresta.com/api/algo
-    QString restBase = "https://api.swisscresta.com/api/algo";
-    // WebSocket URL, e.g. wss://api.swisscresta.com/ws/algo/prices
-    // WebSockets only work on the api. host — trade.swisscresta.com proxies REST
+    // REST base, e.g. https://api.powertradefx.com/api/algo
+    QString restBase = "https://api.powertradefx.com/api/algo";
+    // WebSocket URL, e.g. wss://api.powertradefx.com/ws/algo/prices
+    // WebSockets only work on the api. host — trade.powertradefx.com proxies REST
     // but its nginx block does not upgrade the connection.
-    QString wsUrl    = "wss://api.swisscresta.com/ws/algo/prices";
+    QString wsUrl    = "wss://api.powertradefx.com/ws/algo/prices";
 
     bool hasToken() const {
         return !token.trimmed().isEmpty() && !accountId.trimmed().isEmpty();

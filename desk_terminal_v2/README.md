@@ -1,7 +1,7 @@
-# SwissCresta Terminal
+# PowerTradeFX Terminal
 
-A native **C++ / Qt6 desktop trading terminal** for the SwissCresta platform.
-It connects to the [SwissCresta Algo API](../ALGO_API.md) over REST + WebSocket
+A native **C++ / Qt6 desktop trading terminal** for the PowerTradeFX platform.
+It connects to the [PowerTradeFX Algo API](../ALGO_API.md) over REST + WebSocket
 (see also the [web terminal reference](../WEB_TERMINAL_API.md))
 and gives you a live watchlist, candlestick charts,
 an order ticket (BUY / SELL / CLOSE), and an account panel — all updating in
@@ -71,24 +71,24 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 powershell -ExecutionPolicy Bypass -File run.ps1
 ```
 
-On first launch you sign in with your **SwissCresta email and password** — the
+On first launch you sign in with your **PowerTradeFX email and password** — the
 terminal mints its own algo key/secret from `POST /api/v1/algo/generate` once
 you pick an account. You can also paste an **API Key + Secret** generated in
-your SwissCresta dashboard instead. For production leave the endpoints as the
+your PowerTradeFX dashboard instead. For production leave the endpoints as the
 defaults:
 
-- REST base: `https://api.swisscresta.com/api/algo`
-- WebSocket: `wss://api.swisscresta.com/ws/algo/prices`
+- REST base: `https://api.powertradefx.com/api/algo`
+- WebSocket: `wss://api.powertradefx.com/ws/algo/prices`
 
-The WebSocket must use the `api.` host — `trade.swisscresta.com` proxies REST but
+The WebSocket must use the `api.` host — `trade.powertradefx.com` proxies REST but
 does not upgrade WebSocket connections. For a local backend, point both at your
 local gateway instead. Credentials are saved to
-`%APPDATA%\SwissCresta\SwissCresta Terminal\config.json`.
+`%APPDATA%\PowerTradeFX\PowerTradeFX Terminal\config.json`.
 
-> This build is the SwissCresta white-label of the TuskaEx terminal and shares
+> This build is the PowerTradeFX white-label of the TuskaEx terminal and shares
 > no identity with it: different config path, different installer AppId, and
 > **no** config migration. A TuskaEx sign-in is not carried over — that account
-> does not exist on SwissCresta's backend. Both apps can be installed side by
+> does not exist on PowerTradeFX's backend. Both apps can be installed side by
 > side.
 
 ## ⚠️ Smart App Control must be off to run

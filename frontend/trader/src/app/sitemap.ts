@@ -24,13 +24,13 @@ const MARKETING_ROUTES = [
   // Account tiers
   '/accounts/standard', '/accounts/pro', '/accounts/demo',
   // Company
-  '/company/why-swisscresta',
+  '/company/why-powertradefx',
 ] as const
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const host = process.env.NEXT_PUBLIC_MARKETING_HOST
     ? `https://${process.env.NEXT_PUBLIC_MARKETING_HOST}`
-    : 'https://swisscresta.com'
+    : 'https://powertradefx.com'
   const lastModified = new Date()
 
   return MARKETING_ROUTES.map((path) => ({

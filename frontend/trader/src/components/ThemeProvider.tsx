@@ -9,7 +9,7 @@ const DARK_BG = '#0a0a0a';
 const DARK_TEXT = '#ffffff';
 
 // Brand orange → black glow for dark mode. A warm radial bloom anchored at
-// the top of the viewport that fades into pure black — keeps the SwissCresta
+// the top of the viewport that fades into pure black — keeps the PowerTradeFX
 // orange (#E94E1B) present without washing out chart/panel surfaces.
 const DARK_BG_IMAGE =
   'radial-gradient(125% 75% at 50% -10%, rgba(233,78,27,0.30) 0%, rgba(150,55,16,0.13) 28%, rgba(10,10,10,0) 60%)';

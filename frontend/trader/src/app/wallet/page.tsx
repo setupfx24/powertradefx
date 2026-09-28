@@ -615,7 +615,7 @@ function WalletPageContent() {
       order_id: order.order_id,
       amount: Math.round(order.amount_inr * 100),
       currency: 'INR',
-      name: 'SwissCresta',
+      name: 'PowerTradeFX',
       description: `Deposit ${deposit.id.slice(0, 8)}`,
       theme: { color: '#E94E1B' },
       handler: async (resp: Record<string, string>) => {
@@ -704,7 +704,7 @@ function WalletPageContent() {
       order_id: orderId,
       amount: amountInr ? Math.round(amountInr * 100) : undefined,
       currency: 'INR',
-      name: 'SwissCresta',
+      name: 'PowerTradeFX',
       description: `Deposit ${deposit.id.slice(0, 8)}`,
       prefill: {},
       theme: { color: '#E94E1B' },
@@ -925,7 +925,7 @@ function WalletPageContent() {
       const token = api.getToken();
       // Multipart uploads bypass the api client (it sets a JSON
        // content-type) but we still need the absolute API base so the
-       // request lands on the gateway (api.swisscresta.com) and not on
+       // request lands on the gateway (api.powertradefx.com) and not on
        // whichever marketing apex / trader subdomain the user is on.
       const res = await fetch(`${getApiBase()}/wallet/withdraw/manual`, {
         method: 'POST',

@@ -61,7 +61,7 @@
   --toast-border: rgba(0, 0, 0, 0.1);
 }
 
-/* SwissCresta marketing tokens (`--mkt-*`) live in
+/* PowerTradeFX marketing tokens (`--mkt-*`) live in
  * `src/styles/marketing.css`, scoped under `[data-mkt]`. */
 
 /* ======================================= */
@@ -664,17 +664,17 @@ html {
 @keyframes flashRed { 0% { background-color: rgba(239,68,68,0.2); } 100% { background-color: transparent; } }
 
 /* react-hot-toast — library defaults are washed-out white squares; reskin
- * to the SwissCresta dark surface with proper padding, gap, and typography so
+ * to the PowerTradeFX dark surface with proper padding, gap, and typography so
  * single-line errors don't wrap mid-word and the icon doesn't crash into
  * the text. */
 /* The container the lib generates also needs to be clamped — it sits
  * fixed at the top and absolutely-positions each toast, so if its width
  * is unbounded the toasts can spill past the modal regardless of the
  * inner max-width. */
-.swisscresta-toaster,
-.swisscresta-toaster > div,
-.swisscresta-toaster div[role="status"],
-.swisscresta-toaster * {
+.powertradefx-toaster,
+.powertradefx-toaster > div,
+.powertradefx-toaster div[role="status"],
+.powertradefx-toaster * {
   max-width: min(440px, calc(100vw - 32px)) !important;
   box-sizing: border-box;
 }
@@ -682,7 +682,7 @@ html {
 /* Override the inline transform-positioning wrapper react-hot-toast
  * generates per-toast. The lib computes width: auto on it so the toast
  * grows to content; clamp it here too. */
-.swisscresta-toaster > div > div {
+.powertradefx-toaster > div > div {
   max-width: min(440px, calc(100vw - 32px)) !important;
   width: auto !important;
   white-space: normal !important;
@@ -690,7 +690,7 @@ html {
   word-break: break-word !important;
 }
 
-.swisscresta-hot-toast {
+.powertradefx-hot-toast {
   background: var(--toast-bg) !important;
   color: var(--toast-fg) !important;
   border: 1px solid var(--toast-border) !important;
@@ -718,7 +718,7 @@ html {
  * width — that's exactly what let long backend error strings stretch the
  * toast past its max-width and spill outside the box. flex:1 1 auto +
  * min-width:0 + overflow-wrap force the text to wrap inside the bounds. */
-.swisscresta-hot-toast > div[role="status"] {
+.powertradefx-hot-toast > div[role="status"] {
   flex: 1 1 auto;
   min-width: 0 !important;
   margin: 0 !important;
@@ -729,19 +729,19 @@ html {
 
 /* The status icon (✓ / ✕ / spinner) — the non-role child. Keep it at its
  * natural size so it never shrinks or wraps. */
-.swisscresta-hot-toast > div:not([role="status"]) {
+.powertradefx-hot-toast > div:not([role="status"]) {
   flex-shrink: 0;
   margin-right: 2px;
 }
 
 /* Tighten the close-button (×) for toasts that ship with one. */
-.swisscresta-hot-toast button {
+.powertradefx-hot-toast button {
   flex-shrink: 0;
   color: var(--toast-fg) !important;
   opacity: 0.55;
   transition: opacity 0.15s ease;
 }
-.swisscresta-hot-toast button:hover {
+.powertradefx-hot-toast button:hover {
   opacity: 1;
 }
 

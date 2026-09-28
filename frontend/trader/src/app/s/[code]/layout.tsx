@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react'
 
 export const metadata = {
-  title: 'Shared Trade — SwissCresta',
+  title: 'Shared Trade — PowerTradeFX',
   description: 'A trader shared this position with you.',
   openGraph: {
-    title: 'Shared Trade on SwissCresta',
-    description: 'View a position card a SwissCresta trader shared.',
+    title: 'Shared Trade on PowerTradeFX',
+    description: 'View a position card a PowerTradeFX trader shared.',
     type: 'website',
   },
 }

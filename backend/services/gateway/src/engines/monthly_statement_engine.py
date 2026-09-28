@@ -101,7 +101,7 @@ async def send_monthly_statements(
     if not smtp_configured():
         return 0
 
-    app_url = (get_settings().TRADER_APP_URL or "https://trade.swisscresta.com")
+    app_url = (get_settings().TRADER_APP_URL or "https://trade.powertradefx.com")
 
     candidates = (await db.execute(
         select(User).where(User.status == "active")
@@ -115,7 +115,7 @@ async def send_monthly_statements(
         nonlocal sent_counter
         if not user.email:
             return
-        if user.email.lower().endswith("@wallet.swisscresta.local"):
+        if user.email.lower().endswith("@wallet.powertradefx.local"):
             return
         if bool(getattr(user, "is_demo", False)):
             return

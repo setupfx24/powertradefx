@@ -7,8 +7,8 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 /**
- * @title SwissCrestaVaultV1
- * @notice Custody vault for SwissCresta — holds a single ERC20 stablecoin
+ * @title PowerTradeFXVaultV1
+ * @notice Custody vault for PowerTradeFX — holds a single ERC20 stablecoin
  *         (USDT in production) on behalf of all platform users.
  *
  * Design intent (Phase 1):
@@ -35,7 +35,7 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
  *
  * Reference: docs/vault-phase1-spec.md
  */
-contract SwissCrestaVaultV1 is AccessControl, Pausable {
+contract PowerTradeFXVaultV1 is AccessControl, Pausable {
     using SafeERC20 for IERC20;
 
     /// @notice The stablecoin this vault custodies. Set in constructor; never changes.

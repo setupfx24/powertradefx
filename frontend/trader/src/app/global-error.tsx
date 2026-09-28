@@ -52,7 +52,7 @@ export default function GlobalError({
             Critical Error
           </p>
           <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, marginBottom: 12 }}>
-            SwissCresta could not start.
+            PowerTradeFX could not start.
           </h1>
           <p style={{ color: '#9ca3af', lineHeight: 1.6, margin: 0, marginBottom: 24 }}>
             A critical error prevented the application from loading. The error has been logged.

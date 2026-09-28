@@ -1,4 +1,4 @@
-"""H-INF-9: production boot must refuse a default DB password (swisscresta_dev)
+"""H-INF-9: production boot must refuse a default DB password (powertradefx_dev)
 in DATABASE_URL / TIMESCALE_URL, like it already refuses default JWT secrets.
 """
 import unittest
@@ -7,8 +7,8 @@ from types import SimpleNamespace
 from packages.common.src import config
 
 _STRONG_JWT = "x" * 48
-_GOOD_DB = "postgresql+asyncpg://swisscresta:Str0ng-DB-pw@postgres:5432/swisscresta"
-_WEAK_DB = "postgresql+asyncpg://swisscresta:swisscresta_dev@postgres:5432/swisscresta"
+_GOOD_DB = "postgresql+asyncpg://powertradefx:Str0ng-DB-pw@postgres:5432/powertradefx"
+_WEAK_DB = "postgresql+asyncpg://powertradefx:powertradefx_dev@postgres:5432/powertradefx"
 
 
 def _settings(**over):

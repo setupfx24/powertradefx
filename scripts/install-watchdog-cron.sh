@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 #
-# Install the SwissCresta health watchdog as a root cron job (every 5 min).
-# Idempotent — rewrites /etc/cron.d/swisscresta-watchdog each run.
+# Install the PowerTradeFX health watchdog as a root cron job (every 5 min).
+# Idempotent — rewrites /etc/cron.d/powertradefx-watchdog each run.
 #
 #   sudo ./scripts/install-watchdog-cron.sh
 set -euo pipefail
 
-COMPOSE_DIR="${SWISSCRESTA_DIR:-/opt/swisscresta}"
+COMPOSE_DIR="${POWERTRADEFX_DIR:-/opt/powertradefx}"
 SCRIPT="$COMPOSE_DIR/scripts/health-watchdog.py"
-CRON_FILE="/etc/cron.d/swisscresta-watchdog"
-LOG="/var/log/swisscresta-watchdog.log"
-LOGROTATE="/etc/logrotate.d/swisscresta-watchdog"
+CRON_FILE="/etc/cron.d/powertradefx-watchdog"
+LOG="/var/log/powertradefx-watchdog.log"
+LOGROTATE="/etc/logrotate.d/powertradefx-watchdog"
 
 [[ $EUID -eq 0 ]] || { echo "[install] run with sudo"; exit 1; }
 [[ -f "$SCRIPT" ]] || { echo "[install] $SCRIPT missing"; exit 1; }
@@ -20,11 +20,11 @@ chmod +x "$SCRIPT"
 touch "$LOG"
 
 cat > "$CRON_FILE" <<EOF
-# SwissCresta health watchdog — pages by email when the platform breaks.
+# PowerTradeFX health watchdog — pages by email when the platform breaks.
 # Managed by scripts/install-watchdog-cron.sh.
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-*/5 * * * * root SWISSCRESTA_DIR=$COMPOSE_DIR /usr/bin/python3 $SCRIPT >> $LOG 2>&1
+*/5 * * * * root POWERTRADEFX_DIR=$COMPOSE_DIR /usr/bin/python3 $SCRIPT >> $LOG 2>&1
 EOF
 chmod 644 "$CRON_FILE"
 

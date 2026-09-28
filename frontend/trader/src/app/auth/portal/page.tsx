@@ -5,7 +5,7 @@
  * the landing-page Login button now points at. It reuses the exact
  * split-screen chrome of the sign-in page (FullScreenSignup), but the
  * right panel shows two choices instead of the credentials form:
- *   • Login with SwissCresta → the real /auth/login page.
+ *   • Login with PowerTradeFX → the real /auth/login page.
  * (The MT5 option was removed 2026-07-21 per client request.)
  */
 
@@ -29,12 +29,12 @@ export default function LoginPortalPage() {
         <div className="bg-black text-white p-8 md:p-12 md:w-1/2 relative overflow-hidden z-10 flex flex-col justify-between min-h-[20rem] md:min-h-[36rem]">
           <Link
             href="/"
-            aria-label="SwissCresta home"
+            aria-label="PowerTradeFX home"
             className="inline-flex items-center self-start relative z-10 bg-white/95 rounded-lg px-3 py-1.5"
           >
             <Image
-              src="/marketing/swisscresta-logo.png"
-              alt="SwissCresta"
+              src="/marketing/powertradefx-logo.png"
+              alt="PowerTradeFX"
               width={220}
               height={48}
               priority
@@ -42,7 +42,7 @@ export default function LoginPortalPage() {
             />
           </Link>
           <h1 className="text-2xl md:text-3xl font-medium leading-tight tracking-tight relative z-10">
-            A Swiss-precision trading platform for serious investors.
+            A precision trading platform for serious investors.
           </h1>
         </div>
 
@@ -54,17 +54,17 @@ export default function LoginPortalPage() {
             </p>
             <h2 className="text-3xl font-medium mb-2 tracking-tight">Sign in to your account</h2>
             <p className="text-[#5B5B5B]">
-              Access your account on the SwissCresta platform.
+              Access your account on the PowerTradeFX platform.
             </p>
           </div>
 
           <div className="flex flex-col gap-3">
-            {/* Login with SwissCresta → real sign-in page */}
+            {/* Login with PowerTradeFX → real sign-in page */}
             <Link
               href="/auth/login"
               className="group w-full bg-[#E94E1B] hover:bg-[#C73E11] text-white font-medium py-3.5 px-4 rounded-lg transition-colors inline-flex items-center justify-between gap-2"
             >
-              <span>Login with SwissCresta</span>
+              <span>Login with PowerTradeFX</span>
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
             </Link>
 

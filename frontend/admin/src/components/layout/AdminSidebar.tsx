@@ -190,10 +190,10 @@ export default function AdminSidebar({
             </span>
           )
         ) : !showLabels ? (
-          <img src="/logo.png" alt="SwissCresta" className="w-7 h-7 object-contain mx-auto" />
+          <img src="/logo.png" alt="PowerTradeFX" className="w-7 h-7 object-contain mx-auto" />
         ) : (
           <Link href="/" className="flex items-center min-w-0">
-            <img src="/swisscresta-logo.png" alt="SwissCresta" className="h-7 w-auto object-contain shrink-0" />
+            <img src="/powertradefx-logo.png" alt="PowerTradeFX" className="h-7 w-auto object-contain shrink-0" />
           </Link>
         )}
         {/* Desktop collapse toggle */}

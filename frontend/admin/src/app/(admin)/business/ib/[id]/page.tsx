@@ -120,7 +120,7 @@ export default function IBDetailPage() {
 
       // ── Row 1: Logo only (centered, nothing on its left or right) ──
       try {
-        const res = await fetch('/swisscresta-logo.png');
+        const res = await fetch('/powertradefx-logo.png');
         const blob = await res.blob();
         const logoData: string = await new Promise((resolve, reject) => {
           const reader = new FileReader();
@@ -193,7 +193,7 @@ export default function IBDetailPage() {
           doc.setFontSize(8);
           doc.setTextColor(140);
           doc.text(`Page ${d.pageNumber}`, w - 40, h - 20, { align: 'right' });
-          doc.text(`SwissCresta - confidential`, 40, h - 20);
+          doc.text(`PowerTradeFX - confidential`, 40, h - 20);
         },
       });
 

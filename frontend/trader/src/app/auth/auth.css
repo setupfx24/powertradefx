@@ -6,7 +6,7 @@
   --auth-bg: #FFFFFF;
   --auth-input-bg: #FFFFFF;
   --auth-border: #E5E5E5;
-  --auth-accent: #E94E1B;        /* SwissCresta orange */
+  --auth-accent: #E94E1B;        /* accent orange (theme accent, unchanged by rebrand) */
   --auth-accent-light: #F58A60;
   --auth-accent-dark: #C73E11;
   --auth-text: #0A0A0A;

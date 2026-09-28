@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Admin sign-in (SwissCresta Admin) — two-panel card matching the
+ * Admin sign-in (PowerTradeFX Admin) — two-panel card matching the
  * trader auth page: dark hero on the left, white form on the right,
  * orange accent. Functional layer unchanged: email + password against
  * the admin JWT store; redirect to /dashboard on success; the
@@ -38,7 +38,7 @@ export default function AdminLoginPage() {
   const [brand, setBrand] = useState<{ name: string; logoUrl: string | null } | null>(null);
   useEffect(() => {
     const host = window.location.hostname.toLowerCase();
-    const platformHosts = new Set(['admin.swisscresta.com', 'localhost', '127.0.0.1']);
+    const platformHosts = new Set(['admin.powertradefx.com', 'localhost', '127.0.0.1']);
     if (platformHosts.has(host)) return;
     let cancelled = false;
     (async () => {
@@ -117,7 +117,7 @@ export default function AdminLoginPage() {
             ) : (
               <Image
                 src="/logo.png"
-                alt="SwissCresta"
+                alt="PowerTradeFX"
                 width={200}
                 height={44}
                 priority
@@ -128,7 +128,7 @@ export default function AdminLoginPage() {
 
           <div className="relative z-10">
             <h1 className="text-2xl md:text-3xl font-medium leading-tight tracking-tight">
-              Operator console for the {brand ? brand.name : 'SwissCresta'} platform.
+              Operator console for the {brand ? brand.name : 'PowerTradeFX'} platform.
             </h1>
             <div className="mt-6 flex flex-wrap gap-2">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium text-white/80">
@@ -163,7 +163,7 @@ export default function AdminLoginPage() {
                   type="email"
                   id="email"
                   autoComplete="email"
-                  placeholder={brand ? `admin@${window.location.hostname.replace(/^admin\./, "")}` : "admin@swisscresta.com"}
+                  placeholder={brand ? `admin@${window.location.hostname.replace(/^admin\./, "")}` : "admin@powertradefx.com"}
                   className="text-sm w-full py-2.5 pl-10 pr-3 border border-[#E5E5E5] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#E94E1B]/20 focus:border-[#E94E1B] bg-white text-black transition-colors"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}

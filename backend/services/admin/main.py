@@ -155,7 +155,7 @@ async def lifespan(app: FastAPI):
 # explicitly dev/local.
 _EXPOSE_DOCS = app_settings.ENVIRONMENT in ("development", "local")
 app = FastAPI(
-    title="SwissCresta Admin API",
+    title="PowerTradeFX Admin API",
     version="1.0.0",
     lifespan=lifespan,
     docs_url="/docs" if _EXPOSE_DOCS else None,

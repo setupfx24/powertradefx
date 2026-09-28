@@ -31,7 +31,7 @@ Phase 2 = implement that broker adapter so we can switch to the native lines.
 ```ts
 new window.TradingView.widget({
   ...existing,
-  broker_factory: (host) => createSwissCrestaBroker(host),
+  broker_factory: (host) => createPowerTradeFXBroker(host),
   broker_config: {
     configFlags: {
       supportPositions: true,

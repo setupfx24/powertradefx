@@ -655,8 +655,8 @@ function AccountCard({
   // is a known copy/pool prefix (CF/IF followers, CT/PM/MM pools).
   const isManagedAccount = !!row.is_copy_trading || /^(CF|IF|CT|PM|MM)/.test(row.account_number);
   const groupName = row.account_group?.name?.trim() || 'Standard';
-  /* SwissCresta has a single server — Live for real, Demo for demo accounts. */
-  const serverLabel = row.is_demo ? 'SwissCresta-Demo' : 'SwissCresta-Live';
+  /* PowerTradeFX has a single server — Live for real, Demo for demo accounts. */
+  const serverLabel = row.is_demo ? 'PowerTradeFX-Demo' : 'PowerTradeFX-Live';
   /* Avatar mark — first letter of the group name; falls back to "S". */
 
   const balance = Number.isFinite(row.balance) ? row.balance : 0;

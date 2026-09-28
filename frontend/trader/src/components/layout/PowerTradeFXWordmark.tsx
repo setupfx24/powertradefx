@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import { useBrandDisplay } from '@/components/providers/BrandingProvider';
 
-const LOGO_SRC = '/marketing/swisscresta-logo.png';
+const LOGO_SRC = '/marketing/powertradefx-logo.png';
 
 type Props = {
   href?: string;
@@ -14,7 +14,7 @@ type Props = {
   textClassName?: string;
   /** Default: sidebar / header. Rail: tiny terminal left bar. */
   variant?: 'default' | 'rail';
-  /** Hide the Swiss-flag mark and render the wordmark only. Useful in
+  /** Hide the square P mark and render the wordmark only. Useful in
    *  contexts where the mark would clash (small badge embeds). */
   hideFlag?: boolean;
 };
@@ -22,12 +22,12 @@ type Props = {
 
 /**
  * Brand wordmark for dashboard chrome. On platform hosts this is the
- * SwissCresta lockup; on a white-label tenant domain it renders the
+ * PowerTradeFX lockup; on a white-label tenant domain it renders the
  * broker's logo (if uploaded) and/or brand name instead — this ONE
  * component is what re-brands most of the app chrome, so never
  * hard-code the platform logo at a call-site.
  */
-export function SwissCrestaWordmark({
+export function PowerTradeFXWordmark({
   href = '/dashboard',
   className,
   textClassName,
@@ -66,13 +66,13 @@ export function SwissCrestaWordmark({
           )
         ) : hideFlag ? (
           <span className="inline-flex items-baseline font-bold tracking-tight text-base select-none">
-            <span className="text-text-primary">S</span>
-            <span className="text-[#E94E1B]">C</span>
+            <span className="text-text-primary">P</span>
+            <span className="text-[#FA5600]">FX</span>
           </span>
         ) : (
           <Image
-            src="/marketing/swisscresta_fevicon.png"
-            alt="SwissCresta"
+            src="/marketing/powertradefx_fevicon.png"
+            alt="PowerTradeFX"
             width={28}
             height={28}
             priority
@@ -116,7 +116,7 @@ export function SwissCrestaWordmark({
       ) : (
         <Image
           src={LOGO_SRC}
-          alt="SwissCresta"
+          alt="PowerTradeFX"
           width={220}
           height={48}
           priority

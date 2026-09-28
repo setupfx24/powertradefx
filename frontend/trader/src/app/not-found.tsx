@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { Home, ArrowLeft } from 'lucide-react'
 
-export const metadata = { title: 'Page Not Found — SwissCresta' }
+export const metadata = { title: 'Page Not Found — PowerTradeFX' }
 
 /**
  * Root-level 404 — catches any path that doesn't match a route AND

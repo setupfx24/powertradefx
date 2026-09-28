@@ -71,7 +71,7 @@ const config: Config = {
           purple: '#9775FA',
           pink: '#F06595',
         },
-        /* Landing-page palette — SwissCresta brand */
+        /* Landing-page palette — PowerTradeFX brand */
         'primary': {
           bg: '#FFFFFF',
           secondary: '#FAFAFA',

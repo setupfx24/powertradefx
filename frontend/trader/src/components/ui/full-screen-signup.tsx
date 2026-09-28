@@ -32,8 +32,8 @@ const COPY: Record<Mode, {
   switchHref: string;
 }> = {
   signup: {
-    hero: 'A Swiss-precision trading platform for serious investors.',
-    eyebrow: 'Welcome to SwissCresta',
+    hero: 'A precision trading platform for serious investors.',
+    eyebrow: 'Welcome to PowerTradeFX',
     title: 'Create your account',
     subtitle: 'Trade FX, indices, metals and crypto with bank-grade execution.',
     cta: 'Create account',
@@ -42,9 +42,9 @@ const COPY: Record<Mode, {
     switchHref: '/auth/login',
   },
   login: {
-    hero: 'A Swiss-precision trading platform for serious investors.',
+    hero: 'A precision trading platform for serious investors.',
     eyebrow: 'Welcome back',
-    title: 'Sign in to SwissCresta',
+    title: 'Sign in to PowerTradeFX',
     subtitle: 'Access your portfolio, positions and watchlists.',
     cta: 'Sign in',
     switchPrompt: "Don't have an account yet?",
@@ -77,8 +77,8 @@ export const FullScreenSignup = ({ mode = 'signup' }: FullScreenSignupProps) => 
   const [referralCode, setReferralCode] = useState<string | null>(null);
   const brand = useBrandDisplay();
   // White-label tenants get their own name in every piece of copy and
-  // a neutral hero line (the platform's Swiss-precision pitch is
-  // SwissCresta marketing, not theirs).
+  // a neutral hero line (the platform's precision pitch is
+  // PowerTradeFX marketing, not theirs).
   const copy = brand.isWhiteLabel
     ? {
         ...COPY[mode],
@@ -258,8 +258,8 @@ export const FullScreenSignup = ({ mode = 'signup' }: FullScreenSignupProps) => 
               )
             ) : (
               <Image
-                src="/marketing/swisscresta-logo.png"
-                alt="SwissCresta"
+                src="/marketing/powertradefx-logo.png"
+                alt="PowerTradeFX"
                 width={220}
                 height={48}
                 priority

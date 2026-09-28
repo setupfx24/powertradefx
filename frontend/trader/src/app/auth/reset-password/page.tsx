@@ -79,17 +79,26 @@ function ResetPasswordForm() {
     <div className="auth-page min-h-screen relative overflow-hidden bg-bg-primary flex flex-col items-center justify-center px-6 py-10">
       <div className="w-full max-w-[400px]">
         <div className="mb-8 flex flex-col items-center gap-3">
-          {/* Inline Swiss-flag brand mark — no PNG dependency.
+          {/* Inline PowerTradeFX "P" brand mark — no PNG dependency.
               Same mark as the navbar / hero so the user knows they
               haven't been redirected to a different brand mid-reset. */}
           <svg viewBox="0 0 32 32" aria-hidden="true" className="w-14 h-14">
-            <rect width="32" height="32" rx="4" fill="#DC2626" />
-            <rect x="13" y="6" width="6" height="20" fill="#ffffff" />
-            <rect x="6" y="13" width="20" height="6" fill="#ffffff" />
+            <rect width="32" height="32" rx="7" fill="#FA5600" />
+            <text
+              x="16"
+              y="23"
+              textAnchor="middle"
+              fontSize="20"
+              fontWeight="700"
+              fontFamily="Arial, Helvetica, sans-serif"
+              fill="#ffffff"
+            >
+              P
+            </text>
           </svg>
           <span className="inline-flex items-baseline font-bold italic tracking-tight text-lg select-none">
-            <span className="text-text-primary">Swiss</span>
-            <span className="text-[#E94E1B]">Cresta</span>
+            <span className="text-text-primary">PowerTrade</span>
+            <span className="text-[#FA5600]">FX</span>
           </span>
         </div>
         <div className="glass-panel rounded-3xl p-8 noise-texture overflow-hidden">

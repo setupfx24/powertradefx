@@ -3,7 +3,7 @@
 /**
  * Small shared building blocks for the AI Strategies pages — page header,
  * status pills, empty states, metric tiles, collapsible sections. Follows the
- * SwissCresta light-theme tokens (bg-card / border-border-primary / text-*).
+ * PowerTradeFX light-theme tokens (bg-card / border-border-primary / text-*).
  */
 
 import { useState } from 'react';

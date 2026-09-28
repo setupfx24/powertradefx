@@ -23,8 +23,8 @@ class QJsonArray;
 class LoginDialog : public QDialog {
     Q_OBJECT
 public:
-    static constexpr const char* SC_REST    = "https://api.swisscresta.com/api/algo";
-    static constexpr const char* SC_WS      = "wss://api.swisscresta.com/ws/algo/prices";
+    static constexpr const char* SC_REST    = "https://api.powertradefx.com/api/algo";
+    static constexpr const char* SC_WS      = "wss://api.powertradefx.com/ws/algo/prices";
     static constexpr const char* LOCAL_REST = "http://localhost:8000/api/algo";
     static constexpr const char* LOCAL_WS   = "ws://localhost:8000/ws/algo/prices";
 
