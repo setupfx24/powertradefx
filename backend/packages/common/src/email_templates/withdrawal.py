@@ -18,7 +18,7 @@ def render_withdrawal_requested(
     method: str | None = None,
     destination: str | None = None,
     request_id: str | None = None,
-    trader_app_url: str = "https://trade.powertradefx.com",
+    trader_app_url: str = "https://powertradefx.com",
 ) -> tuple[str, str, str]:
     name = (first_name or "trader").strip() or "trader"
     rows: list[tuple[str, str]] = [
@@ -77,7 +77,7 @@ def render_withdrawal_approved(
     destination: str | None = None,
     transaction_hash: str | None = None,
     request_id: str | None = None,
-    trader_app_url: str = "https://trade.powertradefx.com",
+    trader_app_url: str = "https://powertradefx.com",
 ) -> tuple[str, str, str]:
     name = (first_name or "trader").strip() or "trader"
     rows: list[tuple[str, str]] = [
@@ -138,7 +138,7 @@ def render_withdrawal_rejected(
     currency: str = "USD",
     reason: str | None = None,
     request_id: str | None = None,
-    trader_app_url: str = "https://trade.powertradefx.com",
+    trader_app_url: str = "https://powertradefx.com",
 ) -> tuple[str, str, str]:
     name = (first_name or "trader").strip() or "trader"
     rows: list[tuple[str, str]] = [

@@ -18,7 +18,7 @@ def render_deposit_confirmed(
     method: str | None = None,
     reference: str | None = None,
     new_balance: Decimal | float | None = None,
-    trader_app_url: str = "https://trade.powertradefx.com",
+    trader_app_url: str = "https://powertradefx.com",
 ) -> tuple[str, str, str]:
     name = (first_name or "trader").strip() or "trader"
     rows: list[tuple[str, str]] = [

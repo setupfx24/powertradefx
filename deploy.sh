@@ -99,9 +99,9 @@ fi
 echo "▶ Healthcheck…"
 sleep 4
 CODE_API=$(curl -sk -o /dev/null -w "%{http_code}" https://api.powertradefx.com/health   || echo "000")
-CODE_TRD=$(curl -sk -o /dev/null -w "%{http_code}" https://trade.powertradefx.com/       || echo "000")
+CODE_TRD=$(curl -sk -o /dev/null -w "%{http_code}" https://powertradefx.com/             || echo "000")
 echo "  api.powertradefx.com/health  → HTTP $CODE_API"
-echo "  trade.powertradefx.com       → HTTP $CODE_TRD"
+echo "  powertradefx.com             → HTTP $CODE_TRD"
 
 # 5xx or a flat 000 (no connection) is a real failure. 4xx still means the
 # stack is up — caller can decide whether the route should exist.

@@ -194,7 +194,7 @@ async def send_withdrawal_requested_email(
             method=method_label or withdrawal.method or "manual",
             destination=destination_str,
             request_id=str(withdrawal.id),
-            trader_app_url=(_gs().TRADER_APP_URL or "https://trade.powertradefx.com"),
+            trader_app_url=(_gs().TRADER_APP_URL or "https://powertradefx.com"),
         )
         fire_and_forget(send_email(user_row.email, subject, html, text=text))
     except Exception as _e:
@@ -242,7 +242,7 @@ def _send_bonus_emails_for_user(
             return
         from packages.common.src.email_templates import render_bonus_credited
         st = get_settings()
-        app_url = (getattr(st, "TRADER_APP_URL", None) or "https://trade.powertradefx.com")
+        app_url = (getattr(st, "TRADER_APP_URL", None) or "https://powertradefx.com")
         for offer_name, bonus_amount in applied_bonuses:
             subject, html, text = render_bonus_credited(
                 first_name=user_row.first_name,
@@ -274,7 +274,7 @@ def _send_deposit_failed_email(
             return
         from packages.common.src.email_templates import render_deposit_failed
         st = get_settings()
-        app_url = (getattr(st, "TRADER_APP_URL", None) or "https://trade.powertradefx.com")
+        app_url = (getattr(st, "TRADER_APP_URL", None) or "https://powertradefx.com")
         subject, html, text = render_deposit_failed(
             first_name=user_row.first_name,
             amount=deposit.amount,
@@ -727,7 +727,7 @@ async def handle_oxapay_webhook(
                     method="Crypto (OxaPay)",
                     reference=str(deposit.id),
                     new_balance=user_row.main_wallet_balance,
-                    trader_app_url=(_gs().TRADER_APP_URL or "https://trade.powertradefx.com"),
+                    trader_app_url=(_gs().TRADER_APP_URL or "https://powertradefx.com"),
                 )
                 fire_and_forget(send_email(user_row.email, subject, html, text=text))
                 _send_bonus_emails_for_user(user_row, applied_bonuses)
@@ -1251,7 +1251,7 @@ async def _credit_razorpay_deposit_locked(
                 method="Card / UPI (Razorpay)",
                 reference=str(deposit.id),
                 new_balance=user_row.main_wallet_balance,
-                trader_app_url=(_gs().TRADER_APP_URL or "https://trade.powertradefx.com"),
+                trader_app_url=(_gs().TRADER_APP_URL or "https://powertradefx.com"),
             )
             fire_and_forget(send_email(user_row.email, subject, html, text=text))
             _send_bonus_emails_for_user(user_row, applied_bonuses)

@@ -437,8 +437,8 @@ def _verify_admin_ws_token(token: str | None) -> dict | None:
 
 def _normalize_origin(raw: str) -> str:
     """Lower-case + strip trailing slash + drop the port if it's the
-    default for the scheme. Lets `https://trade.powertradefx.com:443/`
-    compare equal to `https://trade.powertradefx.com`."""
+    default for the scheme. Lets `https://powertradefx.com:443/`
+    compare equal to `https://powertradefx.com`."""
     o = raw.strip().rstrip("/").lower()
     if o.startswith("https://") and o.endswith(":443"):
         o = o[:-4]

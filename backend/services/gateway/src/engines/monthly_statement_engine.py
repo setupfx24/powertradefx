@@ -101,7 +101,7 @@ async def send_monthly_statements(
     if not smtp_configured():
         return 0
 
-    app_url = (get_settings().TRADER_APP_URL or "https://trade.powertradefx.com")
+    app_url = (get_settings().TRADER_APP_URL or "https://powertradefx.com")
 
     candidates = (await db.execute(
         select(User).where(User.status == "active")

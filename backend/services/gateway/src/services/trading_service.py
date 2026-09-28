@@ -524,7 +524,7 @@ async def place_order(
                 stop_loss=_email_payload["stop_loss"],
                 take_profit=_email_payload["take_profit"],
                 when_utc=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                trader_app_url=st.TRADER_APP_URL or "https://trade.powertradefx.com",
+                trader_app_url=st.TRADER_APP_URL or "https://powertradefx.com",
             )
             await send_email(u.email, subject, html, text=text)
         except Exception as e:

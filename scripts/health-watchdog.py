@@ -226,7 +226,7 @@ def check_disk() -> tuple[bool, str]:
 
 CHECKS = [
     ("api", lambda: check_http("https://api.powertradefx.com/health", "api.powertradefx.com/health")),
-    ("trader", lambda: check_http("https://trade.powertradefx.com", "trade.powertradefx.com")),
+    ("trader", lambda: check_http("https://powertradefx.com", "powertradefx.com")),
     ("containers", check_containers),
     ("prices", check_prices),
     ("backup", check_backup),

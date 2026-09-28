@@ -13,7 +13,7 @@ def render_monthly_statement_available(
     first_name: str | None,
     statement_month_label: str,
     user_uid: str,
-    trader_app_url: str = "https://trade.powertradefx.com",
+    trader_app_url: str = "https://powertradefx.com",
 ) -> tuple[str, str, str]:
     pn = platform_name()
     name = (first_name or "trader").strip() or "trader"

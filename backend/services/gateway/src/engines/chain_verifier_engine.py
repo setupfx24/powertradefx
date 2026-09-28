@@ -358,7 +358,7 @@ async def _credit_deposit(db: AsyncSession, deposit: Deposit) -> None:
                 method=f"USDT-{(deposit.network or '').upper()}",
                 reference=str(deposit.id),
                 new_balance=user.main_wallet_balance,
-                trader_app_url=(get_settings().TRADER_APP_URL or "https://trade.powertradefx.com"),
+                trader_app_url=(get_settings().TRADER_APP_URL or "https://powertradefx.com"),
             )
             fire_and_forget(send_email(user.email, subject, html, text=text))
     except Exception as e:
@@ -396,7 +396,7 @@ async def _send_rejected_email(deposit: Deposit) -> None:
             method=f"USDT-{(deposit.network or '').upper()}",
             reason_code=deposit.rejection_reason or "verification failed",
             reference=str(deposit.id),
-            trader_app_url=(get_settings().TRADER_APP_URL or "https://trade.powertradefx.com"),
+            trader_app_url=(get_settings().TRADER_APP_URL or "https://powertradefx.com"),
         )
         fire_and_forget(send_email(user.email, subject, html, text=text))
     except Exception as e:

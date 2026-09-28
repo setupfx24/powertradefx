@@ -99,11 +99,10 @@ interface PositionRow {
 
 const TOP_MOVER_SYMBOLS = ['XAUUSD', 'NAS100', 'BTCUSD', 'EURUSD'];
 
-const tradeUrl = (accountId: string) => {
-  const host = process.env.NEXT_PUBLIC_TRADE_HOST;
-  const path = `/trading/terminal?account=${encodeURIComponent(accountId)}&view=chart`;
-  return host ? `https://${host}${path}` : path;
-};
+// The terminal lives on the same origin as the dashboard (the trade.
+// subdomain is retired), so the link is a plain path.
+const tradeUrl = (accountId: string) =>
+  `/trading/terminal?account=${encodeURIComponent(accountId)}&view=chart`;
 
 export default function DashboardPage() {
   return (

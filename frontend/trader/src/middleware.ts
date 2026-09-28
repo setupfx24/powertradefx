@@ -1,24 +1,18 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
 /**
- * Domain split (asymmetric, by design):
- *   - powertradefx.com (apex): marketing + auth + every user-app page.
- *     If the user lands on the apex with /trading/terminal, we bounce
- *     them to the trade subdomain so the terminal has a clean origin.
- *   - trade.powertradefx.com: hosts the trading terminal canonically, but
- *     ALSO serves every other page. Previously we redirected non-
- *     terminal traffic back to the apex, but that caused two persistent
- *     production issues: (1) RSC prefetches and TradingView chart
- *     bundles cross-origin to the apex, getting CORS-blocked; (2) some
- *     browsers cached 308 redirects from older middleware builds and
- *     replayed them locally for weeks even after we shipped fixes.
- *     Letting both hosts serve all pages eliminates both problems and
- *     adds no real cost — they're authenticated app pages, not
- *     marketing pages with SEO concerns.
+ * Host routing.
+ *   - powertradefx.com (apex) serves EVERYTHING: marketing, auth and every
+ *     user-app page including /trading/terminal. `/trade` is the app's
+ *     entry URL and sends the visitor to the terminal.
+ *   - trade.powertradefx.com is retired. It remains an alias that
+ *     redirects to the same path on the apex so old bookmarks, emails and
+ *     the mobile app keep working; it can be removed from DNS at any time.
+ *   - Any other host is a white-label tenant domain (see below).
  *
- * The auth cookie is Domain=.powertradefx.com so a single session works on
- * apex AND subdomain. If NEXT_PUBLIC_MARKETING_HOST or
- * NEXT_PUBLIC_TRADE_HOST is unset (local dev), this middleware no-ops.
+ * The auth cookie is Domain=.powertradefx.com so a session set on the apex
+ * is valid on the alias during the redirect. If NEXT_PUBLIC_MARKETING_HOST
+ * is unset (local dev) the host logic no-ops.
  *
  * ── Auth-endpoint rate limiting (P1 M4) ─────────────────────────
  * In-memory token bucket layered in front of the gateway as defense
@@ -33,7 +27,6 @@ import { NextResponse, type NextRequest } from 'next/server';
  * the proxy route which would already have ingested the JSON body.
  */
 
-const TRADE_PREFIXES = ['/trading/terminal'];
 const NEUTRAL_PREFIXES = ['/api/', '/_next/', '/s/', '/static/', '/images/'];
 const NEUTRAL_EXACT = new Set<string>(['/favicon.ico', '/robots.txt', '/sitemap.xml']);
 
@@ -133,10 +126,6 @@ function isTenantMarketingPath(path: string): boolean {
   );
 }
 
-function isTradePath(path: string): boolean {
-  return TRADE_PREFIXES.some((p) => path === p || path.startsWith(p + '/') || path.startsWith(p + '?'));
-}
-
 /* ── H-FE-3: private-route auth guard (defence in depth) ──────────
  * Unambiguously-authenticated app sections. A request to one of these
  * with no session cookie is redirected to /auth/login by the middleware,
@@ -201,7 +190,8 @@ export function middleware(req: NextRequest) {
   }
 
   const marketingHost = process.env.NEXT_PUBLIC_MARKETING_HOST;
-  const tradeHost = process.env.NEXT_PUBLIC_TRADE_HOST;
+  // Retired subdomain, kept only as a redirecting alias (may equal the apex).
+  const tradeHost = process.env.NEXT_PUBLIC_TRADE_HOST || marketingHost;
   if (!marketingHost || !tradeHost) return NextResponse.next();
 
   const host = req.headers.get('host')?.toLowerCase().split(':')[0] ?? '';
@@ -232,42 +222,26 @@ export function middleware(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
   if (isNeutral(pathname)) return NextResponse.next();
 
-  const trade = isTradePath(pathname);
-
-  // Helper: build a non-cacheable redirect. We use 307 (temporary) so a
-  // browser can never cache the redirect across deploys; we also set
-  // Cache-Control: no-store on the redirect response itself so the cache
-  // never holds onto it. Without this, a stale 308 redirect from an older
-  // middleware build will persist on every previously-visited browser
-  // even after we deploy a fix — the request never even leaves the browser.
+  // Helper: build a non-cacheable redirect. 307 so a browser can never
+  // cache the redirect across deploys (a cached 308 from an older build
+  // once persisted for weeks), plus Cache-Control: no-store on the response.
   const noCacheRedirect = (url: string) => {
     const r = NextResponse.redirect(url, 307);
     r.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
     return r;
   };
 
-  // Terminal route on apex → bounce to trade subdomain. Only top-level
-  // navigations are redirected — RSC prefetches / sub-resource fetches
-  // must stay same-origin so CORS doesn't break them.
-  if (onMarketing && trade) {
-    const rsc = req.headers.get('rsc');
-    const prefetch = req.headers.get('next-router-prefetch');
-    const nextRouterStateTree = req.headers.get('next-router-state-tree');
-    const mode = req.headers.get('sec-fetch-mode');
-    const hasRscQuery = req.nextUrl.searchParams.has('_rsc');
-    if (
-      rsc ||
-      prefetch ||
-      nextRouterStateTree ||
-      hasRscQuery ||
-      (mode && mode !== 'navigate')
-    ) {
-      return NextResponse.next();
-    }
-    return noCacheRedirect(`https://${tradeHost}${pathname}${search}`);
+  // The retired trade. host is an alias of the apex: same path, apex host.
+  if (onTrade && !onMarketing) {
+    return noCacheRedirect(`https://${marketingHost}${pathname}${search}`);
   }
-  // Trade subdomain → serve every page. We deliberately do NOT redirect
-  // back to apex anymore (see the file-level comment for context).
+
+  // /trade is the app's entry URL on the apex → the trading terminal
+  // (the private-route guard above sends a signed-out visitor to login).
+  if (pathname === '/trade' || pathname === '/trade/') {
+    return noCacheRedirect(`https://${marketingHost}/trading/terminal${search}`);
+  }
+
   return NextResponse.next();
 }
 

@@ -234,7 +234,7 @@ def _send_welcome_email(user: User, *, via_google: bool) -> None:
         st = get_settings()
         subject, html, text = render_welcome(
             first_name=user.first_name,
-            trader_app_url=st.TRADER_APP_URL or "https://trade.powertradefx.com",
+            trader_app_url=st.TRADER_APP_URL or "https://powertradefx.com",
             via_google=via_google,
         )
         fire_and_forget(send_email(user.email, subject, html, text=text))
@@ -279,7 +279,7 @@ async def _send_login_notification_email(
             user_agent=ua,
             location=None,
             when_utc=when_utc,
-            trader_app_url=st.TRADER_APP_URL or "https://trade.powertradefx.com",
+            trader_app_url=st.TRADER_APP_URL or "https://powertradefx.com",
         )
         fire_and_forget(send_email(user.email, subject, html, text=text))
     except Exception as e:
@@ -986,7 +986,7 @@ def _reset_link_base(request: Request) -> str:
     if origin.startswith("http") and (not allowed or origin in allowed):
         return origin
     cfg = (get_settings().TRADER_APP_URL or "").strip().rstrip("/")
-    return cfg or "https://trade.powertradefx.com"
+    return cfg or "https://powertradefx.com"
 
 
 async def forgot_password(email: str, request: Request, db: AsyncSession) -> dict:

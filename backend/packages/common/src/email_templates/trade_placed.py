@@ -28,7 +28,7 @@ def render_trade_placed(
     stop_loss: Decimal | float | None,
     take_profit: Decimal | float | None,
     when_utc: str,
-    trader_app_url: str = "https://trade.powertradefx.com",
+    trader_app_url: str = "https://powertradefx.com",
 ) -> tuple[str, str, str]:
     name = (first_name or "trader").strip() or "trader"
     side_u = (side or "").upper()
