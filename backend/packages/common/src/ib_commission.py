@@ -18,12 +18,12 @@ import logging
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
     Referral, IBProfile, IBCommission, IBCommissionPlan,
-    TradingAccount, Transaction, SystemSetting,
+    TradingAccount, Transaction, SystemSetting, Order,
 )
 
 logger = logging.getLogger("ib-engine")
@@ -55,7 +55,33 @@ async def distribute_ib_commission(
     lots: Decimal,
     instrument_symbol: str,
 ):
-    """Called after an order is filled. Distributes commission to the IB chain."""
+    """Called after an order is filled. Distributes commission to the IB chain.
+
+    Guards (audit 2026-09-28, before any IB plan existed in production):
+      * demo accounts never pay real IB money — a demo fill is play money on
+        one side and a withdrawable credit on the other;
+      * one payout per order — every fill path (market, pending, algo, copy)
+        calls this best-effort, so a retry must not pay the chain twice;
+      * an IB never earns from their own trading (self-referral / multi-
+        account farming): that level is skipped, the chain continues above.
+    """
+    # Idempotency: already paid for this order → nothing to do.
+    paid_q = await db.execute(
+        select(IBCommission.id).where(IBCommission.source_trade_id == order_id).limit(1)
+    )
+    if paid_q.scalar_one_or_none() is not None:
+        return
+
+    # Demo guard: resolve the order's account.
+    acct_q = await db.execute(
+        select(TradingAccount.is_demo)
+        .join(Order, Order.account_id == TradingAccount.id)
+        .where(Order.id == order_id)
+    )
+    is_demo = acct_q.scalar_one_or_none()
+    if is_demo is None or is_demo:
+        return
+
     referral_q = await db.execute(
         select(Referral).where(Referral.referred_id == trader_user_id)
     )
@@ -114,10 +140,25 @@ async def distribute_ib_commission(
     if mlm_dist is None:
         mlm_dist = await get_mlm_distribution(db)
 
+    # The chain can never receive more than 100% of the per-lot pool, whatever
+    # an admin typed into the plan. Negative levels pay nothing.
+    mlm_dist = [max(0, int(x)) for x in mlm_dist]
+    dist_total = sum(mlm_dist)
+    if dist_total > 100:
+        logger.warning("IB mlm_distribution sums to %d%% — scaling to 100%%", dist_total)
+        mlm_dist = [x * 100 // dist_total for x in mlm_dist]
+
     current_ib = direct_ib
     for level, pct in enumerate(mlm_dist, start=1):
         if current_ib is None:
             break
+
+        # An IB never earns on their own trades (self-referral). Skip the
+        # level, keep walking up so genuine uplines are still paid.
+        if current_ib.user_id == trader_user_id:
+            logger.warning("IB %s is the trader — self-referral level skipped", current_ib.referral_code)
+            current_ib = await _get_parent_ib(current_ib, db)
+            continue
 
         share = total_commission * Decimal(str(pct)) / Decimal("100")
         if share <= 0:
@@ -135,27 +176,41 @@ async def distribute_ib_commission(
         )
         db.add(commission_record)
 
-        current_ib.total_earned = (current_ib.total_earned or Decimal("0")) + share
+        # Atomic SQL increments: two fills paying the same IB at the same
+        # moment used to race on ORM read-modify-write and lose one credit.
+        await db.execute(
+            update(IBProfile)
+            .where(IBProfile.id == current_ib.id)
+            .values(total_earned=IBProfile.total_earned + share)
+        )
 
         ib_account_q = await db.execute(
-            select(TradingAccount).where(
+            select(TradingAccount.id).where(
                 TradingAccount.user_id == current_ib.user_id,
                 TradingAccount.is_demo == False,
                 TradingAccount.is_active == True,
-            ).limit(1)
+            ).order_by(TradingAccount.created_at.asc()).limit(1)
         )
-        ib_account = ib_account_q.scalar_one_or_none()
-        if ib_account:
-            ib_account.balance = (ib_account.balance or Decimal("0")) + share
-            ib_account.equity = ib_account.balance + (ib_account.credit or Decimal("0"))
-            ib_account.free_margin = ib_account.equity - (ib_account.margin_used or Decimal("0"))
+        ib_account_id = ib_account_q.scalar_one_or_none()
+        if ib_account_id:
+            credited = await db.execute(
+                update(TradingAccount)
+                .where(TradingAccount.id == ib_account_id)
+                .values(
+                    balance=TradingAccount.balance + share,
+                    equity=TradingAccount.equity + share,
+                    free_margin=TradingAccount.free_margin + share,
+                )
+                .returning(TradingAccount.balance)
+            )
+            balance_after = credited.scalar_one_or_none()
 
             db.add(Transaction(
                 user_id=current_ib.user_id,
-                account_id=ib_account.id,
+                account_id=ib_account_id,
                 type="ib_commission",
                 amount=share,
-                balance_after=ib_account.balance,
+                balance_after=balance_after,
                 description=f"IB commission L{level}: {instrument_symbol} {lots} lots",
             ))
 

@@ -203,6 +203,10 @@ async def update_ib_commission(
         profile.custom_commission_per_trade = None
     else:
         profile.commission_plan_id = None
+        for field in ("custom_commission_per_lot", "custom_commission_per_trade"):
+            v = getattr(body, field, None)
+            if v is not None and float(v) < 0:
+                raise HTTPException(status_code=400, detail=f"{field} cannot be negative")
         if body.custom_commission_per_lot is not None:
             profile.custom_commission_per_lot = body.custom_commission_per_lot
         if body.custom_commission_per_trade is not None:
@@ -269,9 +273,36 @@ async def list_commission_plans(db: AsyncSession) -> dict:
     return {"items": items}
 
 
+def _validate_plan(body) -> None:
+    """Refuse plans that would overpay or misbehave at distribution time:
+    negative rates, more than 100% across the MLM levels, or a distribution
+    list that does not match the level count."""
+    for field in ("commission_per_lot", "commission_per_trade", "cpa_per_deposit", "spread_share_pct"):
+        v = getattr(body, field, None)
+        if v is not None and float(v) < 0:
+            raise HTTPException(status_code=400, detail=f"{field} cannot be negative")
+    if float(getattr(body, "spread_share_pct", 0) or 0) > 100:
+        raise HTTPException(status_code=400, detail="spread_share_pct cannot exceed 100")
+    levels = int(getattr(body, "mlm_levels", 0) or 0)
+    if not 1 <= levels <= 10:
+        raise HTTPException(status_code=400, detail="mlm_levels must be between 1 and 10")
+    dist = list(getattr(body, "mlm_distribution", None) or [])
+    if len(dist) != levels:
+        raise HTTPException(status_code=400, detail=f"mlm_distribution must have exactly {levels} entries (one per level)")
+    try:
+        pcts = [float(x) for x in dist]
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="mlm_distribution must be a list of percentages")
+    if any(p < 0 or p > 100 for p in pcts):
+        raise HTTPException(status_code=400, detail="each mlm_distribution entry must be between 0 and 100")
+    if sum(pcts) > 100:
+        raise HTTPException(status_code=400, detail=f"mlm_distribution sums to {sum(pcts):g}% — the chain cannot receive more than 100%")
+
+
 async def create_commission_plan(
     body: IBCommissionPlanIn, admin_id: uuid.UUID, ip_address: str | None, db: AsyncSession,
 ) -> dict:
+    _validate_plan(body)
     if body.is_default:
         result = await db.execute(select(IBCommissionPlan).where(IBCommissionPlan.is_default == True))
         existing_default = result.scalar_one_or_none()
@@ -307,6 +338,7 @@ async def update_commission_plan(
     plan = result.scalar_one_or_none()
     if not plan:
         raise HTTPException(status_code=404, detail="Commission plan not found")
+    _validate_plan(body)
 
     if body.is_default and not plan.is_default:
         existing_q = await db.execute(select(IBCommissionPlan).where(IBCommissionPlan.is_default == True))
