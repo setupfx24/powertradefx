@@ -221,6 +221,29 @@ async def margin_for(
     return notional / lev
 
 
+async def recompute_account_margin(db: AsyncSession, account: TradingAccount) -> Decimal:
+    """Set account.margin_used to the margin of its OPEN positions (recomputed
+    with margin_for) and refresh free_margin from balance + credit.
+
+    Call after ANY open/close/modify that changes what an account holds, from
+    every path (user, SL/TP, stop-out, admin, copy). Subtracting a per-close
+    "release" amount drifts when exchange rates move between open and close
+    and leaves margin stuck on a flat account; recomputing cannot drift.
+    The caller must hold the account row lock."""
+    rows = (await db.execute(
+        select(Position)
+        .options(selectinload(Position.instrument))
+        .where(Position.account_id == account.id, Position.status == PositionStatus.OPEN)
+    )).scalars().all()
+    total = Decimal("0")
+    for p in rows:
+        total += await margin_for(p.lots, p.open_price, p.instrument, account.leverage)
+    account.margin_used = total
+    account.equity = Decimal(str(account.balance or 0)) + Decimal(str(account.credit or 0))
+    account.free_margin = account.equity - total
+    return total
+
+
 def calc_free_margin(account: TradingAccount) -> Decimal:
     """Return the free margin available for new trades."""
     equity = account.balance + account.credit

@@ -18,13 +18,23 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import User, TradingAccount
+from .models import User, TradingAccount, Position
+
+# populate_existing: if this session already holds the row (loaded earlier
+# without a lock), SQLAlchemy would otherwise hand back that STALE in-memory
+# copy even though the FOR UPDATE ran; the caller then writes a balance
+# computed from pre-lock values and silently erases a concurrent update
+# (QA 2026-09-29: concurrent closes/orders lost commission and P&L). With it,
+# the locked row's current values overwrite the in-session copy.
+_FRESH = {"populate_existing": True}
 
 
 async def lock_user(db: AsyncSession, user_id: UUID) -> User | None:
     """Lock and return the User row (FOR UPDATE). Lock this BEFORE any account."""
     return (
-        await db.execute(select(User).where(User.id == user_id).with_for_update())
+        await db.execute(
+            select(User).where(User.id == user_id).with_for_update().execution_options(**_FRESH)
+        )
     ).scalar_one_or_none()
 
 
@@ -36,4 +46,29 @@ async def lock_account(
     q = select(TradingAccount).where(TradingAccount.id == account_id)
     if user_id is not None:
         q = q.where(TradingAccount.user_id == user_id)
-    return (await db.execute(q.with_for_update())).scalar_one_or_none()
+    return (await db.execute(q.with_for_update().execution_options(**_FRESH))).scalar_one_or_none()
+
+
+async def lock_accounts(db: AsyncSession, account_ids) -> dict:
+    """Lock several accounts in the canonical ascending-id order (deadlock-safe).
+    Returns {account_id: TradingAccount}."""
+    out = {}
+    for aid in sorted({a for a in account_ids if a is not None}, key=str):
+        row = await lock_account(db, aid)
+        if row is not None:
+            out[aid] = row
+    return out
+
+
+async def lock_position(db: AsyncSession, position_id: UUID) -> Position | None:
+    """Lock and return a Position row (FOR UPDATE, fresh values).
+
+    Canonical order for trade mutations: user (if needed) -> account(s) ->
+    position. Every close/modify path must re-check the position's status
+    AFTER taking this lock, so a position closed concurrently is never closed
+    or credited twice."""
+    return (
+        await db.execute(
+            select(Position).where(Position.id == position_id).with_for_update().execution_options(**_FRESH)
+        )
+    ).scalar_one_or_none()
