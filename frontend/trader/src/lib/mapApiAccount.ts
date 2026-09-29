@@ -29,6 +29,7 @@ export function mapApiAccount(a: Record<string, unknown>): TradingAccount {
           minimum_deposit: Number(g.minimum_deposit) || 0,
           swap_free: Boolean(g.swap_free),
           leverage_default: Number(g.leverage_default) || 100,
+          is_cent: Boolean(g.is_cent),
         }
       : null,
   };

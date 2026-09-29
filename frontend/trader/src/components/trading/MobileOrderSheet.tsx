@@ -8,6 +8,7 @@ import toast from 'react-hot-toast';
 import { sounds, unlockAudio } from '@/lib/sounds';
 import AnimatedPrice from '@/components/ui/AnimatedPrice';
 import { marginUsd } from '@/lib/accountCurrency';
+import { formatAccountMoney } from '@/lib/accountMoney';
 
 interface MobileOrderSheetProps {
   symbol: string;
@@ -363,8 +364,8 @@ export default function MobileOrderSheet({ symbol, onClose, onGoToChart }: Mobil
              <div className="flex items-center justify-between mt-2 px-1">
                <span className="text-[9px] font-black text-text-tertiary uppercase tracking-widest">Margin Required</span>
                <span className={clsx('text-xs font-mono font-bold', hasEnoughMargin ? 'text-text-secondary' : 'text-[#ef5350]')}>
-                 ≈ ${marginRequired.toFixed(2)}
-                 <span className="font-normal text-text-tertiary"> · Free ${freeMargin.toFixed(2)}</span>
+                 ≈ {formatAccountMoney(marginRequired, activeAccount)}
+                 <span className="font-normal text-text-tertiary"> · Free {formatAccountMoney(freeMargin, activeAccount)}</span>
                </span>
              </div>
           </div>

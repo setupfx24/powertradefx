@@ -31,6 +31,7 @@ import Modal from '@/components/ui/Modal';
 import BrandCard, { useBrandTone } from '@/components/ui/BrandCard';
 import AccountTypePickerModal from '@/components/accounts/AccountTypePickerModal';
 import Pagination, { usePagination } from '@/components/ui/Pagination';
+import { formatAccountMoney, isCentAccount } from '@/lib/accountMoney';
 
 const ALIAS_PREFIX = 'ptd-account-alias:';
 
@@ -55,6 +56,11 @@ interface AccountRow {
 
 function fmt(n: number, currency = 'USD') {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: 2 }).format(n);
+}
+
+/** An account's own money: USC on a Cent account, else the account currency. */
+function fmtAcct(n: number, row: AccountRow) {
+  return isCentAccount(row) ? formatAccountMoney(n, row) : fmt(n, row.currency);
 }
 
 function readAlias(id: string): string {
@@ -789,12 +795,12 @@ function AccountCard({
           <div className="min-w-0 flex-1">
             <p className={clsx('text-[11px] uppercase tracking-wide font-semibold', t.tileMuted)}>Equity</p>
             <p className={clsx('truncate text-xl font-bold font-mono tabular-nums', t.tileText)}>
-              {hasNumbers ? fmt(balance, row.currency) : '--'}
+              {hasNumbers ? fmtAcct(balance, row) : '--'}
             </p>
             <p className={clsx('mt-0.5 text-xs', t.tileMuted)}>
-              Credits: {hasNumbers ? fmt(credit, row.currency) : '-'}
+              Credits: {hasNumbers ? fmtAcct(credit, row) : '-'}
               <span className={clsx('mx-2', t.tileFaint)}>|</span>
-              Balance: {hasNumbers ? fmt(balance, row.currency) : '-'}
+              Balance: {hasNumbers ? fmtAcct(balance, row) : '-'}
             </p>
           </div>
         </div>
@@ -847,7 +853,10 @@ function AccountCard({
             <li>Pending orders will be cancelled.</li>
             {balance > 0 ? (
               <li>
-                <span className="text-text-secondary font-semibold">{fmt(balance, row.currency)}</span> will transfer to your main wallet.
+                {/* The wallet is USD — a Cent account shows both units. */}
+                <span className="text-text-secondary font-semibold">
+                  {isCentAccount(row) ? `${fmtAcct(balance, row)} (${fmt(balance)})` : fmt(balance, row.currency)}
+                </span> will transfer to your main wallet.
               </li>
             ) : null}
           </ul>

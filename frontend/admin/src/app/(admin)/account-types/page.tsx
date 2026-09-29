@@ -16,6 +16,7 @@ interface AccountType {
   swap_free: boolean;
   is_demo: boolean;
   is_active: boolean;
+  is_cent?: boolean;
 }
 
 const EMPTY = {
@@ -28,6 +29,7 @@ const EMPTY = {
   swap_free: false,
   is_demo: false,
   is_active: true,
+  is_cent: false,
 };
 
 export default function AccountTypesPage() {
@@ -73,6 +75,7 @@ export default function AccountTypesPage() {
       swap_free: r.swap_free,
       is_demo: r.is_demo,
       is_active: r.is_active,
+      is_cent: Boolean(r.is_cent),
     });
     setModal(true);
   };
@@ -94,6 +97,7 @@ export default function AccountTypesPage() {
         swap_free: form.swap_free,
         is_demo: form.is_demo,
         is_active: form.is_active,
+        is_cent: form.is_cent,
       };
       if (editId) {
         await adminApi.put(`/account-types/${editId}`, body);
@@ -193,6 +197,7 @@ export default function AccountTypesPage() {
                   <td className="p-2 text-xxs text-text-secondary">
                     {r.is_demo ? 'demo ' : ''}
                     {r.swap_free ? 'swap-free ' : ''}
+                    {r.is_cent ? 'cent (USC) ' : ''}
                   </td>
                   <td className="p-2">
                     <div className="flex gap-1 justify-end">
@@ -296,6 +301,10 @@ export default function AccountTypesPage() {
               <label className="flex items-center gap-2 text-xs text-text-secondary">
                 <input type="checkbox" checked={form.is_demo} onChange={(e) => u('is_demo', e.target.checked)} />
                 Demo type
+              </label>
+              <label className="flex items-center gap-2 text-xs text-text-secondary" title="Money stays in USD; the trader sees this account's balance and results x100 in US cents (USC).">
+                <input type="checkbox" checked={form.is_cent} onChange={(e) => u('is_cent', e.target.checked)} />
+                Cent account (shown in USC, $1 = 100 USC)
               </label>
               <label className="flex items-center gap-2 text-xs text-text-secondary">
                 <input type="checkbox" checked={form.is_active} onChange={(e) => u('is_active', e.target.checked)} />

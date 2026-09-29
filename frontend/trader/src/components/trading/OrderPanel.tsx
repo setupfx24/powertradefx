@@ -16,6 +16,7 @@ import { quoteFreshness, staleQuoteMessage } from '@/lib/quoteStatus';
 import { wsManager } from '@/lib/ws/wsManager';
 import OrderPanelSymbolPicker from '@/components/trading/OrderPanelSymbolPicker';
 import { marginUsd } from '@/lib/accountCurrency';
+import { formatAccountMoney } from '@/lib/accountMoney';
 
 type OrderSide = 'buy' | 'sell';
 type OrderType = 'market' | 'pending';
@@ -167,7 +168,8 @@ export default function OrderPanel({
   const marginUsedVal = Number((activeAccount as { margin_used?: number } | null)?.margin_used ?? 0);
   const floatingPnl = equityVal - balanceVal - creditVal;
   const marginLevelNow = marginUsedVal > 0 ? (equityVal / marginUsedVal) * 100 : null;
-  const usd = (n: number) => `${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`;
+  // Account-scoped money: "1,234.56 USD", or "123,456.00 USC" on a Cent account.
+  const usd = (n: number) => formatAccountMoney(n, activeAccount, { style: 'code' });
 
   // Converted to USD (USDJPY notional is in yen); matches the server's margin.
   const marginRequired = useMemo(() => {
@@ -872,7 +874,7 @@ export default function OrderPanel({
               {[
                 ['Equity', usd(equityVal)],
                 ['Balance', usd(balanceVal)],
-                ['Floating PnL', `${floatingPnl >= 0 ? '' : '-'}${Math.abs(floatingPnl).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD (${balanceVal > 0 ? ((floatingPnl / balanceVal) * 100).toFixed(2) : '0.00'} %)`],
+                ['Floating PnL', `${usd(floatingPnl)} (${balanceVal > 0 ? ((floatingPnl / balanceVal) * 100).toFixed(2) : '0.00'} %)`],
                 ['Credit', usd(creditVal)],
                 ['Margin Level', marginLevelNow != null ? `${marginLevelNow.toLocaleString('en-US', { maximumFractionDigits: 2 })} %` : '--'],
                 ['Margin Used', usd(marginUsedVal)],

@@ -5,6 +5,7 @@ import { clsx } from 'clsx';
 import api from '@/lib/api/client';
 import toast from 'react-hot-toast';
 import DashboardShell from '@/components/layout/DashboardShell';
+import { formatAccountMoney } from '@/lib/accountMoney';
 import {
   Plug, Key, Copy, RefreshCw, Trash2, Loader2,
   Clock, Zap, AlertTriangle, Check, Eye,
@@ -19,6 +20,8 @@ interface AccountWithKey {
   is_demo: boolean;
   currency: string;
   account_type: string;
+  /** Not sent by /algo/accounts — filled from /accounts (Cent → USC). */
+  is_cent?: boolean;
   has_key: boolean;
   key_id: string | null;
   api_key: string | null;
@@ -77,8 +80,17 @@ export default function AlgoConnectorPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.get<{ items: AccountWithKey[] }>('/algo/accounts');
-      const items = res.items || [];
+      const [res, accRes] = await Promise.all([
+        api.get<{ items: AccountWithKey[] }>('/algo/accounts'),
+        api.get<unknown>('/accounts').catch(() => null),
+      ]);
+      // /algo/accounts has no account_group, so the Cent flag comes from /accounts.
+      const rawAccs = (Array.isArray(accRes) ? accRes : ((accRes as { items?: unknown[] } | null)?.items ?? [])) as {
+        id?: string;
+        account_group?: { is_cent?: boolean } | null;
+      }[];
+      const centIds = new Set(rawAccs.filter((r) => r.account_group?.is_cent).map((r) => String(r.id)));
+      const items = (res.items || []).map((a) => ({ ...a, is_cent: centIds.has(a.account_id) }));
       setAccounts(items);
       const firstAcc = items[0];
       if (!selectedAccId && firstAcc) setSelectedAccId(firstAcc.account_id);
@@ -179,7 +191,7 @@ export default function AlgoConnectorPage() {
                 >
                   {accounts.map(a => (
                     <option key={a.account_id} value={a.account_id}>
-                      {a.account_number} — {a.account_type}{a.is_demo ? ' (Demo)' : ''} — ${fmt(a.balance)} {a.has_key ? ' ✓ Connected' : ''}
+                      {a.account_number} — {a.account_type}{a.is_demo ? ' (Demo)' : ''} — {formatAccountMoney(a.balance, a)} {a.has_key ? ' ✓ Connected' : ''}
                     </option>
                   ))}
                 </select>

@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 import DashboardShell from '@/components/layout/DashboardShell';
 import DemoLockGate from '@/components/demo/DemoLockGate';
 import { formatCurrency } from '@/lib/formatters';
+import { formatAccountMoney, isCentAccount, toAccountUnits, CENT_CODE } from '@/lib/accountMoney';
 import { useAuthStore } from '@/stores/authStore';
 import api, { getApiBase } from '@/lib/api/client';
 // Automated deposits go through Razorpay Checkout (cards / UPI / netbanking).
@@ -46,6 +47,7 @@ interface AccountItem {
     id?: string;
     name?: string;
     minimum_deposit?: number;
+    is_cent?: boolean;
   } | null;
 }
 
@@ -62,6 +64,7 @@ interface LiveAccountRow {
     id?: string;
     name?: string;
     minimum_deposit?: number;
+    is_cent?: boolean;
   } | null;
 }
 
@@ -371,7 +374,12 @@ function WalletPageContent() {
 
         if (summaryRes.status === 'fulfilled' && summaryRes.value) {
           const s = summaryRes.value as WalletSummaryResponse & { bonus_balance?: number };
-          const live = s.live_accounts || [];
+          // /wallet/summary rows carry no account_group — borrow it from the
+          // /accounts rows so a Cent account (is_cent) is recognisable here.
+          const acctRows = accountsRes.status === 'fulfilled' ? accountsRes.value?.items || [] : [];
+          const live = (s.live_accounts || []).map((a) =>
+            a.account_group ? a : { ...a, account_group: acctRows.find((x) => x.id === a.id)?.account_group ?? null },
+          );
           setLiveAccounts(live);
           mainWalletBalance = Number(s.main_wallet_balance) || 0;
           bonusBalance = Number(s.bonus_balance) || 0;
@@ -1342,7 +1350,10 @@ function WalletPageContent() {
     ? liveAccounts.map((a) => ({
         id: a.id,
         label: `${a.account_group?.name || 'Standard'} · ${a.account_number || a.id.slice(0, 8)}`,
-        sublabel: formatCurrency(Number(a.balance) || 0, a.currency || wallet?.currency || 'USD'),
+        // A Cent account's own balance reads in USC; amounts typed stay USD.
+        sublabel: isCentAccount(a)
+          ? formatAccountMoney(Number(a.balance) || 0, a)
+          : formatCurrency(Number(a.balance) || 0, a.currency || wallet?.currency || 'USD'),
       }))
     : [
         {
@@ -2021,9 +2032,17 @@ function WalletPageContent() {
       ...liveAccounts.map((a) => ({
         id: a.id,
         label: `${a.account_group?.name || (a.is_wallet_account ? 'Wallet Account' : 'Standard')} · ${a.account_number || a.id.slice(0, 8)}`,
-        sublabel: formatCurrency(Number(a.balance) || 0, a.currency || wallet?.currency || 'USD'),
+        sublabel: isCentAccount(a)
+          ? formatAccountMoney(Number(a.balance) || 0, a)
+          : formatCurrency(Number(a.balance) || 0, a.currency || wallet?.currency || 'USD'),
       })),
     ];
+    // The typed amount is always USD. When either side is a Cent account,
+    // show what that is in the account's unit.
+    const centSide = liveAccounts.find(
+      (a) => (a.id === transferSourceId || a.id === transferDestinationId) && isCentAccount(a),
+    );
+    const transferAmountNum = parseFloat(transferAmount);
     return (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-12">
         <div className="lg:col-span-2 space-y-5">
@@ -2062,6 +2081,15 @@ function WalletPageContent() {
             <p className="text-xs text-text-tertiary leading-relaxed">
               Transfers between accounts are instant. Trading-account ↔ trading-account routes via your main wallet automatically.
             </p>
+            {centSide ? (
+              <p className="text-xs font-medium text-text-secondary">
+                Amount is in USD
+                {Number.isFinite(transferAmountNum) && transferAmountNum > 0
+                  ? ` = ${toAccountUnits(transferAmountNum, centSide).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${CENT_CODE}`
+                  : ` ($1 = 100 ${CENT_CODE})`}
+                {' '}on Cent account {centSide.account_number}.
+              </p>
+            ) : null}
           </div>
 
           <ContinueButton

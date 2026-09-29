@@ -8,6 +8,7 @@ import { wsManager } from '@/lib/ws/wsManager';
 import { tradeSocket } from '@/lib/ws/tradeSocket';
 import { extractTicksFromPayload } from '@/lib/ws/normalizePricePayload';
 import { mapApiAccount } from '@/lib/mapApiAccount';
+import { formatAccountMoney } from '@/lib/accountMoney';
 import api from '@/lib/api/client';
 import { sounds, unlockAudio } from '@/lib/sounds';
 import DashboardShell from '@/components/layout/DashboardShell';
@@ -238,6 +239,11 @@ function TradingSession({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!accountQueryId) return;
     tradeSocket.connect(accountQueryId);
+    // The account this socket reports on — P&L toasts use its unit (USC on Cent).
+    const socketAccount = () => {
+      const st = useTradingStore.getState();
+      return st.accounts.find((a) => a.id === accountQueryId) ?? st.activeAccount;
+    };
     const unsub = tradeSocket.subscribe((evt) => {
       // Copy-trade open on a follower account: the copy engine opens the
       // position server-side, so pull it into the open-positions list live
@@ -275,7 +281,7 @@ function TradingSession({ children }: { children: React.ReactNode }) {
         void refreshPositions();
         void refreshAccount();
         const soPnl = Number(evt.profit ?? 0);
-        toast.error(`Stop-out${soSym ? ` · ${soSym}` : ''}\nP&L: ${soPnl >= 0 ? '+' : '-'}$${Math.abs(soPnl).toFixed(2)}`, { duration: 5000 });
+        toast.error(`Stop-out${soSym ? ` · ${soSym}` : ''}\nP&L: ${formatAccountMoney(soPnl, socketAccount(), { signed: true })}`, { duration: 5000 });
         sounds.loss();
         return;
       }
@@ -302,7 +308,7 @@ function TradingSession({ children }: { children: React.ReactNode }) {
 
       if (reason === 'sl' || reason === 'tp') {
         const label = reason === 'tp' ? 'Take Profit' : 'Stop Loss';
-        const pnlStr = profit >= 0 ? `+$${profit.toFixed(2)}` : `-$${Math.abs(profit).toFixed(2)}`;
+        const pnlStr = formatAccountMoney(profit, socketAccount(), { signed: true });
         const title = symbol ? `${label} hit · ${symbol}` : `${label} hit`;
         if (reason === 'tp') {
           toast.success(`${title}\nP&L: ${pnlStr}`, { duration: 5000 });

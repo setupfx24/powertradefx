@@ -99,6 +99,8 @@ class AccountTypeIn(BaseModel):
     swap_free: bool = False
     is_demo: bool = False
     is_active: bool = True
+    # None = leave unchanged on update (older admin builds don't send it).
+    is_cent: Optional[bool] = None
 
 
 class AccountTypeOut(BaseModel):
@@ -112,6 +114,7 @@ class AccountTypeOut(BaseModel):
     swap_free: bool
     is_demo: bool
     is_active: bool
+    is_cent: bool = False
     created_at: Optional[datetime] = None
 
     class Config:

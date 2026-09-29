@@ -58,6 +58,8 @@ export interface AccountGroupInfo {
   minimum_deposit: number;
   swap_free: boolean;
   leverage_default: number;
+  /** Cent account: money is stored in USD; shown x100 as USC. */
+  is_cent?: boolean;
 }
 
 export interface TradingAccount {

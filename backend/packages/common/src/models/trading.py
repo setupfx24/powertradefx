@@ -34,6 +34,8 @@ class AccountGroup(Base):
     commission_pct = Column(Numeric(6, 4), nullable=True)
     minimum_deposit = Column(Numeric(18, 8), default=0)
     swap_free = Column(Boolean, default=False)
+    # Cent account: money is stored in USD; the apps display it x100 as USC.
+    is_cent = Column(Boolean, nullable=False, default=False, server_default="false")
     is_demo = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)

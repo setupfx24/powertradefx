@@ -30,6 +30,7 @@ import { ActiveAccountBadge } from '@/components/trading/ActiveAccountBadge';
 import dynamic from 'next/dynamic';
 import AnimatedPrice from '@/components/ui/AnimatedPrice';
 import { marginUsd, quoteToUsd } from '@/lib/accountCurrency';
+import { formatAccountMoney, toAccountUnits, isCentAccount, accountCurrencyCode } from '@/lib/accountMoney';
 
 // Lazy: ShareTradeModal pulls in html-to-image (~50KB) which is only needed
 // when the user actually opens the share dialog — keep it out of the
@@ -189,6 +190,8 @@ function TerminalPositionStaticCard({
   // GROSS (price-only) P&L so the card matches the position rows; commission
   // and swap are shown separately (Swaps / Fee line below), never folded in.
   const pnl = grossPnl(pos);
+  // The position's own account (Cent accounts show USC).
+  const posAccount = useTradingStore((s) => s.accounts.find((a) => a.id === pos.account_id) ?? s.activeAccount);
   const cur = pos.current_price;
   const priceDown = cur != null && (pos.side === 'buy' ? cur < pos.open_price : cur > pos.open_price);
 
@@ -221,7 +224,7 @@ function TerminalPositionStaticCard({
                 : 'bg-red-500/10 border-red-500/20 text-[#ff5252]',
             )}
           >
-            {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+            {formatAccountMoney(pnl, posAccount, { signed: true })}
           </div>
           <div className="flex justify-end gap-0.5 mt-1">
             <span className="text-[8px] font-semibold uppercase px-1 py-0.5 rounded bg-bg-secondary text-text-tertiary">
@@ -398,6 +401,19 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
     return inst?.digits ?? 5;
   };
 
+  /** The account a row belongs to (falls back to the active one). */
+  const accountFor = (accountId?: string | null) =>
+    (accountId ? accounts.find((x) => x.id === accountId) : undefined) ?? activeAccount;
+  /** Account-scoped money: "$12.34" on USD accounts, "1,234.00 USC" on Cent. */
+  const money = (usd: number, signed = false, accountId?: string | null) =>
+    formatAccountMoney(usd, accountFor(accountId), { signed });
+  /** Whole-unit notional exposure in the account's unit. */
+  const exposure = (usd: number, accountId?: string | null) => {
+    const acc = accountFor(accountId);
+    const v = toAccountUnits(usd, acc).toLocaleString('en-US', { maximumFractionDigits: 0 });
+    return isCentAccount(acc) ? `${v} USC` : `$${v}`;
+  };
+
   const accountLabel = (accountId: string) => {
     const a = accounts.find((x) => x.id === accountId);
     return a?.account_number ?? accountId.slice(0, 8);
@@ -524,13 +540,12 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
           { timeoutMs: 8_000 },
         );
         const pnl = res.profit ?? 0;
-        const sign = pnl >= 0 ? '+' : '';
         pnl >= 0 ? sounds.profit() : sounds.loss();
 
         if (res.remaining_lots && res.remaining_lots > 0) {
-          toast.success(`Partial @ ${res.close_price} | P&L: ${sign}$${pnl.toFixed(2)} | ${res.remaining_lots} lots left`);
+          toast.success(`Partial @ ${res.close_price} | P&L: ${money(pnl, true)} | ${res.remaining_lots} lots left`);
         } else {
-          toast.success(`Closed @ ${res.close_price} | P&L: ${sign}$${pnl.toFixed(2)}`);
+          toast.success(`Closed @ ${res.close_price} | P&L: ${money(pnl, true)}`);
         }
         Promise.all([refreshPositions(), refreshAccount(), loadHistory()]).catch(() => {});
       } catch (e) {
@@ -703,7 +718,7 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
         'Qty',
         'Open Price',
         'Current',
-        'P&L (gross)',
+        `P&L (gross, ${accountCurrencyCode(activeAccount)})`,
         'Commission',
         'Swap',
         'SL',
@@ -722,9 +737,9 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
         pos.lots,
         pos.open_price.toFixed(d),
         (pos.current_price ?? '').toString() ? Number(pos.current_price).toFixed(d) : '',
-        gross.toFixed(2),
-        comm.toFixed(2),
-        swap.toFixed(2),
+        toAccountUnits(gross, accountFor(pos.account_id)).toFixed(2),
+        toAccountUnits(comm, accountFor(pos.account_id)).toFixed(2),
+        toAccountUnits(swap, accountFor(pos.account_id)).toFixed(2),
         pos.stop_loss != null ? pos.stop_loss : '',
         pos.take_profit != null ? pos.take_profit : '',
       ]);
@@ -762,7 +777,7 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
         'Qty',
         'Open Price',
         'Close Price',
-        'P&L (gross)',
+        `P&L (gross, ${accountCurrencyCode(activeAccount)})`,
         'Commission',
         'Swap',
         'Close reason',
@@ -780,9 +795,9 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
         t.lots,
         t.open_price.toFixed(d),
         t.close_price.toFixed(d),
-        gross.toFixed(2),
-        comm.toFixed(2),
-        swap.toFixed(2),
+        toAccountUnits(gross, activeAccount).toFixed(2),
+        toAccountUnits(comm, activeAccount).toFixed(2),
+        toAccountUnits(swap, activeAccount).toFixed(2),
         closeReasonBadge(t.close_reason, t.close_price, d).label,
         t.close_time,
       ]);
@@ -851,7 +866,7 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                   )}
                 >
                   {'signed' in item && item.signed && item.value >= 0 ? '+' : ''}
-                  {item.value.toFixed(2)}
+                  {toAccountUnits(item.value, activeAccount).toFixed(2)}
                 </span>
               </div>
             ))}
@@ -1031,14 +1046,14 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                               : null;
                           const marginExposureLine =
                             m != null && notional != null
-                              ? `$${m.toFixed(2)} / $${notional.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+                              ? `${money(m, false, pos.account_id)} / ${exposure(notional, pos.account_id)}`
                               : notional != null
-                                ? `— / $${notional.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+                                ? `— / ${exposure(notional, pos.account_id)}`
                                 : '— / —';
                           const swapsFeeLine =
                             pos.swap === 0
-                              ? `— / $${pos.commission.toFixed(2)}`
-                              : `$${pos.swap.toFixed(2)} / $${pos.commission.toFixed(2)}`;
+                              ? `— / ${money(pos.commission, false, pos.account_id)}`
+                              : `${money(pos.swap, false, pos.account_id)} / ${money(pos.commission, false, pos.account_id)}`;
 
                           return (
                             <TerminalPositionStaticCard
@@ -1103,15 +1118,15 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                               </span>
                             </div>
                             <span className="font-mono text-sm font-bold tabular-nums" style={{ color: gross >= 0 ? '#2962FF' : '#FF2440' }} title="Gross P&L (price only)">
-                              {gross >= 0 ? '+' : ''}${gross.toFixed(2)}
+                              {money(gross, true)}
                             </span>
                           </div>
                           <div className="grid grid-cols-3 gap-x-3 gap-y-1 text-[11px]">
                             <div><span className="text-text-tertiary">Qty</span> <span className="text-text-primary font-mono">{pos.lots}</span></div>
                             <div><span className="text-text-tertiary">Open</span> <span className="text-text-primary font-mono">{pos.open_price.toFixed(d)}</span></div>
                             <div><span className="text-text-tertiary">Now</span> <AnimatedPrice value={pos.current_price} digits={d} className="text-text-primary font-mono" /></div>
-                            <div><span className="text-text-tertiary">Comm.</span> <span className="text-text-primary font-mono">-${Math.abs(charges).toFixed(2)}</span></div>
-                            <div><span className="text-text-tertiary">Swap</span> <span className="text-text-primary font-mono">{swap >= 0 ? '+' : '-'}${Math.abs(swap).toFixed(2)}</span></div>
+                            <div><span className="text-text-tertiary">Comm.</span> <span className="text-text-primary font-mono">{money(-Math.abs(charges))}</span></div>
+                            <div><span className="text-text-tertiary">Swap</span> <span className="text-text-primary font-mono">{money(swap, true)}</span></div>
                             <div><span className="text-text-tertiary">Acct</span> <span className="text-text-secondary">{accountLabel(pos.account_id)}</span></div>
                           </div>
                           <div className="flex items-center justify-between pt-1 border-t border-border-glass/40">
@@ -1213,16 +1228,16 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                             <td className={tdNum}>{pos.lots}</td>
                             <td className={clsx(tdNum, 'font-mono')}>{pos.open_price.toFixed(d)}</td>
                             <td className={clsx(tdNum, 'font-mono text-text-secondary')} title="Commission charged by the broker on this position">
-                              {charges > 0 ? `-$${charges.toFixed(2)}` : '—'}
+                              {charges > 0 ? money(-charges, false, pos.account_id) : '—'}
                             </td>
                             <td className={clsx(tdNum, 'font-mono text-text-secondary')} title="Overnight swap accrued on this position">
-                              {swap !== 0 ? `${swap >= 0 ? '+' : '-'}$${Math.abs(swap).toFixed(2)}` : '—'}
+                              {swap !== 0 ? money(swap, true, pos.account_id) : '—'}
                             </td>
                             <td className={clsx(tdNum, 'font-mono')}>
                               <AnimatedPrice value={pos.current_price} digits={d} />
                             </td>
                             <td className={clsx(tdNum, 'font-mono font-bold tabular-nums')} style={{ color: gross >= 0 ? '#2962FF' : '#FF2440' }} title="Gross P&L (price only) — commission and swap are shown separately">
-                              {gross >= 0 ? '+' : ''}${gross.toFixed(2)}
+                              {money(gross, true)}
                             </td>
                             <td className={clsx(td, 'text-[10px]')}>
                               {sltpEdit && sltpEdit.positionId === pos.id ? (
@@ -1569,7 +1584,7 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                                   <Share2 className="w-4 h-4" />
                                 </button>
                                 <span className="font-mono text-sm font-bold tabular-nums" style={{ color: gross >= 0 ? '#2962FF' : '#FF2440' }} title="Gross P&L (price only)">
-                                  {gross >= 0 ? '+' : ''}${gross.toFixed(2)}
+                                  {money(gross, true)}
                                 </span>
                               </div>
                             </div>
@@ -1591,11 +1606,11 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                               </div>
                               <div>
                                 <span className="text-text-tertiary">Comm.</span>{' '}
-                                <span className="text-text-primary font-mono">-${Math.abs(charges).toFixed(2)}</span>
+                                <span className="text-text-primary font-mono">{money(-Math.abs(charges))}</span>
                               </div>
                               <div>
                                 <span className="text-text-tertiary">Swap</span>{' '}
-                                <span className="text-text-primary font-mono">{swap >= 0 ? '+' : '-'}${Math.abs(swap).toFixed(2)}</span>
+                                <span className="text-text-primary font-mono">{money(swap, true)}</span>
                               </div>
                               <div>
                                 <span className={clsx('inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide', exitBadge.className)}>
@@ -1671,13 +1686,13 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                               {trade.take_profit != null ? trade.take_profit.toFixed(d) : '—'}
                             </td>
                             <td className={clsx(td, 'font-mono text-text-secondary tabular-nums')} title="Commission">
-                              -${Math.abs(charges).toFixed(2)}
+                              {money(-Math.abs(charges))}
                             </td>
                             <td className={clsx(td, 'font-mono text-text-secondary tabular-nums')} title="Swap">
-                              {swap >= 0 ? '+' : '-'}${Math.abs(swap).toFixed(2)}
+                              {money(swap, true)}
                             </td>
                             <td className={clsx(td, 'font-mono font-bold tabular-nums')} style={{ color: gross >= 0 ? '#2962FF' : '#FF2440' }} title="Gross P&L (price only)">
-                              {gross >= 0 ? '+' : ''}${gross.toFixed(2)}
+                              {money(gross, true)}
                             </td>
                             <td className={td}>
                               <span
@@ -1902,16 +1917,16 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                             className="font-mono font-bold tabular-nums"
                             style={{ color: gross >= 0 ? '#2962FF' : '#FF2440' }}
                           >
-                            {gross >= 0 ? '+' : ''}${gross.toFixed(2)}
+                            {money(gross, true)}
                           </span>
                         </div>
                         <div className="flex justify-between text-[11px] font-medium">
                           <span className="text-text-secondary">Commission</span>
-                          <span className="font-mono text-text-primary tabular-nums">-${Math.abs(charges).toFixed(2)}</span>
+                          <span className="font-mono text-text-primary tabular-nums">{money(-Math.abs(charges))}</span>
                         </div>
                         <div className="flex justify-between text-[11px] font-medium">
                           <span className="text-text-secondary">Swap</span>
-                          <span className="font-mono text-text-primary tabular-nums">{swap >= 0 ? '+' : '-'}${Math.abs(swap).toFixed(2)}</span>
+                          <span className="font-mono text-text-primary tabular-nums">{money(swap, true)}</span>
                         </div>
                       </>
                     );
@@ -2029,16 +2044,16 @@ export default function PositionsPanel({ variant = 'default' }: PositionsPanelPr
                             className="font-mono text-sm font-bold tabular-nums"
                             style={{ color: partGross >= 0 ? '#2962FF' : '#FF2440' }}
                           >
-                            {partGross >= 0 ? '+' : ''}${partGross.toFixed(2)}
+                            {money(partGross, true)}
                           </span>
                         </div>
                         <div className="mt-1 flex items-center justify-between px-3 text-[10px] text-text-tertiary">
                           <span>Commission {pct < 100 ? `(${pct}%)` : ''}</span>
-                          <span className="font-mono tabular-nums">-${Math.abs(partCharges).toFixed(2)}</span>
+                          <span className="font-mono tabular-nums">{money(-Math.abs(partCharges))}</span>
                         </div>
                         <div className="mt-0.5 flex items-center justify-between px-3 text-[10px] text-text-tertiary">
                           <span>Swap {pct < 100 ? `(${pct}%)` : ''}</span>
-                          <span className="font-mono tabular-nums">{partSwap >= 0 ? '+' : '-'}${Math.abs(partSwap).toFixed(2)}</span>
+                          <span className="font-mono tabular-nums">{money(partSwap, true)}</span>
                         </div>
                         {forcedFull && (
                           <p className="mt-1.5 text-[10px] text-text-tertiary leading-tight">

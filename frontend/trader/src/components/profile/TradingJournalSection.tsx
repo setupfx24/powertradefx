@@ -3,12 +3,16 @@
 import { BookOpen, BarChart3, DollarSign, Info, PieChart, TrendingUp, Wallet } from 'lucide-react';
 import { clsx } from 'clsx';
 import type { TradingJournalBlock } from '@/lib/trading-dashboard';
+import { formatAccountMoney, CENT_CODE, CENT_FACTOR } from '@/lib/accountMoney';
 
 const NEON = '#E94E1B';
 const CARD = 'var(--bg-card)';
 const BORDER = 'var(--border-primary)';
 
-function fmtUsd(n: number) {
+/* Figures arrive in USD. `cent` = the journal is for one Cent account
+   (journal.currency === 'USC'), so money is shown ×100 in US cents. */
+function fmtUsd(n: number, cent = false) {
+  if (cent) return formatAccountMoney(n, { is_cent: true });
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
@@ -17,11 +21,11 @@ function fmtUsd(n: number) {
   }).format(n);
 }
 
-function fmtCompactSigned(n: number) {
+function fmtCompactSigned(n: number, cent = false) {
   const sign = n >= 0 ? '+' : '−';
-  const a = Math.abs(n);
-  if (a >= 1000) return `${sign}$${(a / 1000).toFixed(1)}K`;
-  return `${sign}$${a.toFixed(0)}`;
+  const a = Math.abs(cent ? n * CENT_FACTOR : n);
+  const body = a >= 1000 ? `${(a / 1000).toFixed(1)}K` : a.toFixed(0);
+  return cent ? `${sign}${body} ${CENT_CODE}` : `${sign}$${body}`;
 }
 
 function RingGauge({
@@ -74,6 +78,7 @@ export default function TradingJournalSection({
   journal: TradingJournalBlock;
   title?: string;
 }) {
+  const cent = j.currency === CENT_CODE;
   return (
     <section className="text-text-primary">
       <div className="flex items-center gap-2 mb-4">
@@ -91,7 +96,7 @@ export default function TradingJournalSection({
                 <span className="w-1.5 h-1.5 rounded-full bg-[#E94E1B]" />
                 Balance
               </p>
-              <p className="text-2xl md:text-3xl font-bold mt-1 tabular-nums">{fmtUsd(j.balance)}</p>
+              <p className="text-2xl md:text-3xl font-bold mt-1 tabular-nums">{fmtUsd(j.balance, cent)}</p>
             </div>
             <div className="w-10 h-10 rounded-full bg-bg-secondary border border-border-primary flex items-center justify-center">
               <Wallet className="w-5 h-5 text-[#E94E1B]" />
@@ -105,7 +110,7 @@ export default function TradingJournalSection({
                 <span className="w-1.5 h-1.5 rounded-full bg-[#E94E1B]" />
                 Equity
               </p>
-              <p className="text-2xl md:text-3xl font-bold mt-1 tabular-nums">{fmtUsd(j.equity)}</p>
+              <p className="text-2xl md:text-3xl font-bold mt-1 tabular-nums">{fmtUsd(j.equity, cent)}</p>
             </div>
             <div className="w-10 h-10 rounded-full bg-bg-secondary border border-border-primary flex items-center justify-center">
               <DollarSign className="w-5 h-5 text-[#E94E1B]" />
@@ -119,7 +124,7 @@ export default function TradingJournalSection({
           {
             label: 'Net P&L',
             icon: DollarSign,
-            value: fmtCompactSigned(j.netPl),
+            value: fmtCompactSigned(j.netPl, cent),
             valueClass: j.netPl >= 0 ? 'text-[#E94E1B]' : 'text-red-400',
             sub: `${j.netPlTradeCount} trades`,
           },
@@ -179,8 +184,8 @@ export default function TradingJournalSection({
           </div>
           <ul className="space-y-2.5 text-sm">
             {[
-              ['Free margin', fmtUsd(j.freeMargin)],
-              ['Used margin', fmtUsd(j.usedMargin)],
+              ['Free margin', fmtUsd(j.freeMargin, cent)],
+              ['Used margin', fmtUsd(j.usedMargin, cent)],
               ['Margin level', j.marginLevel ?? 'N/A'],
               ['Currency', j.currency],
             ].map(([k, v]) => (

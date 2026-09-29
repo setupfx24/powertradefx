@@ -30,6 +30,7 @@ import { closeReasonLabel } from '@/lib/closeReason';
 import { FileDown } from 'lucide-react';
 
 import { downloadTradeStatementPdf } from '@/lib/pdf/tradeStatementPdf';
+import { formatAccountMoney, isCentAccount, CENT_CODE, type CentAware } from '@/lib/accountMoney';
 
 
 
@@ -181,6 +182,8 @@ interface AccountOption {
   id: string;
   account_number: string;
   is_demo: boolean;
+  /** Cent account — its figures are shown ×100 in USC when it is the scope. */
+  is_cent?: boolean;
 }
 
 function PortfolioPageContent() {
@@ -204,6 +207,7 @@ function PortfolioPageContent() {
             id: String(a.id),
             account_number: String(a.account_number ?? '').trim(),
             is_demo: Boolean(a.is_demo),
+            is_cent: isCentAccount(a as CentAware),
           })),
         );
       } catch {
@@ -234,6 +238,12 @@ function PortfolioPageContent() {
     const q = new URLSearchParams(queryKey);
     return parseAccountId(q.get('account_id') ?? q.get('account'));
   }, [queryKey]);
+
+  // One account in scope → its unit (USC on a Cent account). "All accounts"
+  // is a cross-account total and stays USD.
+  const scopeAccount = validAccountId ? accountOptions.find((a) => a.id === validAccountId) ?? null : null;
+  const money = (n: number, signed = false) =>
+    scopeAccount?.is_cent ? formatAccountMoney(n, scopeAccount, { signed }) : `${signed && n >= 0 ? '+' : ''}${fmt(n)}`;
 
   const accountNoLabel = useMemo(() => {
     const v = new URLSearchParams(queryKey).get('account_no');
@@ -524,9 +534,9 @@ function PortfolioPageContent() {
       freeMargin,
       usedMargin: approxUsedMargin,
       marginLevel,
-      currency: 'USD',
+      currency: scopeAccount?.is_cent ? CENT_CODE : 'USD',
     });
-  }, [summary, performance, allTrades, tf]);
+  }, [summary, performance, allTrades, tf, scopeAccount?.is_cent]);
 
   const tabs = [
 
@@ -663,7 +673,7 @@ function PortfolioPageContent() {
                       </div>
                       <div className="text-right">
                         <span className={clsx('text-sm font-mono font-semibold tabular-nums', h.pnl >= 0 ? 'text-buy' : 'text-sell')}>
-                          {h.pnl >= 0 ? '+' : ''}{fmt(h.pnl)}
+                          {money(h.pnl, true)}
                         </span>
                         {h.pnl_pct !== undefined && (
                           <span className={clsx('text-[10px] ml-1', h.pnl_pct >= 0 ? 'text-buy' : 'text-sell')}>
@@ -749,7 +759,7 @@ function PortfolioPageContent() {
 
                           <span className={clsx('text-xs font-mono font-semibold tabular-nums', h.pnl >= 0 ? 'text-buy' : 'text-sell')}>
 
-                            {h.pnl >= 0 ? '+' : ''}{fmt(h.pnl)}
+                            {money(h.pnl, true)}
 
                           </span>
 
@@ -845,7 +855,7 @@ function PortfolioPageContent() {
                             <span className={clsx('inline-flex text-[9px] font-semibold px-1.5 py-0.5 rounded-md border', ex.className)}>{ex.text}</span>
                           </div>
                           <span className={clsx('text-sm font-mono font-semibold tabular-nums', t.pnl >= 0 ? 'text-buy' : 'text-sell')}>
-                            {t.pnl >= 0 ? '+' : ''}{fmt(t.pnl)}
+                            {money(t.pnl, true)}
                           </span>
                         </div>
                         <div className="grid grid-cols-3 gap-x-3 text-[11px]">
@@ -943,7 +953,7 @@ function PortfolioPageContent() {
 
                             <span className={clsx('text-xs font-mono font-semibold tabular-nums', t.pnl >= 0 ? 'text-buy' : 'text-sell')}>
 
-                              {t.pnl >= 0 ? '+' : ''}{fmt(t.pnl)}
+                              {money(t.pnl, true)}
 
                             </span>
 

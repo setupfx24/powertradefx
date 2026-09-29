@@ -35,6 +35,7 @@ import { useTradingStore, type ChartExitsDraft } from '@/stores/tradingStore';
 import { createDatafeed, type DatafeedInstrument } from '@/lib/chart/datafeed';
 import { loadChartLibrary } from '@/lib/chart/loadChartLibrary';
 import { netPnl } from '@/lib/pnl';
+import { isCentAccount, toAccountUnits, CENT_CODE } from '@/lib/accountMoney';
 import toast from 'react-hot-toast';
 import { ChartTradeWidget } from '@/components/charts/ChartTradeWidget';
 
@@ -757,7 +758,14 @@ function TradingViewChartInner({
     let anchorTime = Math.floor(Date.now() / 1000);
     try { const vr = chart.getVisibleRange?.(); if (vr && Number.isFinite(vr.from)) anchorTime = Math.floor(vr.from); } catch { /* keep now */ }
 
-    const fmtPnl = (v: number) => `${v >= 0 ? '+' : '−'}$${Math.abs(v).toFixed(2)}`;
+    // Projected P&L in the active account's unit ("+$1.23", or "+123.00 USC"
+    // on a Cent account); the lines only ever show the active account's trades.
+    const fmtPnl = (v: number) => {
+      const acc = useTradingStore.getState().activeAccount;
+      const sign = v >= 0 ? '+' : '−';
+      const abs = Math.abs(toAccountUnits(v, acc)).toFixed(2);
+      return isCentAccount(acc) ? `${sign}${abs} ${CENT_CODE}` : `${sign}$${abs}`;
+    };
     const pnlColor = (pnl: number) => (Math.abs(pnl) < 0.10 ? BREAKEVEN_COLOR : pnl > 0 ? PROFIT_COLOR : LOSS_COLOR);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const netAt = (p: any, price: number) => {

@@ -11,6 +11,7 @@ import { useAuthStore } from '@/stores/authStore';
 import api from '@/lib/api/client';
 import { getErrorMessage } from '@/lib/errors';
 import MasterEligibilityBanner from '@/components/social/MasterEligibilityBanner';
+import { formatAccountMoney, isCentAccount } from '@/lib/accountMoney';
 import {
   DollarSign,
   TrendingUp,
@@ -430,6 +431,7 @@ interface TradingAccount {
   account_number: string;
   balance: number;
   is_demo?: boolean;
+  account_group?: { is_cent?: boolean | null } | null;
 }
 
 function CopyModal({
@@ -483,7 +485,11 @@ function CopyModal({
     if (destMode === 'existing') {
       if (!selectedAccountId) { toast.error('Pick a destination account'); return; }
       if (selectedAccount && amt > selectedAccount.balance) {
-        toast.error(`Account balance $${selectedAccount.balance.toFixed(2)} is below allocation`);
+        // Allocation is typed in USD; a Cent account's balance reads in USC.
+        const bal = isCentAccount(selectedAccount)
+          ? `${formatAccountMoney(selectedAccount.balance, selectedAccount)} ($${selectedAccount.balance.toFixed(2)})`
+          : `$${selectedAccount.balance.toFixed(2)}`;
+        toast.error(`Account balance ${bal} is below allocation`);
         return;
       }
     }
@@ -582,7 +588,7 @@ function CopyModal({
                 <option value="">— Select —</option>
                 {accounts.map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.account_number} · ${a.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {a.account_number} · {isCentAccount(a) ? formatAccountMoney(a.balance, a) : `$${a.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                   </option>
                 ))}
               </select>
@@ -1512,7 +1518,7 @@ function BecomeProviderTab() {
   // live accounts).
   const [accountMode, setAccountMode] = useState<'new' | 'existing'>('new');
   const [selectedAccountId, setSelectedAccountId] = useState('');
-  const [accounts, setAccounts] = useState<Array<{ id: string; account_number: string; balance: number; is_demo: boolean }>>([]);
+  const [accounts, setAccounts] = useState<Array<{ id: string; account_number: string; balance: number; is_demo: boolean; is_cent?: boolean }>>([]);
 
   // Strategy Info fields
   const [strategyName, setStrategyName] = useState('');
@@ -1541,6 +1547,7 @@ function BecomeProviderTab() {
             account_number: a.account_number,
             balance: Number(a.balance) || 0,
             is_demo: !!a.is_demo,
+            is_cent: isCentAccount(a),
           })));
         } catch {}
       } catch {} finally { setLoading(false); }
@@ -1752,7 +1759,7 @@ function BecomeProviderTab() {
                 <option value="">— Select —</option>
                 {accounts.map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.account_number} · ${a.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {a.account_number} · {isCentAccount(a) ? formatAccountMoney(a.balance, a) : `$${a.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                   </option>
                 ))}
               </select>

@@ -21,8 +21,14 @@ import { AlertCircle, Crosshair, Trash2, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '@/lib/api/client';
 import { useTradingStore, type Position } from '@/stores/tradingStore';
+import { formatAccountMoney, isCentAccount, toAccountUnits, CENT_CODE, type CentAware } from '@/lib/accountMoney';
 
-const usd = (n: number) => `${n < 0 ? '−' : n > 0 ? '+' : ''}$${Math.abs(n).toFixed(2)}`;
+/** Signed money in the account's unit: "+$1.23", or "+123.00 USC" on a Cent account. */
+const fmtAcct = (n: number, acc: CentAware | null | undefined) => {
+  const sign = n < 0 ? '−' : n > 0 ? '+' : '';
+  const abs = Math.abs(toAccountUnits(n, acc)).toFixed(2);
+  return isCentAccount(acc) ? `${sign}${abs} ${CENT_CODE}` : `${sign}$${abs}`;
+};
 
 function projectedNet(p: Position, price: number, contractSize: number, quoteToUsd: (v: number, price: number) => number): number {
   const gross = p.side === 'buy'
@@ -38,6 +44,7 @@ export default function ChartExitsPanel() {
   const instruments = useTradingStore((s) => s.instruments);
   const prices = useTradingStore((s) => s.prices);
   const activeAccount = useTradingStore((s) => s.activeAccount);
+  const usd = (n: number) => fmtAcct(n, activeAccount);
   const setDraft = useTradingStore((s) => s.setChartExitsDraft);
   const setCloseReq = useTradingStore((s) => s.setChartCloseRequest);
   const bumpReset = useTradingStore((s) => s.bumpChartLinesReset);
@@ -235,10 +242,10 @@ export default function ChartExitsPanel() {
           <dl className="mt-1 text-[12px] leading-none">
             {[
               ['Leverage', activeAccount ? `1:${activeAccount.leverage}` : '—'],
-              ['Trade value', `$${tradeValue.toLocaleString('en-US', { maximumFractionDigits: 2 })}`],
+              ['Trade value', formatAccountMoney(tradeValue, activeAccount)],
               ['Reward', tpPnl != null ? `${pct(tpPnl)!.toFixed(2)}% / ${usd(tpPnl)}` : '—'],
               ['Risk', slPnl != null ? `${pct(slPnl)!.toFixed(2)}% / ${usd(slPnl)}` : '—'],
-              ['Commission', `$${(Number(p.commission) || 0).toFixed(2)}`],
+              ['Commission', formatAccountMoney(Number(p.commission) || 0, activeAccount)],
             ].map(([k, v]) => (
               <div key={k} className="flex items-center justify-between gap-3 py-[3.5px]">
                 <dt className="text-text-tertiary underline decoration-dotted decoration-border-primary underline-offset-4">{k}</dt>

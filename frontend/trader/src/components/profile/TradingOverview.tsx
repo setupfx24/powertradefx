@@ -23,6 +23,7 @@ import {
   Target,
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import { formatAccountMoney, CENT_CODE, CENT_FACTOR } from '@/lib/accountMoney';
 import type { CalendarDayCell, TradingDashboardData } from '@/lib/trading-dashboard';
 import TradingJournalSection from '@/components/profile/TradingJournalSection';
 
@@ -32,7 +33,10 @@ const CARD = 'var(--bg-card)';
 const BORDER = 'var(--border-primary)';
 void RED;
 
-function fmtUsd(n: number) {
+/* Figures arrive in USD. `cent` = the overview is for one Cent account
+   (journal.currency === 'USC'), so money is shown ×100 in US cents. */
+function fmtUsd(n: number, cent = false) {
+  if (cent) return formatAccountMoney(n, { is_cent: true });
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
@@ -41,11 +45,11 @@ function fmtUsd(n: number) {
   }).format(n);
 }
 
-function fmtCompactSigned(n: number) {
+function fmtCompactSigned(n: number, cent = false) {
   const sign = n >= 0 ? '+' : '−';
-  const a = Math.abs(n);
-  if (a >= 1000) return `${sign}$${(a / 1000).toFixed(1)}K`;
-  return `${sign}$${a.toFixed(0)}`;
+  const a = Math.abs(cent ? n * CENT_FACTOR : n);
+  const body = a >= 1000 ? `${(a / 1000).toFixed(1)}K` : a.toFixed(0);
+  return cent ? `${sign}${body} ${CENT_CODE}` : `${sign}$${body}`;
 }
 
 function dayMapFromCells(cells: CalendarDayCell[]) {
@@ -54,7 +58,7 @@ function dayMapFromCells(cells: CalendarDayCell[]) {
   return m;
 }
 
-function EquityChart({ points }: { points: { date: string; equityUsd: number }[] }) {
+function EquityChart({ points, cent = false }: { points: { date: string; equityUsd: number }[]; cent?: boolean }) {
   const [hover, setHover] = useState<{ x: number; y: number; label: string; v: number } | null>(null);
   const w = 560;
   const h = 200;
@@ -145,7 +149,7 @@ function EquityChart({ points }: { points: { date: string; equityUsd: number }[]
             <g key={i}>
               <line x1={pad.l} y1={y} x2={w - pad.r} y2={y} stroke="var(--border-primary)" strokeWidth={1} />
               <text x={4} y={y + 4} fill="var(--text-tertiary)" fontSize={10}>
-                ${(yv / 1000).toFixed(0)}k
+                {cent ? `${((yv * CENT_FACTOR) / 1000).toFixed(0)}k` : `$${(yv / 1000).toFixed(0)}k`}
               </text>
             </g>
           );
@@ -190,7 +194,7 @@ function EquityChart({ points }: { points: { date: string; equityUsd: number }[]
               return String(hover.label ?? '');
             }
           })()}</div>
-          <div className="font-mono font-semibold text-text-primary">Equity {fmtUsd(hover.v)}</div>
+          <div className="font-mono font-semibold text-text-primary">Equity {fmtUsd(hover.v, cent)}</div>
         </div>
       ) : null}
     </div>
@@ -205,6 +209,7 @@ function EquityChart({ points }: { points: { date: string; equityUsd: number }[]
 export default function TradingOverview({ data }: { data: TradingDashboardData }) {
   const d = data;
   const j = d.journal;
+  const cent = j.currency === CENT_CODE;
   const [calMonth, setCalMonth] = useState(() => parseISO(`${d.calendar.defaultMonth}-01`));
   const [calView, setCalView] = useState<'usd' | 'pct' | 'r' | 'trades'>('usd');
   const dayMap = useMemo(() => dayMapFromCells(d.calendar.days), [d.calendar.days]);
@@ -257,7 +262,7 @@ export default function TradingOverview({ data }: { data: TradingDashboardData }
             <div className="flex items-center gap-1 flex-wrap">
               {(
                 [
-                  { id: 'usd' as const, label: '$' },
+                  { id: 'usd' as const, label: cent ? '¢' : '$' },
                   { id: 'pct' as const, label: '%' },
                   { id: 'r' as const, label: 'R' },
                   { id: 'trades' as const, label: 'T' },
@@ -305,7 +310,7 @@ export default function TradingOverview({ data }: { data: TradingDashboardData }
           </div>
 
           <div className="px-3 py-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] border-b border-border-primary bg-bg-secondary/40">
-            <span className="text-[#E94E1B] font-semibold">Monthly P&L {fmtCompactSigned(s.monthlyPnlUsd)}</span>
+            <span className="text-[#E94E1B] font-semibold">Monthly P&L {fmtCompactSigned(s.monthlyPnlUsd, cent)}</span>
             <span className="text-text-tertiary">
               Active days <span className="text-text-primary">{s.activeDays}</span>
             </span>
@@ -358,7 +363,7 @@ export default function TradingOverview({ data }: { data: TradingDashboardData }
                                 cell.pnlUsd! >= 0 ? 'text-[#E94E1B]' : 'text-red-400',
                               )}
                             >
-                              {fmtCompactSigned(cell.pnlUsd!)}
+                              {fmtCompactSigned(cell.pnlUsd!, cent)}
                             </span>
                           ) : null}
                           {calView === 'trades' && cell.trades != null ? (
@@ -381,7 +386,7 @@ export default function TradingOverview({ data }: { data: TradingDashboardData }
                 <div className="min-h-[72px] rounded-lg border border-border-primary bg-bg-secondary/50 flex flex-col items-center justify-center text-[10px]">
                   <span className="text-text-tertiary font-mono">
                     {/* wi is the week-index loop counter, bounded by weekTotals.length. */}
-                    {weekTotals[wi]!.n > 0 ? fmtCompactSigned(weekTotals[wi]!.sum) : '—'}
+                    {weekTotals[wi]!.n > 0 ? fmtCompactSigned(weekTotals[wi]!.sum, cent) : '—'}
                   </span>
                 </div>
               </div>
@@ -425,9 +430,9 @@ export default function TradingOverview({ data }: { data: TradingDashboardData }
             <ul className="space-y-2 text-sm">
               {[
                 ['Profit factor', d.stats.profitFactor.toFixed(2), 'text-[#E94E1B]'],
-                ['Avg win', fmtUsd(d.stats.avgWinUsd), 'text-[#E94E1B]'],
-                ['Avg loss', fmtUsd(-d.stats.avgLossUsd), 'text-red-400'],
-                ['Period P&L', fmtCompactSigned(d.stats.periodPnlUsd), 'text-[#E94E1B]'],
+                ['Avg win', fmtUsd(d.stats.avgWinUsd, cent), 'text-[#E94E1B]'],
+                ['Avg loss', fmtUsd(-d.stats.avgLossUsd, cent), 'text-red-400'],
+                ['Period P&L', fmtCompactSigned(d.stats.periodPnlUsd, cent), 'text-[#E94E1B]'],
                 ['Total trades', String(d.stats.totalTrades), 'text-text-primary'],
               ].map(([k, v, c]) => (
                 <li key={k} className="flex justify-between gap-2">
@@ -447,7 +452,7 @@ export default function TradingOverview({ data }: { data: TradingDashboardData }
             <LineChart className="w-5 h-5 text-[#E94E1B]" />
             <h3 className="font-bold text-text-primary">Equity growth</h3>
           </div>
-          <EquityChart points={d.equity} />
+          <EquityChart points={d.equity} cent={cent} />
         </div>
       </section>
     </div>

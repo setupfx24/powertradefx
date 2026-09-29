@@ -13,6 +13,7 @@ import Modal from '@/components/ui/Modal';
 import { useTradingStore } from '@/stores/tradingStore';
 import api from '@/lib/api/client';
 import { formatNumber } from '@/lib/formatters';
+import { formatAccountMoney, isCentAccount } from '@/lib/accountMoney';
 import { aiApi, type AiInstance } from '@/lib/ai-strategies';
 
 interface DeployAccount {
@@ -21,6 +22,7 @@ interface DeployAccount {
   balance: number;
   currency?: string;
   is_demo?: boolean;
+  account_group?: { is_cent?: boolean | null } | null;
 }
 
 interface DeployDialogProps {
@@ -59,6 +61,7 @@ export default function DeployDialog({
           balance: a.balance,
           currency: a.currency,
           is_demo: a.is_demo,
+          account_group: a.account_group ?? null,
         })),
       );
       setAccounts(list);
@@ -145,7 +148,9 @@ export default function DeployDialog({
                   )}
                 </div>
                 <span className="text-xs font-mono tabular-nums text-text-secondary shrink-0">
-                  ${formatNumber(a.balance)} {a.currency && a.currency !== 'USD' ? a.currency : ''}
+                  {isCentAccount(a)
+                    ? formatAccountMoney(a.balance, a)
+                    : <>${formatNumber(a.balance)} {a.currency && a.currency !== 'USD' ? a.currency : ''}</>}
                 </span>
               </button>
             ))}

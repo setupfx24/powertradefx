@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/Button';
 import DashboardShell from '@/components/layout/DashboardShell';
 import EmailVerificationCard from '@/components/profile/EmailVerificationCard';
 import api from '@/lib/api/client';
+import { formatAccountMoney, isCentAccount } from '@/lib/accountMoney';
 
 interface Profile {
   id: string;
@@ -47,6 +48,7 @@ interface TradingAccount {
   is_demo: boolean;
   status?: string;
   leverage?: number;
+  account_group?: { is_cent?: boolean | null } | null;
 }
 
 interface Session {
@@ -429,7 +431,9 @@ export default function ProfilePage() {
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
                         <div className="text-right">
-                          <p className="text-sm font-semibold text-text-primary">{fmt(acc.balance)}</p>
+                          <p className="text-sm font-semibold text-text-primary">
+                            {isCentAccount(acc) ? formatAccountMoney(acc.balance, acc) : fmt(acc.balance)}
+                          </p>
                           <p className="text-[10px] text-text-tertiary">Balance</p>
                         </div>
                         <span className={clsx(

@@ -27,6 +27,8 @@ export interface AvailableAccountGroup {
   /** Percentage brokerage fee (e.g. 0.0006 = 0.06%) from migration 0020. May be null on legacy rows. */
   commission_pct?: number | null;
   swap_free: boolean;
+  /** Cent account type — its balance is displayed in US cents (USC). */
+  is_cent?: boolean;
 }
 
 const fmtMoney = (n: number, currency = 'USD') =>
@@ -380,6 +382,11 @@ export default function AccountTypePickerModal({ open, onClose, onCreated }: Pro
                       <p className="text-xs text-text-tertiary mb-3 leading-snug line-clamp-2">
                         {g.description || 'Currencies, indices, metals, energies, crypto'}
                       </p>
+                      {g.is_cent && (
+                        <p className="text-[11px] font-medium text-accent mb-2 leading-snug">
+                          Balance shown in US cents (USC). $1 = 100 USC.
+                        </p>
+                      )}
                       <div className="space-y-1 text-[11px] text-text-secondary">
                         <Row k="Spread from" v={`${(g.spread_markup || 0.6).toFixed(1)} pips`} />
                         <Row k="Min deposit" v={fmtMoney(g.minimum_deposit || 0)} />

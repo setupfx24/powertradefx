@@ -5,6 +5,7 @@ import { clsx } from 'clsx';
 import { Info, Calculator, RotateCcw, Search, ChevronDown, X } from 'lucide-react';
 import { useTradingStore, type InstrumentInfo } from '@/stores/tradingStore';
 import { marginUsd } from '@/lib/accountCurrency';
+import { formatAccountMoney, isCentAccount, toAccountUnits, CENT_CODE } from '@/lib/accountMoney';
 
 type CalcTab = 'margin' | 'pnl' | 'lotsize' | 'swap';
 
@@ -288,11 +289,19 @@ export default function RiskCalculator() {
     tab === 'pnl' ? (pnlResult && pnlResult.pnl >= 0 ? 'Profit' : 'Loss') :
     tab === 'lotsize' ? 'Lot Size' : 'Est. Swap';
 
+  // Money in the selected account's unit (USC on a Cent account). All the
+  // math above stays in USD; only the display converts.
+  const money = (usd: number, signed = false) => formatAccountMoney(usd, selectedAccount, { signed });
+  const money4 = (usd: number) =>
+    isCentAccount(selectedAccount)
+      ? `${toAccountUnits(usd, selectedAccount).toFixed(4)} ${CENT_CODE}`
+      : `$${usd.toFixed(4)}`;
+
   const resultValue =
-    tab === 'margin' ? (marginResult ? `$${marginResult.margin.toFixed(2)}` : '$0.00') :
-    tab === 'pnl' ? (pnlResult ? `${pnlResult.pnl >= 0 ? '+' : '-'}$${Math.abs(pnlResult.pnl).toFixed(2)}` : '$0.00') :
+    tab === 'margin' ? money(marginResult ? marginResult.margin : 0) :
+    tab === 'pnl' ? (pnlResult ? money(pnlResult.pnl, true) : money(0)) :
     tab === 'lotsize' ? (lotResult ? lotResult.lotSize.toFixed(2) : '0.00') :
-    (swapResult ? `$${swapResult.totalSwap.toFixed(2)}` : '$0.00');
+    money(swapResult ? swapResult.totalSwap : 0);
 
   const resultDetails: { l: string; v: string }[] =
     tab === 'margin' && marginResult ? [
@@ -302,14 +311,14 @@ export default function RiskCalculator() {
     ] :
     tab === 'pnl' && pnlResult ? [
       { l: 'Pips', v: pnlResult.pips.toFixed(1) },
-      { l: 'Pip Value', v: `$${pnlResult.pipVal.toFixed(4)}` },
+      { l: 'Pip Value', v: money4(pnlResult.pipVal) },
     ] :
     tab === 'lotsize' && lotResult ? [
-      { l: 'Risk', v: `$${lotResult.riskAmt.toFixed(2)}` },
+      { l: 'Risk', v: money(lotResult.riskAmt) },
       { l: 'SL Pips', v: lotResult.slPips.toFixed(1) },
     ] :
     tab === 'swap' && swapResult ? [
-      { l: 'Daily', v: `$${swapResult.dailySwap.toFixed(4)}` },
+      { l: 'Daily', v: money4(swapResult.dailySwap) },
       { l: 'Days', v: String(swapResult.days) },
     ] : [];
 
@@ -369,7 +378,7 @@ export default function RiskCalculator() {
             <CompactSelect
               value={selectedAccountId}
               onChange={setSelectedAccountId}
-              options={accounts.map((a) => ({ value: a.id, label: `${a.account_number} — $${a.balance.toFixed(2)}${a.is_demo ? ' (D)' : ''}` }))}
+              options={accounts.map((a) => ({ value: a.id, label: `${a.account_number} — ${formatAccountMoney(a.balance, a)}${a.is_demo ? ' (D)' : ''}` }))}
               placeholder="Select Account"
             />
           </Row>
@@ -389,7 +398,7 @@ export default function RiskCalculator() {
           {tab === 'lotsize' && (
             <Row label="Account Balance" tip="Your balance">
               <div className="pt-0.5 text-[15px] font-bold tabular-nums text-text-primary">
-                ${balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {money(balance)}
               </div>
             </Row>
           )}

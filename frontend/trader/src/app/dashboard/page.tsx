@@ -25,7 +25,8 @@ import WorldMarketsMap from '@/components/dashboard/WorldMarketsMap';
 import Pagination, { usePagination } from '@/components/ui/Pagination';
 import api from '@/lib/api/client';
 import { useAuthStore } from '@/stores/authStore';
-import { formatCurrency as fmtUsd, formatNumber as fmtNum } from '@/lib/formatters';
+import { formatNumber as fmtNum } from '@/lib/formatters';
+import { formatAccountMoney } from '@/lib/accountMoney';
 
 interface AccountRow {
   id: string;
@@ -39,6 +40,8 @@ interface AccountRow {
   is_demo: boolean;
   swap_free?: boolean;
   account_group_name?: string | null;
+  /** Raw /accounts row carries the group; `is_cent` → amounts shown in USC. */
+  account_group?: { is_cent?: boolean | null } | null;
 }
 
 interface Banner {
@@ -454,6 +457,7 @@ function TradesSection({ trades, accounts }: { trades: PositionRow[]; accounts: 
   const pager = usePagination(trades, 8);
   const numberFor = (accountId: string) =>
     accounts.find((a) => a.id === accountId)?.account_number ?? '—';
+  const accountOf = (accountId: string) => accounts.find((a) => a.id === accountId);
   return (
     <Card title="Trades — all accounts">
       {trades.length === 0 ? (
@@ -492,7 +496,7 @@ function TradesSection({ trades, accounts }: { trades: PositionRow[]; accounts: 
                     up ? 'text-text-primary' : 'text-red-600',
                   )}
                 >
-                  {up ? '+' : ''}{fmtUsd(t.profit)}
+                  {formatAccountMoney(t.profit, accountOf(t.account_id), { signed: true })}
                 </span>
                 <a
                   href={tradeUrl(t.account_id)}
@@ -746,7 +750,7 @@ function AccountBalanceCard({
                     {acc.is_demo ? 'Demo' : 'Real'}
                   </span>
                   <span className="font-semibold tabular-nums">#{acc.account_number}</span>
-                  <span className="ml-auto text-xs text-text-tertiary tabular-nums">{fmtUsd(acc.balance)}</span>
+                  <span className="ml-auto text-xs text-text-tertiary tabular-nums">{formatAccountMoney(acc.balance, acc)}</span>
                 </button>
               ))}
             </div>
@@ -805,9 +809,9 @@ function AccountBalanceCard({
           (nothing to show) and any swap charged shows up per-trade in the
           history, so a static account-level "No swap: No" label added noise. */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 md:gap-6">
-        <Stat label="Balance" value={fmtUsd(a?.balance ?? 0)} highlight />
-        <Stat label="Free margin" value={fmtUsd(a?.free_margin ?? 0)} />
-        <Stat label="Equity" value={fmtUsd(a?.equity ?? 0)} />
+        <Stat label="Balance" value={formatAccountMoney(a?.balance ?? 0, a)} highlight />
+        <Stat label="Free margin" value={formatAccountMoney(a?.free_margin ?? 0, a)} />
+        <Stat label="Equity" value={formatAccountMoney(a?.equity ?? 0, a)} />
         <Stat label="Leverage" value={a ? `1:${a.leverage}` : '—'} />
       </div>
     </BrandCard>

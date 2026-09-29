@@ -112,6 +112,7 @@ async def list_openable_account_groups(
             "commission_per_lot": float(g.commission_default or 0),
             "commission_pct": float(g.commission_pct) if g.commission_pct is not None else None,
             "swap_free": bool(g.swap_free),
+            "is_cent": bool(getattr(g, "is_cent", False)),
         })
     return {"items": items, "user_is_islamic": bool(getattr(user, "is_islamic", False))}
 
@@ -249,6 +250,7 @@ async def open_live_account(
         "balance": float(new_acc.balance or 0),
         "account_group_id": str(group.id),
         "account_group_name": group.name,
+        "is_cent": bool(getattr(group, "is_cent", False)),
     }
 
 
@@ -465,6 +467,7 @@ async def list_accounts(user_id: UUID, db: AsyncSession) -> dict:
                 "commission_pct": float(g.commission_pct) if g.commission_pct is not None else None,
                 "minimum_deposit": float(g.minimum_deposit or 0),
                 "swap_free": bool(g.swap_free),
+                "is_cent": bool(getattr(g, "is_cent", False)),
                 "leverage_default": int(g.leverage_default or 100),
                 "max_leverage": int(g.max_leverage or g.leverage_default or 100),
             }

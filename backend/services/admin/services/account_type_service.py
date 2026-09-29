@@ -26,6 +26,7 @@ async def list_account_types(db: AsyncSession) -> dict:
                 swap_free=bool(g.swap_free),
                 is_demo=bool(g.is_demo),
                 is_active=bool(g.is_active),
+                is_cent=bool(getattr(g, "is_cent", False)),
                 created_at=g.created_at,
             )
             for g in rows
@@ -49,6 +50,7 @@ async def create_account_type(
         swap_free=body.swap_free,
         is_demo=body.is_demo,
         is_active=body.is_active,
+        is_cent=bool(body.is_cent),
     )
     db.add(g)
     await db.flush()
@@ -82,6 +84,8 @@ async def update_account_type(
     g.swap_free = body.swap_free
     g.is_demo = body.is_demo
     g.is_active = body.is_active
+    if body.is_cent is not None:
+        g.is_cent = body.is_cent
 
     await write_audit_log(
         db, admin_id, "update_account_type", "account_group", group_id,

@@ -7,6 +7,8 @@ import DashboardShell from '@/components/layout/DashboardShell';
 import { useTradingStore, type InstrumentInfo, type TradingAccount } from '@/stores/tradingStore';
 import api from '@/lib/api/client';
 import { marginUsd } from '@/lib/accountCurrency';
+import { mapApiAccount } from '@/lib/mapApiAccount';
+import { formatAccountMoney, isCentAccount, toAccountUnits, CENT_CODE } from '@/lib/accountMoney';
 
 type CalcTab = 'margin' | 'pnl' | 'lotsize' | 'swap';
 
@@ -221,34 +223,6 @@ function ResultPanel({ label, value, details }: { label: string; value: string; 
   );
 }
 
-function mapApiAccount(a: Record<string, unknown>): TradingAccount {
-  const g = a.account_group as Record<string, unknown> | null | undefined;
-  return {
-    id: String(a.id),
-    account_number: String(a.account_number ?? ''),
-    balance: Number(a.balance) || 0,
-    credit: Number(a.credit) || 0,
-    equity: Number(a.equity ?? a.balance) || 0,
-    margin_used: Number(a.margin_used) || 0,
-    free_margin: Number(a.free_margin ?? a.balance) || 0,
-    margin_level: Number(a.margin_level) || 0,
-    leverage: Number(a.leverage) || 100,
-    currency: String(a.currency ?? 'USD'),
-    is_demo: Boolean(a.is_demo),
-    account_group: g
-      ? {
-          id: String(g.id),
-          name: String(g.name ?? 'Account'),
-          spread_markup: Number(g.spread_markup) || 0,
-          commission_per_lot: Number(g.commission_per_lot) || 0,
-          minimum_deposit: Number(g.minimum_deposit) || 0,
-          swap_free: Boolean(g.swap_free),
-          leverage_default: Number(g.leverage_default) || 100,
-        }
-      : null,
-  };
-}
-
 /* ═══════════════════════════════════════════════════ */
 export default function RiskCalculatorPage() {
   // Narrow selectors: only re-render on the slices this page actually reads
@@ -324,8 +298,15 @@ export default function RiskCalculatorPage() {
 
   const accountOpts = accounts.map((a) => ({
     value: a.id,
-    label: `${a.account_number} — $${a.balance.toFixed(2)} ${a.is_demo ? '(Demo)' : ''}`,
+    label: `${a.account_number} — ${formatAccountMoney(a.balance, a)} ${a.is_demo ? '(Demo)' : ''}`,
   }));
+  // Money in the selected account's unit (USC on a Cent account). The math
+  // stays in USD; only the display converts.
+  const money = (usd: number, signed = false) => formatAccountMoney(usd, selectedAccount, { signed });
+  const money4 = (usd: number) =>
+    isCentAccount(selectedAccount)
+      ? `${toAccountUnits(usd, selectedAccount).toFixed(4)} ${CENT_CODE}`
+      : `$${usd.toFixed(4)}`;
 
   // ── Margin calc ──
   const marginResult = useMemo(() => {
@@ -466,7 +447,7 @@ export default function RiskCalculatorPage() {
                     <Tip text="Your trading account balance" />
                   </label>
                   <div className="flex-1 rounded-lg border border-border-primary bg-bg-primary px-3 py-2.5 text-sm font-mono font-bold text-accent">
-                    ${balance.toFixed(2)}
+                    {money(balance)}
                   </div>
                 </div>
               )}
@@ -590,7 +571,7 @@ export default function RiskCalculatorPage() {
                 {showResult && tab === 'margin' && marginResult && (
                   <ResultPanel
                     label="Required Margin"
-                    value={`$${marginResult.margin.toFixed(2)}`}
+                    value={money(marginResult.margin)}
                     details={[
                       { l: 'Lots', v: marginResult.lot.toFixed(2) },
                       { l: 'Leverage', v: `1:${marginResult.lev}` },
@@ -602,10 +583,10 @@ export default function RiskCalculatorPage() {
                 {showResult && tab === 'pnl' && pnlResult && (
                   <ResultPanel
                     label={pnlResult.pnl >= 0 ? 'Profit' : 'Loss'}
-                    value={`${pnlResult.pnl >= 0 ? '+' : '-'}$${Math.abs(pnlResult.pnl).toFixed(2)}`}
+                    value={money(pnlResult.pnl, true)}
                     details={[
                       { l: 'Pips', v: pnlResult.pips.toFixed(1) },
-                      { l: 'Pip Value', v: `$${pnlResult.pipVal.toFixed(4)}` },
+                      { l: 'Pip Value', v: money4(pnlResult.pipVal) },
                       { l: 'Direction', v: side.toUpperCase() },
                     ]}
                   />
@@ -615,18 +596,18 @@ export default function RiskCalculatorPage() {
                     label="Recommended Lot Size"
                     value={lotResult.lotSize.toFixed(2)}
                     details={[
-                      { l: 'Risk Amount', v: `$${lotResult.riskAmt.toFixed(2)}` },
+                      { l: 'Risk Amount', v: money(lotResult.riskAmt) },
                       { l: 'SL Distance', v: `${lotResult.slPips.toFixed(1)} pips` },
-                      { l: 'Pip Value/Lot', v: `$${lotResult.pipVal.toFixed(4)}` },
+                      { l: 'Pip Value/Lot', v: money4(lotResult.pipVal) },
                     ]}
                   />
                 )}
                 {showResult && tab === 'swap' && swapResult && (
                   <ResultPanel
                     label="Estimated Swap"
-                    value={`$${swapResult.totalSwap.toFixed(2)}`}
+                    value={money(swapResult.totalSwap)}
                     details={[
-                      { l: 'Daily Swap', v: `$${swapResult.dailySwap.toFixed(4)}` },
+                      { l: 'Daily Swap', v: money4(swapResult.dailySwap) },
                       { l: 'Days', v: String(swapResult.days) },
                       { l: 'Lots', v: lots },
                     ]}

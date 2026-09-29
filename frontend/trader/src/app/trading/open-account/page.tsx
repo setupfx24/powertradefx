@@ -15,6 +15,7 @@ interface OpenAccountResponse {
   balance: number;
   account_group_id: string;
   account_group_name: string;
+  is_cent?: boolean;
 }
 
 interface GroupItem {
@@ -26,6 +27,8 @@ interface GroupItem {
   spread_markup: number;
   commission_per_lot: number;
   swap_free: boolean;
+  /** Cent account type — its balance is displayed in US cents (USC). */
+  is_cent?: boolean;
 }
 
 function fmtMoney(n: number, currency = 'USD') {
@@ -127,6 +130,11 @@ function OpenAccountPageInner() {
                     </div>
                     {g.description ? (
                       <p className="text-xxs sm:text-xs text-text-tertiary">{g.description}</p>
+                    ) : null}
+                    {g.is_cent ? (
+                      <p className="text-xxs sm:text-xs font-medium text-accent">
+                        Balance shown in US cents (USC). $1 = 100 USC.
+                      </p>
                     ) : null}
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xxs text-text-tertiary">
                       <div>

@@ -2,6 +2,7 @@
 
 import { clsx } from 'clsx';
 import type { TradingAccount } from '@/stores/tradingStore';
+import { isCentAccount, CENT_CODE } from '@/lib/accountMoney';
 
 type Variant = 'default' | 'compact';
 
@@ -64,6 +65,17 @@ export function ActiveAccountBadge({
           )}
         >
           {g}
+        </span>
+      ) : null}
+      {isCentAccount(account) ? (
+        <span
+          className={clsx(
+            'font-bold text-accent bg-accent/10 border border-accent/25 rounded-md shrink-0',
+            compact ? 'text-[9px] px-1.5 py-0.5' : 'text-[10px] px-2 py-0.5',
+          )}
+          title="Cent account — amounts are shown in US cents ($1 = 100 USC)"
+        >
+          {CENT_CODE}
         </span>
       ) : null}
     </div>
