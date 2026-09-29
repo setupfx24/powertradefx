@@ -159,11 +159,16 @@ class AdminApi {
     });
 
     if (res.status === 401) {
-      this.clearToken();
-      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
-        window.location.href = '/login';
+      // Keep the server's own message ("Incorrect email or password.",
+      // "Session revoked, please sign in again", the MFA challenge code…).
+      // A bare "Unauthorized" told the admin nothing and hid the MFA prompt.
+      const err = await ApiError.fromResponse(res);
+      const onLogin = typeof window !== 'undefined' && window.location.pathname.startsWith('/login');
+      if (!onLogin) {
+        this.clearToken();
+        if (typeof window !== 'undefined') window.location.href = '/login';
       }
-      throw new ApiError('Unauthorized', { status: 401 });
+      throw err;
     }
 
     if (!res.ok) {
@@ -203,9 +208,10 @@ class AdminApi {
     });
 
     if (res.status === 401) {
+      const err = await ApiError.fromResponse(res);
       this.clearToken();
       if (typeof window !== 'undefined') window.location.href = '/login';
-      throw new ApiError('Unauthorized', { status: 401 });
+      throw err;
     }
 
     if (!res.ok) {

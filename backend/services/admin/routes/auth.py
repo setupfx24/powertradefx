@@ -117,7 +117,7 @@ async def admin_login(
 
     Responses:
       200  cookie set; body {admin_id, role, first_name, last_name}
-      401  "Invalid credentials" (unknown email OR wrong password)
+      401  "Incorrect email or password." (unknown email OR wrong password)
       403  {"code": "mfa_required"|"mfa_invalid"|"mfa_enrolment_required"}
            or "Account is not active" / tenant-host refusals
       429  per-IP burst or per-account lockout (Retry-After header)

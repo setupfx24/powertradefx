@@ -133,13 +133,20 @@ export default function AdminLoginPage() {
           setTotpCode('');
         } else if (err.status === 429) {
           setError(lockoutMessage(err));
+        } else if (err.status === 401 && !err.code) {
+          // Wrong email or password. One neutral sentence, never the raw
+          // HTTP status; the server keeps it identical for unknown emails.
+          setError('Incorrect email or password. Please try again.');
+        } else if (err.status >= 500 || err.status === 0) {
+          setError('We could not sign you in right now. Please try again in a moment.');
         } else {
-          // Includes `mfa_enrolment_required` and plain 401 — show the
-          // server's message as-is.
-          setError(err.message || 'Login failed');
+          // e.g. `mfa_enrolment_required`, inactive account: the server's
+          // message is already written for the admin.
+          setError(err.message || 'Sign-in failed. Please try again.');
         }
       } else {
-        setError(err instanceof Error ? err.message : 'Login failed');
+        // fetch() itself failed: offline, DNS, blocked request.
+        setError('Could not reach the server. Check your connection and try again.');
       }
     } finally {
       setLoading(false);

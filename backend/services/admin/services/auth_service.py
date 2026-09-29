@@ -79,7 +79,7 @@ class AdminAuthFailure(HTTPException):
 
 
 def _invalid_credentials() -> AdminAuthFailure:
-    return AdminAuthFailure(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    return AdminAuthFailure(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password.")
 
 
 # ─── Token minting ────────────────────────────────────────────────────────

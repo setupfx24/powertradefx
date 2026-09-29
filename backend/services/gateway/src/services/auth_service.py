@@ -582,7 +582,7 @@ async def login_user(
         )
 
     if not user or not verify_password(password, user.password_hash):
-        raise AuthServiceError("Invalid credentials", 401)
+        raise AuthServiceError("Incorrect email or password.", 401)
 
     if user.status == "banned":
         raise AuthServiceError("Account has been banned", 403)
