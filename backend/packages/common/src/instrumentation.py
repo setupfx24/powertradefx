@@ -117,8 +117,16 @@ def get_rate_limiter():
     if _limiter_instance is None:
         from slowapi import Limiter
         from slowapi.util import get_remote_address
+        from .rate_limit import client_ip_for_inet
+
+        def _client_key(request):
+            # Same verified client IP as every other limiter (nginx overwrites
+            # CF-Connecting-IP with the address it validated), so each real
+            # user has their own bucket and a client can't pick theirs.
+            return client_ip_for_inet(request) or get_remote_address(request)
+
         _limiter_instance = Limiter(
-            key_func=get_remote_address,
+            key_func=_client_key,
             default_limits=[settings.RATE_LIMIT_DEFAULT],
             storage_uri=settings.REDIS_URL,
         )

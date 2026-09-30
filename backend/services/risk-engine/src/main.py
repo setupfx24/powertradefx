@@ -55,6 +55,7 @@ class RiskEngine:
     def __init__(self):
         self._running = False
         self._margin_call_sent: set[str] = set()
+        self._stale_warned: dict = {}
 
     async def start(self):
         self._running = True
@@ -175,8 +176,14 @@ class RiskEngine:
             level = max(min(level, self._MARGIN_LEVEL_CAP), -self._MARGIN_LEVEL_CAP)
 
             if not known:
-                # Equity unknown (stale/missing price): never act on it.
-                logger.warning("Margin check skipped for %s: a price is stale or missing", account.account_number)
+                # Equity unknown (stale/missing price): never act on it. Warn at
+                # most every 5 minutes per account (a dead feed would otherwise
+                # log once per second per account).
+                import time as _t
+                last = self._stale_warned.get(account.id, 0.0)
+                if _t.monotonic() - last > 300:
+                    self._stale_warned[account.id] = _t.monotonic()
+                    logger.warning("Margin check skipped for %s: a price is stale or missing", account.account_number)
                 return
 
             account.equity = equity
