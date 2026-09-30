@@ -224,9 +224,16 @@ def check_lot_step(lots, step, label: str = "Lot size") -> None:
         raise HTTPException(status_code=400, detail=f"{label} must be a multiple of {step.normalize()}")
 
 
+# Display-only cache of resolved spread rules: (user, account, instrument) ->
+# (monotonic time, (value, type, impact)). Admin rule changes show on the
+# positions list within _SPREAD_RULE_TTL seconds; fills are never cached.
+_SPREAD_RULE_CACHE: dict = {}
+_SPREAD_RULE_TTL = 15.0
+
+
 async def user_quote_for_position(
     db: AsyncSession, pos, bid: Decimal, ask: Decimal, *,
-    user_id: UUID, account, _cache: dict | None = None,
+    user_id: UUID, account, _cache: dict | None = None, fresh: bool = False,
 ) -> tuple[Decimal, Decimal]:
     """The bid/ask THIS position closes at: a per-trade spread_override first,
     else the user's resolved spread (when USER_SPREAD_AT_EXECUTION), else the
@@ -242,24 +249,45 @@ async def user_quote_for_position(
             mid, Decimal(str(pos.spread_override)),
             (pos.spread_override_type or "pips"), pip, digits, Decimal("0"),
         )
-    if _get_settings().USER_SPREAD_AT_EXECUTION and inst is not None:
-        # The resolved quote depends only on (user, account, instrument, tick),
-        # so a list call resolves it once per instrument, not per position.
-        key = (getattr(inst, "id", None) or inst.symbol, bid, ask)
-        if _cache is not None and key in _cache:
-            return _cache[key]
+    if fresh and _get_settings().USER_SPREAD_AT_EXECUTION and inst is not None:
+        # EXECUTION path (close): always the live rule, never cached.
         try:
-            quote = await resolve_user_quote(
+            return await resolve_user_quote(
                 db, inst, bid, ask,
                 user_id=user_id, account_group_id=account.account_group_id,
                 trading_account_id=account.id,
             )
         except Exception as _uq_exc:
-            logger.warning("user quote failed for %s, using broadcast: %s", inst.symbol, _uq_exc)
+            logger.warning("user quote (close) failed for %s, using broadcast: %s", inst.symbol, _uq_exc)
             return bid, ask
-        if _cache is not None:
-            _cache[key] = quote
-        return quote
+    if _get_settings().USER_SPREAD_AT_EXECUTION and inst is not None:
+        # DISPLAY path (positions list / open P&L): the user's resolved spread
+        # RULE is cached for a few seconds per (user, account, instrument).
+        # Resolving the rule chain costs up to ~10 queries per instrument and
+        # dominated the capacity test. Fills and closes never use this cache:
+        # they call resolve_user_quote directly and always see the live rule.
+        import time as _t
+        from packages.common.src.instrument_pricing import resolve_spread_config
+        key = (str(user_id), str(account.id), str(getattr(inst, "id", inst.symbol)))
+        hit = _SPREAD_RULE_CACHE.get(key)
+        if hit is not None and _t.monotonic() - hit[0] < _SPREAD_RULE_TTL:
+            sv, st, pimp = hit[1]
+        else:
+            try:
+                sv, st, pimp = await resolve_spread_config(
+                    db, inst, user_id=user_id, account_group_id=account.account_group_id,
+                    trading_account_id=account.id,
+                )
+            except Exception as _uq_exc:
+                logger.warning("user quote failed for %s, using broadcast: %s", inst.symbol, _uq_exc)
+                return bid, ask
+            if len(_SPREAD_RULE_CACHE) > 50_000:
+                _SPREAD_RULE_CACHE.clear()
+            _SPREAD_RULE_CACHE[key] = (_t.monotonic(), (sv, st, pimp))
+        mid = (bid + ask) / Decimal("2")
+        pip = Decimal(str(getattr(inst, "pip_size", None) or "0.0001"))
+        digits = int(getattr(inst, "digits", None) or 5)
+        return symmetric_quote_from_mid(mid, sv, st, pip, digits, pimp)
     return bid, ask
 
 
@@ -1237,7 +1265,7 @@ async def close_position(
     # One function decides the quote a position closes at (per-trade override
     # > user's execution spread > broadcast). The positions list values open
     # P&L with the same function, so shown P&L == realised P&L.
-    c_bid, c_ask = await user_quote_for_position(db, pos, c_bid, c_ask, user_id=user_id, account=account)
+    c_bid, c_ask = await user_quote_for_position(db, pos, c_bid, c_ask, user_id=user_id, account=account, fresh=True)
     close_price = c_bid if sv == "buy" else c_ask
     contract_size = pos.instrument.contract_size if pos.instrument else Decimal("100000")
 
