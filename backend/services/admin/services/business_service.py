@@ -6,7 +6,8 @@ from decimal import Decimal
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.models import (
@@ -20,7 +21,38 @@ from packages.common.src.admin_schemas import (
     MLMConfigOut, MLMConfigIn, UpdateIBCommissionIn, RejectIBIn,
     IBCommissionPlanOut, IBCommissionPlanIn,
 )
+from packages.common.src import ib_commission as _ibc
+from packages.common.src.row_locks import lock_user, lock_account
 from dependencies import write_audit_log
+
+
+# IBCommission status names. ib_commission.py is the single source of truth
+# (the DB CHECK constraint is widened to exactly these); writing a literal the
+# constraint does not allow is what made "reject payout" a guaranteed 500.
+# The getattr fallbacks only cover the window before ib_commission exports
+# every name; they are the same values.
+ST_ACCRUED = _ibc.STATUS_ACCRUED
+ST_PENDING = getattr(_ibc, "STATUS_PENDING", "pending")
+ST_PAID = getattr(_ibc, "STATUS_PAID", "paid")
+ST_REJECTED = getattr(_ibc, "STATUS_REJECTED", "rejected")
+ST_CANCELLED = getattr(_ibc, "STATUS_CANCELLED", "cancelled")
+IB_COMMISSION_STATUSES = (ST_ACCRUED, ST_PENDING, ST_PAID, ST_REJECTED, ST_CANCELLED)
+# Voided rows are history only: never earned, never owed.
+_VOID_STATUSES = (ST_REJECTED, ST_CANCELLED)
+
+# Every IB-hierarchy mutation (set parent) takes this transaction-scoped
+# advisory lock. Two concurrent re-parent calls (E->F and F->E, or a longer
+# loop through disjoint rows) each saw the other's OLD parent and both
+# committed a cycle; serialising them makes the second see the first's write.
+_IB_HIERARCHY_LOCK_KEY = 0x1B7EE  # arbitrary, unique to this lock
+
+
+async def _lock_fresh(db: AsyncSession, stmt):
+    """FOR UPDATE + populate_existing: a row already in the session identity
+    map would otherwise be returned with its pre-lock (stale) values."""
+    return (await db.execute(
+        stmt.with_for_update().execution_options(populate_existing=True)
+    )).scalar_one_or_none()
 
 
 async def list_ib_applications(
@@ -56,11 +88,27 @@ async def list_ib_applications(
     return PaginatedResponse(items=items, total=total, page=page, per_page=per_page)
 
 
-async def approve_ib_application(
-    app_id: uuid.UUID, admin_id: uuid.UUID, ip_address: str | None, db: AsyncSession,
-) -> dict:
-    result = await db.execute(select(IBApplication).where(IBApplication.id == app_id))
-    app = result.scalar_one_or_none()
+async def _approve_business_application(
+    app_id: uuid.UUID, admin_id: uuid.UUID, db: AsyncSession,
+    *, role: str, code_prefix: str, assign_default_plan: bool,
+) -> tuple[IBApplication, IBProfile, bool]:
+    """Shared approve path for IB and sub-broker applications.
+
+    Serialised per user (lock_user) and re-checks the application under its
+    own row lock, so double-clicks and two admins approving two duplicate
+    applications of the same user cannot both INSERT an IBProfile (the
+    second one hit ib_profiles_user_id_key -> 500 and the application stayed
+    'pending' forever). If the user already has a profile the application is
+    resolved against it instead of failing: an inactive profile is
+    re-activated, an active one is simply linked.
+
+    Returns (application, profile, created)."""
+    app = (await db.execute(select(IBApplication).where(IBApplication.id == app_id))).scalar_one_or_none()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+    # Canonical order: user first, then the application row.
+    user = await lock_user(db, app.user_id) if app.user_id else None
+    app = await _lock_fresh(db, select(IBApplication).where(IBApplication.id == app_id))
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
     if app.status != "pending":
@@ -69,35 +117,40 @@ async def approve_ib_application(
     app.status = "approved"
     app.approved_by = admin_id
     app.approved_at = datetime.utcnow()
-
-    user_q = await db.execute(select(User).where(User.id == app.user_id))
-    user = user_q.scalar_one_or_none()
     if user:
-        user.role = "ib"
+        user.role = role
 
-    referral_code = "IB" + "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
+    profile = await _lock_fresh(db, select(IBProfile).where(IBProfile.user_id == app.user_id))
+    if profile is not None:
+        if not profile.is_active:
+            profile.is_active = True
+            profile.rejection_reason = None
+            profile.rejected_at = None
+            profile.rejected_by = None
+        return app, profile, False
 
-    default_plan_q = await db.execute(
-        select(IBCommissionPlan).where(IBCommissionPlan.is_default == True)
-    )
-    default_plan = default_plan_q.scalar_one_or_none()
+    default_plan = None
+    if assign_default_plan:
+        default_plan = (await db.execute(
+            select(IBCommissionPlan).where(IBCommissionPlan.is_default == True)  # noqa: E712
+        )).scalars().first()
 
-    # Auto-detect parent IB: if this user was referred by an IB, link as child
+    # Auto-detect parent IB: if this user was referred by an IB, link as child.
+    # A brand-new profile has no children, so linking it can never form a cycle.
     parent_ib_id = None
     parent_level = 0
-    referral_q = await db.execute(
+    referral = (await db.execute(
         select(Referral).where(Referral.referred_id == app.user_id)
-    )
-    referral = referral_q.scalar_one_or_none()
+    )).scalars().first()
     if referral and referral.ib_profile_id:
-        parent_q = await db.execute(
-            select(IBProfile).where(IBProfile.id == referral.ib_profile_id, IBProfile.is_active == True)
-        )
-        parent_ib = parent_q.scalar_one_or_none()
-        if parent_ib:
+        parent_ib = (await db.execute(
+            select(IBProfile).where(IBProfile.id == referral.ib_profile_id, IBProfile.is_active == True)  # noqa: E712
+        )).scalar_one_or_none()
+        if parent_ib and parent_ib.user_id != app.user_id:
             parent_ib_id = parent_ib.id
             parent_level = parent_ib.level or 1
 
+    referral_code = code_prefix + "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
     profile = IBProfile(
         user_id=app.user_id,
         referral_code=referral_code,
@@ -106,21 +159,40 @@ async def approve_ib_application(
         commission_plan_id=default_plan.id if default_plan else None,
     )
     db.add(profile)
+    return app, profile, True
 
+
+async def _commit_or_409(db: AsyncSession, detail: str) -> None:
+    """A unique-constraint race that slipped past the locks is a conflict the
+    admin can retry, not an opaque 500."""
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=detail)
+
+
+async def approve_ib_application(
+    app_id: uuid.UUID, admin_id: uuid.UUID, ip_address: str | None, db: AsyncSession,
+) -> dict:
+    app, profile, created = await _approve_business_application(
+        app_id, admin_id, db, role="ib", code_prefix="IB", assign_default_plan=True,
+    )
     await write_audit_log(
         db, admin_id, "approve_ib_application", "ib_application", app_id,
-        new_values={"status": "approved", "referral_code": referral_code},
+        new_values={"status": "approved", "referral_code": profile.referral_code,
+                    "existing_profile": not created},
         ip_address=ip_address,
     )
-    await db.commit()
-    return {"message": "IB application approved", "referral_code": referral_code}
+    await _commit_or_409(db, "This user was approved concurrently — refresh and try again")
+    return {"message": "IB application approved", "referral_code": profile.referral_code}
 
 
 async def reject_ib_application(
     app_id: uuid.UUID, admin_id: uuid.UUID, ip_address: str | None, db: AsyncSession,
 ) -> dict:
-    result = await db.execute(select(IBApplication).where(IBApplication.id == app_id))
-    app = result.scalar_one_or_none()
+    # Locked + fresh so a concurrent approve cannot be overwritten to 'rejected'.
+    app = await _lock_fresh(db, select(IBApplication).where(IBApplication.id == app_id))
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
     if app.status != "pending":
@@ -196,9 +268,19 @@ async def update_ib_commission(
 
     if body.commission_plan_id and body.commission_plan_id not in ('default', 'custom', 'null', ''):
         try:
-            profile.commission_plan_id = uuid.UUID(body.commission_plan_id)
+            plan_id = uuid.UUID(body.commission_plan_id)
         except (ValueError, AttributeError):
             raise HTTPException(status_code=400, detail=f"Invalid commission plan ID: {body.commission_plan_id}")
+        # There is no FK on commission_plan_id: an unknown id was stored as-is
+        # and the IB silently fell back to the default plan (or earned $0).
+        # FOR SHARE on the plan also blocks a concurrent delete_commission_plan
+        # (FOR UPDATE) until this assignment commits, so it sees the new user.
+        plan = (await db.execute(
+            select(IBCommissionPlan).where(IBCommissionPlan.id == plan_id).with_for_update(read=True)
+        )).scalar_one_or_none()
+        if plan is None:
+            raise HTTPException(status_code=400, detail="Commission plan not found")
+        profile.commission_plan_id = plan_id
         profile.custom_commission_per_lot = None
         profile.custom_commission_per_trade = None
     else:
@@ -367,13 +449,25 @@ async def update_commission_plan(
 async def delete_commission_plan(
     plan_id: uuid.UUID, admin_id: uuid.UUID, ip_address: str | None, db: AsyncSession,
 ) -> dict:
-    result = await db.execute(select(IBCommissionPlan).where(IBCommissionPlan.id == plan_id))
-    plan = result.scalar_one_or_none()
+    # FOR UPDATE: waits for any in-flight assignment (which holds FOR SHARE),
+    # so the in-use count below cannot miss an IB assigned concurrently.
+    plan = await _lock_fresh(db, select(IBCommissionPlan).where(IBCommissionPlan.id == plan_id))
     if not plan:
         raise HTTPException(status_code=404, detail="Commission plan not found")
 
     if plan.is_default:
         raise HTTPException(status_code=400, detail="Cannot delete default commission plan")
+
+    # A plan still assigned to IBs must not disappear under them (they kept
+    # the dangling id and silently fell back to the default plan / $0).
+    in_use = (await db.execute(
+        select(func.count(IBProfile.id)).where(IBProfile.commission_plan_id == plan_id)
+    )).scalar() or 0
+    if in_use:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Commission plan is assigned to {in_use} IB(s) — move them to another plan before deleting it",
+        )
 
     await db.delete(plan)
     await write_audit_log(
@@ -480,64 +574,26 @@ async def list_sub_broker_applications(
 async def approve_sub_broker(
     app_id: uuid.UUID, admin_id: uuid.UUID, ip_address: str | None, db: AsyncSession,
 ) -> dict:
-    result = await db.execute(select(IBApplication).where(IBApplication.id == app_id))
-    app = result.scalar_one_or_none()
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
-    if app.status != "pending":
-        raise HTTPException(status_code=400, detail="Application is not pending")
-
-    app.status = "approved"
-    app.approved_by = admin_id
-    app.approved_at = datetime.utcnow()
-
-    user_q = await db.execute(select(User).where(User.id == app.user_id))
-    user = user_q.scalar_one_or_none()
-    if user:
-        user.role = "sub_broker"
-
-    # Auto-detect parent IB — same as approve_ib_application. Without this a
-    # sub-broker who was themselves referred by an IB became a root node, so
-    # their referrer earned no upline commission and the sub-broker never
-    # appeared in the referrer's tree. Link them into the chain.
-    parent_ib_id = None
-    parent_level = 0
-    referral_q = await db.execute(
-        select(Referral).where(Referral.referred_id == app.user_id)
+    # Same locked/idempotent path as IB approval. The parent auto-link matters
+    # here too: a sub-broker who was referred by an IB must join that chain.
+    app, profile, created = await _approve_business_application(
+        app_id, admin_id, db, role="sub_broker", code_prefix="SB", assign_default_plan=False,
     )
-    referral = referral_q.scalar_one_or_none()
-    if referral and referral.ib_profile_id:
-        parent_q = await db.execute(
-            select(IBProfile).where(IBProfile.id == referral.ib_profile_id, IBProfile.is_active == True)
-        )
-        parent_ib = parent_q.scalar_one_or_none()
-        if parent_ib:
-            parent_ib_id = parent_ib.id
-            parent_level = parent_ib.level or 1
-
-    referral_code = "SB" + "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
-    profile = IBProfile(
-        user_id=app.user_id,
-        referral_code=referral_code,
-        level=parent_level + 1,
-        parent_ib_id=parent_ib_id,
-    )
-    db.add(profile)
-
     await write_audit_log(
         db, admin_id, "approve_sub_broker", "ib_application", app_id,
-        new_values={"status": "approved", "referral_code": referral_code},
+        new_values={"status": "approved", "referral_code": profile.referral_code,
+                    "existing_profile": not created},
         ip_address=ip_address,
     )
-    await db.commit()
-    return {"message": "Sub-broker approved", "referral_code": referral_code}
+    await _commit_or_409(db, "This user was approved concurrently — refresh and try again")
+    return {"message": "Sub-broker approved", "referral_code": profile.referral_code}
 
 
 async def reject_sub_broker(
     app_id: uuid.UUID, admin_id: uuid.UUID, ip_address: str | None, db: AsyncSession,
 ) -> dict:
-    result = await db.execute(select(IBApplication).where(IBApplication.id == app_id))
-    app = result.scalar_one_or_none()
+    # Locked + fresh so a concurrent approve cannot be overwritten to 'rejected'.
+    app = await _lock_fresh(db, select(IBApplication).where(IBApplication.id == app_id))
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
     if app.status != "pending":
@@ -593,36 +649,59 @@ async def list_sub_brokers(page: int, per_page: int, db: AsyncSession):
 
 # ─── IB Hierarchy Management ──────────────────────────────────────────────
 
+_MAX_IB_DEPTH = 50  # far above any real MLM depth; a longer walk means corrupt data
+
+
+async def _assert_no_cycle(db: AsyncSession, ib_id: uuid.UUID, parent_ib_id: uuid.UUID) -> None:
+    """Refuse a parent link that would put ib_id in its own ancestry.
+
+    Walks parent_ib_id -> root with FRESH reads (populate_existing), so the
+    walk sees what the previous hierarchy-lock holder committed rather than
+    an identity-map copy. Local implementation of ib_commission.assert_no_cycle
+    (not exported by ib_commission when this was written); same rule: cycle,
+    self-parent or an over-deep/corrupt chain is refused."""
+    if parent_ib_id == ib_id:
+        raise HTTPException(status_code=400, detail="IB cannot be its own parent")
+    seen = {ib_id}
+    current = parent_ib_id
+    for _ in range(_MAX_IB_DEPTH):
+        if current is None:
+            return
+        if current in seen:
+            raise HTTPException(status_code=400, detail="Circular hierarchy detected")
+        seen.add(current)
+        current = (await db.execute(
+            select(IBProfile.parent_ib_id).where(IBProfile.id == current)
+            .execution_options(populate_existing=True)
+        )).scalar_one_or_none()
+    raise HTTPException(status_code=400, detail="IB hierarchy too deep or corrupt")
+
+
 async def set_parent_ib(
     ib_id: uuid.UUID, parent_ib_id: uuid.UUID | None,
     admin_id: uuid.UUID, ip_address: str | None, db: AsyncSession,
 ) -> dict:
     """Admin assigns/changes the parent IB of an IB profile."""
-    result = await db.execute(select(IBProfile).where(IBProfile.id == ib_id))
-    ib = result.scalar_one_or_none()
+    if parent_ib_id is not None and parent_ib_id == ib_id:
+        raise HTTPException(status_code=400, detail="IB cannot be its own parent")
+
+    # Serialise every hierarchy change (see _IB_HIERARCHY_LOCK_KEY): a row lock
+    # on the two endpoints alone cannot stop a cycle closed through disjoint rows.
+    await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _IB_HIERARCHY_LOCK_KEY})
+
+    ib = await _lock_fresh(db, select(IBProfile).where(IBProfile.id == ib_id))
     if not ib:
         raise HTTPException(status_code=404, detail="IB not found")
 
     old_parent = str(ib.parent_ib_id) if ib.parent_ib_id else None
 
     if parent_ib_id:
-        if parent_ib_id == ib_id:
-            raise HTTPException(status_code=400, detail="IB cannot be its own parent")
-        parent_q = await db.execute(select(IBProfile).where(IBProfile.id == parent_ib_id))
-        parent = parent_q.scalar_one_or_none()
+        parent = await _lock_fresh(db, select(IBProfile).where(IBProfile.id == parent_ib_id))
         if not parent:
             raise HTTPException(status_code=404, detail="Parent IB not found")
-        # Circular check
-        check = parent
-        for _ in range(20):
-            if check.parent_ib_id is None:
-                break
-            if check.parent_ib_id == ib_id:
-                raise HTTPException(status_code=400, detail="Circular hierarchy detected")
-            chk_q = await db.execute(select(IBProfile).where(IBProfile.id == check.parent_ib_id))
-            check = chk_q.scalar_one_or_none()
-            if not check:
-                break
+        if parent.user_id == ib.user_id:
+            raise HTTPException(status_code=400, detail="IB cannot be its own parent")
+        await _assert_no_cycle(db, ib_id, parent_ib_id)
         ib.parent_ib_id = parent_ib_id
         ib.level = (parent.level or 1) + 1
     else:
@@ -642,13 +721,25 @@ async def move_user_to_ib(
     admin_id: uuid.UUID, ip_address: str | None, db: AsyncSession,
 ) -> dict:
     """Admin moves a trader from one IB to another."""
-    ib_q = await db.execute(select(IBProfile).where(IBProfile.id == new_ib_id, IBProfile.is_active == True))
+    ib_q = await db.execute(select(IBProfile).where(IBProfile.id == new_ib_id, IBProfile.is_active == True))  # noqa: E712
     new_ib = ib_q.scalar_one_or_none()
     if not new_ib:
         raise HTTPException(status_code=404, detail="Target IB not found")
+    # An IB can never be their own referral: it would make them the direct
+    # IB on their own trades (self-referral farming).
+    if new_ib.user_id == user_id:
+        raise HTTPException(status_code=400, detail="A user cannot be referred by their own IB profile")
 
-    ref_q = await db.execute(select(Referral).where(Referral.referred_id == user_id))
-    referral = ref_q.scalar_one_or_none()
+    # Lock the trader row so two concurrent moves (or a move racing signup
+    # attribution) cannot both insert a Referral for the same user.
+    if await lock_user(db, user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    referral = (await db.execute(
+        select(Referral).where(Referral.referred_id == user_id)
+        .order_by(Referral.created_at.asc())
+        .execution_options(populate_existing=True)
+    )).scalars().first()
     old_ib = str(referral.ib_profile_id) if referral and referral.ib_profile_id else None
 
     if referral:

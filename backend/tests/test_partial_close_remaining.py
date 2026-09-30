@@ -114,8 +114,9 @@ class PartialCloseRemainingTests(unittest.TestCase):
     def _run_close(self, open_lots, close_lots):
         uid, acct_id = uuid4(), uuid4()
         inst = SimpleNamespace(
-            symbol="EURUSD", contract_size=Decimal("100000"),
+            id=uuid4(), symbol="EURUSD", contract_size=Decimal("100000"),
             base_currency="EUR", quote_currency="USD",
+            min_lot=Decimal("0.01"), max_lot=Decimal("100"), lot_step=Decimal("0.01"),
         )
         pos = SimpleNamespace(
             id=uuid4(), status="open", side="buy",
@@ -134,14 +135,19 @@ class PartialCloseRemainingTests(unittest.TestCase):
             free_margin=Decimal("0"),
         )
         # execute() call order in close_position: load Position, load account
-        # (ownership), lock_account (FOR UPDATE), then re-load remaining open
-        # positions for the margin self-heal.
-        db = _DB([
+        # (ownership), lock_account (FOR UPDATE), lock_position (FOR UPDATE,
+        # fresh), [partial only: InstrumentConfig for the lot rules], then
+        # re-load remaining open positions for the margin self-heal.
+        results = [
             _Res(scalar=pos),
             _Res(scalar=account),
             _Res(scalar=account),   # lock_account FOR UPDATE
-            _Res(items=[pos]),
-        ])
+            _Res(scalar=pos),       # lock_position FOR UPDATE
+        ]
+        if Decimal(str(close_lots)) < Decimal(str(open_lots)):
+            results.append(_Res(scalar=None))  # no InstrumentConfig override
+        results.append(_Res(items=[pos]))
+        db = _DB(results)
         req = SimpleNamespace(lots=close_lots)
         result = asyncio.run(ts.close_position(pos.id, req, uid, db))
         history = [o for o in db.added if isinstance(o, TradeHistory)]

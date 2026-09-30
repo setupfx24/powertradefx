@@ -4,10 +4,10 @@ import json
 import logging
 from decimal import Decimal
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import HTTPException, Request
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -17,7 +17,7 @@ from packages.common.src.models import (
     TradeHistory, Transaction, CopyTrade, UserAuditLog, User,
 )
 from packages.common.src.instrument_pricing import resolve_commission, resolve_user_quote, symmetric_quote_from_mid
-from packages.common.src.row_locks import lock_account
+from packages.common.src.row_locks import lock_account, lock_position, lock_user
 from packages.common.src.config import get_settings as _get_settings
 from . import wallet_service
 from packages.common.src.database import AsyncSessionLocal
@@ -50,8 +50,12 @@ def check_sltp_levels(is_buy: bool, stop_loss, take_profit, ref: Decimal, ref_la
     the SL/TP engine triggers on). Validating modify against the close price is
     what lets break-even (SL≈entry once price has moved) and profit-locking
     stops through; validating against the OPEN price wrongly blocks them.
-    The only rejection reason is "this level would trigger the instant it is set".
+    The only rejection reason is "this level would trigger the instant it is set"
+    (plus a non-positive level, which is never a real price — QA stored SL -1).
     """
+    for _label, _lvl in (("stop-loss", stop_loss), ("take-profit", take_profit)):
+        if _lvl is not None and Decimal(str(_lvl)) <= 0:
+            raise HTTPException(status_code=400, detail=f"{_label.capitalize()} must be a positive price")
     if stop_loss is not None:
         sl = Decimal(str(stop_loss))
         if is_buy and sl >= ref:
@@ -175,6 +179,119 @@ async def fire_event(topic, key, data):
         pass
 
 
+async def assert_trading_allowed(db: AsyncSession, user_id: UUID) -> None:
+    """Reject new exposure for a user the admin blocked (Block trading / Kill
+    switch set users.trading_blocked_until) or banned. QA: both admin actions
+    returned 200 but orders kept filling because nothing read the field.
+    Closing existing positions stays allowed — callers only use this on paths
+    that ADD exposure."""
+    row = (await db.execute(
+        select(User.trading_blocked_until, User.status).where(User.id == user_id)
+    )).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    blocked_until, status = row[0], row[1]
+    if str(status or "").lower() in ("banned", "suspended"):
+        raise HTTPException(status_code=403, detail="Trading is disabled for this account. Contact support.")
+    if blocked_until is not None:
+        # Admin writes a naive utcnow()-based value; the column is timestamptz.
+        if blocked_until.tzinfo is None:
+            blocked_until = blocked_until.replace(tzinfo=timezone.utc)
+        if blocked_until > datetime.now(timezone.utc):
+            raise HTTPException(status_code=403, detail="Trading is blocked for this account. Contact support.")
+
+
+async def lot_limits(db: AsyncSession, instrument):
+    """(min_lot, max_lot, lot_step, instrument_config) — admin InstrumentConfig
+    overrides the instrument's own min/max; the step lives on the instrument."""
+    ic = (await db.execute(
+        select(InstrumentConfig).where(InstrumentConfig.instrument_id == instrument.id)
+    )).scalar_one_or_none()
+    min_lot = ic.min_lot_size if ic and ic.min_lot_size is not None else instrument.min_lot
+    max_lot = ic.max_lot_size if ic and ic.max_lot_size is not None else instrument.max_lot
+    step = getattr(instrument, "lot_step", None) or Decimal("0.01")
+    return Decimal(str(min_lot)), Decimal(str(max_lot)), Decimal(str(step)), ic
+
+
+def check_lot_step(lots, step, label: str = "Lot size") -> None:
+    """Volumes must be a multiple of the instrument's lot step (MT5 rule).
+    QA filled 0.015 lots on a 0.01-step symbol and left 0.004-lot dust."""
+    lots = Decimal(str(lots))
+    step = Decimal(str(step or 0))
+    if step <= 0:
+        return
+    if (lots / step) != (lots / step).to_integral_value():
+        raise HTTPException(status_code=400, detail=f"{label} must be a multiple of {step.normalize()}")
+
+
+async def user_quote_for_position(
+    db: AsyncSession, pos, bid: Decimal, ask: Decimal, *,
+    user_id: UUID, account, _cache: dict | None = None,
+) -> tuple[Decimal, Decimal]:
+    """The bid/ask THIS position closes at: a per-trade spread_override first,
+    else the user's resolved spread (when USER_SPREAD_AT_EXECUTION), else the
+    broadcast quote. One function for close and for the displayed P&L, so what
+    the positions list shows is exactly what a close realises (QA: shown -2.0,
+    realised -3.0 with a 3-pip user rule)."""
+    inst = getattr(pos, "instrument", None)
+    if getattr(pos, "spread_override", None) is not None and inst is not None:
+        mid = (bid + ask) / Decimal("2")
+        pip = Decimal(str(inst.pip_size or "0.0001"))
+        digits = int(inst.digits or 5)
+        return symmetric_quote_from_mid(
+            mid, Decimal(str(pos.spread_override)),
+            (pos.spread_override_type or "pips"), pip, digits, Decimal("0"),
+        )
+    if _get_settings().USER_SPREAD_AT_EXECUTION and inst is not None:
+        # The resolved quote depends only on (user, account, instrument, tick),
+        # so a list call resolves it once per instrument, not per position.
+        key = (getattr(inst, "id", None) or inst.symbol, bid, ask)
+        if _cache is not None and key in _cache:
+            return _cache[key]
+        try:
+            quote = await resolve_user_quote(
+                db, inst, bid, ask,
+                user_id=user_id, account_group_id=account.account_group_id,
+                trading_account_id=account.id,
+            )
+        except Exception as _uq_exc:
+            logger.warning("user quote failed for %s, using broadcast: %s", inst.symbol, _uq_exc)
+            return bid, ask
+        if _cache is not None:
+            _cache[key] = quote
+        return quote
+    return bid, ask
+
+
+async def account_unrealized_pnl(db: AsyncSession, account, user_id: UUID) -> tuple[Decimal, int]:
+    """Live unrealised P&L of an account's OPEN positions, valued at the same
+    per-user quote a close would realise at. Returns (pnl, open_count)."""
+    rows = (await db.execute(
+        select(Position).where(Position.account_id == account.id, Position.status == "open")
+    )).scalars().all()
+    total = Decimal("0")
+    cache: dict = {}
+    for pos in rows:
+        inst = getattr(pos, "instrument", None)
+        if inst is None:
+            continue
+        raw = await price_cache.get(inst.symbol)
+        if not raw:
+            continue
+        try:
+            tick = json.loads(raw)
+            bid, ask = Decimal(str(tick["bid"])), Decimal(str(tick["ask"]))
+        except (ValueError, KeyError, TypeError):
+            continue
+        bid, ask = await user_quote_for_position(db, pos, bid, ask, user_id=user_id, account=account, _cache=cache)
+        cp = bid if side_val(pos.side) == "buy" else ask
+        total += await calc_pnl_live(
+            pos.side, pos.open_price, cp, pos.lots,
+            inst.contract_size or Decimal("100000"), instrument=inst,
+        )
+    return total, len(rows)
+
+
 # ─── Orders ───────────────────────────────────────────────────────────────
 
 async def place_order(
@@ -185,7 +302,7 @@ async def place_order(
     db: AsyncSession,
 ) -> dict:
     from packages.common.src.settings_store import get_bool_setting, get_int_setting, get_float_setting
-    from ..engines.ib_engine import distribute_ib_commission
+    from packages.common.src.ib_commission import accrue_ib_commission_safe
 
     # --- Parallel: settings from Redis (no DB session needed) ---
     # Global platform caps sit on top of per-instrument limits (InstrumentConfig).
@@ -199,35 +316,21 @@ async def place_order(
     if maintenance:
         raise HTTPException(status_code=503, detail="Platform is under maintenance. Trading is temporarily disabled.")
 
-    # --- Sequential DB queries (AsyncSession doesn't support concurrent queries) ---
-    account = await validate_account(req.account_id, user_id, db)
+    # Admin Block trading / Kill switch — checked before any lock is taken.
+    await assert_trading_allowed(db, user_id)
 
-    # Re-acquire the account row WITH a lock for the margin check +
-    # margin-used write below. validate_account() does the visibility
-    # check (does this account exist and belong to this user) but
-    # intentionally doesn't lock — it's also called from read-only
-    # paths like list_positions. Without the lock here, two concurrent
-    # market orders both read the same free_margin, both pass the
-    # sufficiency check at `required_margin > real_free_margin`
-    # further down, and both fill — over-leveraging the account
-    # beyond its actual balance. The lock is released on commit at
-    # the end of place_order(), so SL/TP / risk-engine ticks block
-    # briefly rather than racing on the same margin pool.
-    locked_q = await db.execute(
-        select(TradingAccount)
-        .options(selectinload(TradingAccount.account_group))
-        .where(TradingAccount.id == account.id)
-        .with_for_update()
-    )
-    locked = locked_q.scalar_one_or_none()
-    if locked is not None:
-        # Replace the read-only `account` with the locked row so the
-        # rest of place_order() reads + writes against the locked
-        # version (and the lock is actually held). We re-eager-load
-        # `account_group` to match validate_account()'s selectinload
-        # — otherwise the very next line (account.account_group
-        # access) triggers an async lazy-load and raises MissingGreenlet.
-        account = locked
+    # --- Sequential DB queries (AsyncSession doesn't support concurrent queries) ---
+    # Lock the account row FIRST (canonical order user -> account -> position;
+    # this path never needs the user row) and read it FRESH. The previous code
+    # loaded the account unlocked and then ran FOR UPDATE, which handed back the
+    # same stale identity-map object: concurrent orders each wrote
+    # stale_balance - own_commission and QA lost 7 of 9 commission debits.
+    # lock_account uses populate_existing, so balance/margin below are current.
+    account = await lock_account(db, req.account_id, user_id=user_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if not account.is_active:
+        raise HTTPException(status_code=403, detail="Account is not active")
 
     # NOTE: the account-group minimum_deposit is an ACCOUNT-OPENING
     # requirement only. It is deliberately NOT re-checked here — once the
@@ -297,6 +400,7 @@ async def place_order(
 
     if req.lots < min_lot or req.lots > max_lot:
         raise HTTPException(status_code=400, detail=f"Lot size must be between {min_lot} and {max_lot}")
+    check_lot_step(req.lots, getattr(instrument, "lot_step", None) or Decimal("0.01"))
 
     bid, ask = await get_current_price(instrument.symbol)
 
@@ -423,6 +527,13 @@ async def place_order(
         order.filled_at = datetime.utcnow()
         order.commission = commission
 
+        # Flush the order FIRST so order.id exists: the id is generated at
+        # flush, and building the Position before it stored order_id=NULL on
+        # every market position (QA 2026-09-29). IB settlement joins
+        # Position.order_id to the accrual, so those accruals never released.
+        db.add(order)
+        await db.flush()
+
         position = Position(
             account_id=account.id,
             instrument_id=instrument.id,
@@ -443,6 +554,22 @@ async def place_order(
         account.balance -= commission
         account.equity = (account.balance or Decimal("0")) + (account.credit or Decimal("0")) + unrealized_pnl
         account.free_margin = account.equity - account.margin_used
+        # Every balance change has a ledger row (QA: commission at open had
+        # none, so balances could not be reconciled from transactions).
+        if commission and Decimal(str(commission)) != 0:
+            db.add(Transaction(
+                user_id=user_id,
+                account_id=account.id,
+                type="commission",
+                amount=-Decimal(str(commission)),
+                balance_after=account.balance,
+                reference_id=order.id,
+                description=f"Commission {instrument.symbol} {req.side} {req.lots} lots",
+            ))
+        # IB accrual in THIS transaction, inside a savepoint: it can never
+        # break the fill, a duplicate call is a no-op, and it is not lost if a
+        # background task dies (it used to run fire-and-forget).
+        await accrue_ib_commission_safe(db, user_id, order.id, Decimal(str(req.lots)), instrument.symbol)
 
     else:
         px = Decimal(str(req.price)) if req.price is not None else None
@@ -589,12 +716,7 @@ async def place_order(
                     )
                 except Exception as e:
                     logger.warning("Post-order notification error: %s", e)
-                try:
-                    await distribute_ib_commission(
-                        bg_db, user_id, order.id, req.lots, instrument.symbol
-                    )
-                except Exception as e:
-                    logger.error("IB commission error: %s", e)
+                # IB accrual now happens inside the order transaction.
                 await bg_db.commit()
         asyncio.create_task(_post_order_tasks())
 
@@ -687,7 +809,10 @@ async def _reject_if_maintenance():
 
 async def modify_order(order_id: UUID, req, user_id: UUID, db: AsyncSession) -> dict:
     await _reject_if_maintenance()
-    result = await db.execute(select(Order).where(Order.id == order_id))
+    # Lock the order (fresh) so a modify can't race the engine filling it.
+    result = await db.execute(
+        select(Order).where(Order.id == order_id).with_for_update().execution_options(populate_existing=True)
+    )
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -726,6 +851,7 @@ async def modify_order(order_id: UUID, req, user_id: UUID, db: AsyncSession) -> 
         max_lot = ic.max_lot_size if ic and ic.max_lot_size is not None else instrument.max_lot
         if lots <= 0 or lots < min_lot or lots > max_lot:
             raise HTTPException(status_code=400, detail=f"Lot size must be between {min_lot} and {max_lot}")
+        check_lot_step(lots, getattr(instrument, "lot_step", None) or Decimal("0.01"))
         order.lots = lots
 
     new_sl = req.stop_loss if req.stop_loss is not None else order.stop_loss
@@ -759,9 +885,27 @@ async def cancel_order(order_id: UUID, user_id: UUID, db: AsyncSession) -> dict:
     if status_val != "pending":
         raise HTTPException(status_code=400, detail="Can only cancel pending orders")
 
-    order.status = "cancelled"
+    # Atomic: only a still-pending order can be cancelled. The pending-order
+    # engine fills with the same WHERE status='pending' guard, so exactly one
+    # of cancel / fill wins. QA: cancel answered "Order cancelled" while the
+    # engine opened the position and charged commission.
+    res = await db.execute(
+        update(Order)
+        .where(Order.id == order_id, Order.status == "pending")
+        .values(status="cancelled")
+        .execution_options(synchronize_session=False)
+    )
+    if res.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Order was already filled or cancelled")
     await db.commit()
 
+    try:
+        await redis_client.publish(f"account:{order.account_id}", json.dumps({
+            "type": "order_update", "order_id": str(order_id), "status": "cancelled",
+        }))
+    except Exception:
+        pass
     return {"message": "Order cancelled"}
 
 
@@ -774,7 +918,8 @@ async def list_positions(account_id: UUID, user_id: UUID, status: str, db: Async
             TradingAccount.user_id == user_id,
         )
     )
-    if not result.scalar_one_or_none():
+    account = result.scalar_one_or_none()
+    if not account:
         raise HTTPException(status_code=404, detail="Account not found")
 
     query = select(Position).where(Position.account_id == account_id)
@@ -785,6 +930,16 @@ async def list_positions(account_id: UUID, user_id: UUID, status: str, db: Async
 
     result = await db.execute(query.order_by(Position.created_at.desc()))
     positions = result.scalars().all()
+
+    # One query for the copy markers instead of one per position.
+    copy_ids = set()
+    if positions:
+        copy_ids = set((await db.execute(
+            select(CopyTrade.investor_position_id).where(
+                CopyTrade.investor_position_id.in_([p.id for p in positions])
+            )
+        )).scalars().all())
+    quote_cache: dict = {}
 
     response = []
     for pos in positions:
@@ -798,14 +953,16 @@ async def list_positions(account_id: UUID, user_id: UUID, status: str, db: Async
 
         if tick_data and pos_status == "open":
             tick = json.loads(tick_data)
-            current_price = float(tick["bid"]) if sv == "buy" else float(tick["ask"])
+            # Value open P&L at the quote a close would realise (per-trade
+            # override / user spread), not the broadcast quote.
+            q_bid, q_ask = await user_quote_for_position(
+                db, pos, Decimal(str(tick["bid"])), Decimal(str(tick["ask"])),
+                user_id=user_id, account=account, _cache=quote_cache,
+            )
+            current_price = float(q_bid) if sv == "buy" else float(q_ask)
             profit = float(await calc_pnl_live(pos.side, pos.open_price, Decimal(str(current_price)), pos.lots, contract_size, instrument=pos.instrument))
 
-        copy_trade_q = await db.execute(
-            select(CopyTrade).where(CopyTrade.investor_position_id == pos.id)
-        )
-        copy_trade = copy_trade_q.scalar_one_or_none()
-        trade_type = "copy_trade" if copy_trade else "self_trade"
+        trade_type = "copy_trade" if pos.id in copy_ids else "self_trade"
 
         pos_status_val = pos.status.value if hasattr(pos.status, 'value') else str(pos.status)
         response.append({
@@ -851,6 +1008,12 @@ async def modify_position(position_id: UUID, req, user_id: UUID, db: AsyncSessio
     if not acct_row:
         raise HTTPException(status_code=403, detail="Not your position")
 
+    # Lock order account -> position, fresh values: an SL/TP edit must never
+    # land on a position closed a moment earlier.
+    acct_row = await lock_account(db, pos.account_id, user_id=user_id) or acct_row
+    pos = await lock_position(db, position_id)
+    if pos is None:
+        raise HTTPException(status_code=404, detail="Position not found")
     pos_status = pos.status.value if hasattr(pos.status, 'value') else str(pos.status)
     if pos_status != "open":
         raise HTTPException(status_code=400, detail="Position is not open")
@@ -980,35 +1143,22 @@ async def close_position(
     if pos_status != "open":
         raise HTTPException(status_code=400, detail="Position is not open")
 
-    # Idempotent close guard (race-safe). Two concurrent closers — manual vs
-    # manual (double-click / retry), manual vs the SL/TP engine, manual vs the
-    # copy engine — could each pass the status check above and both book P&L +
-    # write a duplicate TradeHistory row. Lock the row AND refresh its status
-    # from the DB in one shot: FOR UPDATE serializes the closers on this row,
-    # so the loser blocks until the winner commits; the refresh then pulls the
-    # freshly-committed status into our already-loaded instance so the recheck
-    # actually sees the race. (A plain re-select would return the stale
-    # identity-map copy — status still 'open' in memory — and miss it. The
-    # status column is a Postgres enum {open,closed,partially_closed} with no
-    # intermediate 'closing' value, so the lock, not a marker state, provides
-    # mutual exclusion. Same guarantee as sltp_engine._close_position, which is
-    # safe with a plain re-select only because it runs in a fresh per-tick
-    # session with an empty identity map.)
-    await db.refresh(pos, attribute_names=["status"], with_for_update=True)
-    locked_status = pos.status.value if hasattr(pos.status, "value") else str(pos.status)
-    if locked_status != "open":
-        raise HTTPException(status_code=409, detail="Position is already being closed")
-
-    # Lock the ACCOUNT row before any balance read/mutate below. place_order
-    # locks the account FOR UPDATE, but close_position previously only locked the
-    # Position row — so two concurrent closes on the SAME account both read the
-    # pre-close balance under MVCC and the last commit overwrote the first (lost
-    # update). A trader could close a winning + losing hedge at once and have the
-    # loss erased, manufacturing funds. Lock position→account (matches the SL/TP
-    # and stop-out engines; place_order locks only the account, so no deadlock).
+    # Race-safe close. Canonical lock order everywhere: account -> position
+    # (place_order locks the account; SL/TP, stop-out, admin and copy closes
+    # follow the same order), so closers on one account serialise without
+    # deadlocking. Both locks re-read FRESH values (populate_existing): the
+    # previous code refreshed only `status`, so two partial closes each saw
+    # the original lot count and together closed 16 lots of a 10-lot
+    # position, and a stale balance overwrote a concurrent credit.
     account = await lock_account(db, pos.account_id, user_id=user_id)
     if account is None:
         raise HTTPException(status_code=403, detail="Not your position")
+    pos = await lock_position(db, position_id)
+    if pos is None:
+        raise HTTPException(status_code=404, detail="Position not found")
+    locked_status = pos.status.value if hasattr(pos.status, "value") else str(pos.status)
+    if locked_status != "open":
+        raise HTTPException(status_code=409, detail="Position is already closed")
 
     # MAM gives followers independent control of their own allocated account:
     # a follower CAN close their mirrored position (it lives on the follower's
@@ -1031,31 +1181,10 @@ async def close_position(
     c_bid = Decimal(str(tick["bid"]))
     c_ask = Decimal(str(tick["ask"]))
     had_spread_override = pos.spread_override is not None
-    if had_spread_override and pos.instrument:
-        # Per-trade override: close at the SAME spread the trader saw live while
-        # this position was open (admin set it on the running trade), re-centered
-        # around the current mid. Takes precedence over the per-user config
-        # spread so what they saw is what they realise.
-        mid = (c_bid + c_ask) / Decimal("2")
-        pip = Decimal(str(pos.instrument.pip_size or "0.0001"))
-        digits = int(pos.instrument.digits or 5)
-        c_bid, c_ask = symmetric_quote_from_mid(
-            mid, Decimal(str(pos.spread_override)),
-            (pos.spread_override_type or "pips"), pip, digits, Decimal("0"),
-        )
-    elif _get_settings().USER_SPREAD_AT_EXECUTION and pos.instrument:
-        # Per-user execution spread (opt-in) — mirror the open fill so the spread
-        # is crossed exactly once per round trip at the user's own rate. Off by
-        # default → close uses the global broadcast bid/ask.
-        try:
-            c_bid, c_ask = await resolve_user_quote(
-                db, pos.instrument, c_bid, c_ask,
-                user_id=user_id, account_group_id=account.account_group_id,
-                trading_account_id=account.id,
-            )
-        except Exception as _uq_exc:
-            logger.warning("user quote (close) failed for %s, using broadcast: %s",
-                           pos.instrument.symbol, _uq_exc)
+    # One function decides the quote a position closes at (per-trade override
+    # > user's execution spread > broadcast). The positions list values open
+    # P&L with the same function, so shown P&L == realised P&L.
+    c_bid, c_ask = await user_quote_for_position(db, pos, c_bid, c_ask, user_id=user_id, account=account)
     close_price = c_bid if sv == "buy" else c_ask
     contract_size = pos.instrument.contract_size if pos.instrument else Decimal("100000")
 
@@ -1069,6 +1198,16 @@ async def close_position(
         )
     close_lots = Decimal(str(req.lots)) if req.lots and Decimal(str(req.lots)) < pos.lots else pos.lots
     is_partial = close_lots < pos.lots
+    if is_partial and pos.instrument is not None:
+        # Partial volumes follow the lot step, and must not leave dust below the
+        # minimum lot open (QA left a 0.004-lot remainder no one could close).
+        _min_lot, _max_lot, _step, _ic = await lot_limits(db, pos.instrument)
+        check_lot_step(close_lots, _step, "Close volume")
+        if pos.lots - close_lots < _min_lot:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Closing {close_lots} would leave {pos.lots - close_lots} lots, below the minimum {_min_lot}. Close the whole position instead.",
+            )
 
     full_profit = await calc_pnl_live(pos.side, pos.open_price, close_price, pos.lots, contract_size, instrument=pos.instrument)
 

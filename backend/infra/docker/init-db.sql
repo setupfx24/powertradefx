@@ -468,7 +468,7 @@ CREATE TABLE transactions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID REFERENCES users(id),
     account_id UUID REFERENCES trading_accounts(id),
-    type VARCHAR(30) NOT NULL CHECK (type IN ('deposit', 'withdrawal', 'commission', 'swap', 'bonus', 'credit', 'adjustment', 'ib_commission', 'profit', 'loss', 'transfer', 'admin_commission', 'performance_fee', 'master_commission', 'refund')),
+    type VARCHAR(30) NOT NULL CHECK (type IN ('deposit', 'withdrawal', 'commission', 'swap', 'bonus', 'credit', 'adjustment', 'ib_commission', 'profit', 'loss', 'transfer', 'admin_commission', 'performance_fee', 'master_commission', 'refund', 'withdrawal_refund', 'bonus_release', 'credit_removed', 'copy_trade', 'cpa', 'admin_adjustment', 'ib_commission_reversal', 'platform_fee', 'network_payout', 'stop_out', 'negative_balance')),
     amount DECIMAL(18,8) NOT NULL,
     balance_after DECIMAL(18,8),
     reference_id UUID,
@@ -530,7 +530,7 @@ CREATE TABLE ib_commissions (
     commission_type VARCHAR(30),
     amount DECIMAL(18,8) NOT NULL,
     mlm_level INT DEFAULT 1,
-    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'cancelled')),
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('accrued', 'pending', 'paid', 'rejected', 'cancelled')),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

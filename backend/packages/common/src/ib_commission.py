@@ -55,6 +55,19 @@ DEFAULT_MLM_DISTRIBUTION = [40, 25, 15, 10, 10]
 # owed. settle_ib_commissions flips it to "pending" once the position is
 # closed; the admin payout flow only ever sees "pending".
 STATUS_ACCRUED = "accrued"
+# The complete status vocabulary. The DB CHECK (migration 0073) allows exactly
+# these; every writer must use the constants, never a literal (a literal the
+# constraint lacked is why no IB commission was ever recorded and why "reject
+# payout" always failed).
+STATUS_PENDING = "pending"      # releasable, awaiting admin payout approval
+STATUS_PAID = "paid"            # credited to the IB
+STATUS_REJECTED = "rejected"    # voided by an admin, never credited
+STATUS_CANCELLED = "cancelled"  # voided by the system (e.g. zero amount, IB gone)
+ALL_STATUSES = (STATUS_ACCRUED, STATUS_PENDING, STATUS_PAID, STATUS_REJECTED, STATUS_CANCELLED)
+
+# A single referred deposit smaller than this never pays CPA, so CPA cannot be
+# farmed with $1 deposits. Overridable with SystemSetting "ib_cpa_min_deposit".
+DEFAULT_CPA_MIN_DEPOSIT = Decimal("100")
 
 
 async def get_mlm_distribution(db: AsyncSession) -> list[int]:
@@ -118,8 +131,11 @@ async def distribute_ib_commission(
     if not referral or not referral.ib_profile_id:
         return
 
+    # The direct IB is loaded even when inactive: an inactive IB earns
+    # nothing, but the IBs ABOVE them still earn their levels. Previously an
+    # inactive mid-level IB cut every upline off.
     ib_profile_q = await db.execute(
-        select(IBProfile).where(IBProfile.id == referral.ib_profile_id, IBProfile.is_active == True)
+        select(IBProfile).where(IBProfile.id == referral.ib_profile_id)
     )
     direct_ib = ib_profile_q.scalar_one_or_none()
     if not direct_ib:
@@ -203,6 +219,17 @@ async def distribute_ib_commission(
     if mlm_dist is None:
         mlm_dist = await get_mlm_distribution(db)
 
+    # Depth: the plan's mlm_levels, else the global "mlm_levels" setting. The
+    # distribution list longer than the configured depth used to pay extra
+    # levels nobody configured.
+    depth = None
+    if plan is not None and getattr(plan, "mlm_levels", None):
+        depth = int(plan.mlm_levels)
+    else:
+        depth = await _global_int_setting(db, "mlm_levels")
+    if depth is not None and depth > 0:
+        mlm_dist = list(mlm_dist)[:depth]
+
     # The chain can never receive more than 100% of the per-lot pool, whatever
     # an admin typed into the plan. Negative levels pay nothing.
     mlm_dist = [max(0, int(x)) for x in mlm_dist]
@@ -216,10 +243,12 @@ async def distribute_ib_commission(
         if current_ib is None:
             break
 
-        # An IB never earns on their own trades (self-referral). Skip the
-        # level, keep walking up so genuine uplines are still paid.
-        if current_ib.user_id == trader_user_id:
-            logger.warning("IB %s is the trader — self-referral level skipped", current_ib.referral_code)
+        # An IB never earns on their own trades (self-referral), and an
+        # inactive (deactivated/rejected) IB never earns. Skip the level, keep
+        # walking up so genuine uplines are still paid.
+        if current_ib.user_id == trader_user_id or not current_ib.is_active:
+            if current_ib.user_id == trader_user_id:
+                logger.warning("IB %s is the trader — self-referral level skipped", current_ib.referral_code)
             current_ib = await _get_parent_ib(current_ib, db)
             continue
 
@@ -275,19 +304,19 @@ async def settle_ib_commissions(db: AsyncSession, limit: int = 200) -> int:
     for c in accrued:
         amount = Decimal(str(c.amount or 0))
         if amount <= 0:
-            c.status = "rejected"
+            c.status = STATUS_CANCELLED
             continue
         ib_q = await db.execute(select(IBProfile.id, IBProfile.referral_code).where(IBProfile.id == c.ib_id))
         ib = ib_q.first()
         if ib is None:
-            c.status = "rejected"
+            c.status = STATUS_CANCELLED
             continue
         await db.execute(
             update(IBProfile)
             .where(IBProfile.id == c.ib_id)
             .values(pending_payout=IBProfile.pending_payout + amount)
         )
-        c.status = "pending"
+        c.status = STATUS_PENDING
         released += 1
         logger.info(
             "IB commission released to pending payout: $%.2f to %s (L%d, order %s, trade closed)",
@@ -369,7 +398,9 @@ async def distribute_ib_cpa(
 
     Like the trade path, this accrues as PENDING and credits nothing directly.
     """
-    if deposit_amount is None or Decimal(str(deposit_amount)) <= 0:
+    min_dep = await _global_int_setting(db, "ib_cpa_min_deposit")
+    min_dep = Decimal(str(min_dep)) if min_dep is not None else DEFAULT_CPA_MIN_DEPOSIT
+    if deposit_amount is None or Decimal(str(deposit_amount)) <= 0 or Decimal(str(deposit_amount)) < min_dep:
         return
 
     referral_q = await db.execute(
@@ -426,9 +457,66 @@ async def distribute_ib_cpa(
 
 
 async def _get_parent_ib(ib: IBProfile, db: AsyncSession) -> IBProfile | None:
+    """The next IB up the chain, active OR inactive. Callers skip paying an
+    inactive IB but keep walking, so one deactivated IB never cuts off every
+    upline above them."""
     if not ib.parent_ib_id:
         return None
-    result = await db.execute(
-        select(IBProfile).where(IBProfile.id == ib.parent_ib_id, IBProfile.is_active == True)
-    )
+    result = await db.execute(select(IBProfile).where(IBProfile.id == ib.parent_ib_id))
     return result.scalar_one_or_none()
+
+
+async def _global_int_setting(db: AsyncSession, key: str) -> int | None:
+    row = (await db.execute(select(SystemSetting).where(SystemSetting.key == key))).scalar_one_or_none()
+    if row is None or row.value in (None, ""):
+        return None
+    try:
+        v = row.value
+        if isinstance(v, str):
+            v = json.loads(v)
+        return int(v)
+    except Exception:
+        return None
+
+
+async def assert_no_cycle(db: AsyncSession, ib_id: UUID, new_parent_id: UUID | None, max_depth: int = 50) -> None:
+    """Raise ValueError if making new_parent_id the parent of ib_id would put
+    ib_id in its own ancestry (or the chain is corrupt / deeper than max_depth).
+    Callers hold the hierarchy lock so concurrent re-parents serialise."""
+    if new_parent_id is None:
+        return
+    if new_parent_id == ib_id:
+        raise ValueError("An IB cannot be its own parent")
+    seen = {ib_id}
+    cur = new_parent_id
+    for _ in range(max_depth):
+        if cur is None:
+            return
+        if cur in seen:
+            raise ValueError("Circular IB hierarchy")
+        seen.add(cur)
+        cur = (await db.execute(
+            select(IBProfile.parent_ib_id).where(IBProfile.id == cur).execution_options(populate_existing=True)
+        )).scalar_one_or_none()
+    raise ValueError("IB hierarchy too deep or corrupt")
+
+
+async def accrue_ib_commission_safe(
+    db: AsyncSession,
+    trader_user_id: UUID,
+    order_id: UUID,
+    lots: Decimal,
+    instrument_symbol: str,
+) -> bool:
+    """distribute_ib_commission inside a SAVEPOINT. An IB failure (bad plan,
+    constraint, anything) rolls back only the IB rows and is logged; the
+    caller's fill/close transaction is never broken by it. Duplicate calls for
+    the same order are no-ops (unique index + early exit). Returns True on
+    success."""
+    try:
+        async with db.begin_nested():
+            await distribute_ib_commission(db, trader_user_id, order_id, lots, instrument_symbol)
+        return True
+    except Exception as e:  # never let IB accounting break a trade
+        logger.error("IB accrual failed for order %s (trade unaffected): %s", order_id, e, exc_info=True)
+        return False
