@@ -32,7 +32,7 @@ from packages.common.src.admin_fees import credit_admin_fee
 from packages.common.src.copy_fees import apply_hwm_fee
 from packages.common.src.engine_lock import engine_lock
 from packages.common.src.row_locks import lock_account
-from packages.common.src.trading_service import margin_for
+from packages.common.src.trading_service import margin_for, recompute_account_margin
 from packages.common.src.notify import create_notification
 
 logging.basicConfig(level=logging.INFO)
@@ -697,45 +697,35 @@ class CopyTradeEngine:
             cross_rate=await cross_rate_for(instrument),
         )
 
-        # High-water mark: charge only on profit ABOVE the follower's
-        # previous peak, so losses must be earned back before the master
-        # is paid again (compute_hwm_fee also advances the mark).
-        performance_fee = Decimal("0")
-        admin_fee = Decimal("0")
-        alloc_for_fee = await db.get(InvestorAllocation, copy.investor_allocation_id)
-        if alloc_for_fee is not None:
-            performance_fee = apply_hwm_fee(
-                alloc_for_fee, gross_profit, master.performance_fee_pct or Decimal("0")
-            )
-            if performance_fee > 0:
-                admin_pct = master.admin_commission_pct or Decimal("0")
-                admin_fee = performance_fee * admin_pct / Decimal("100")
-
-        net_profit = gross_profit - performance_fee
-
         investor_pos.status = PositionStatus.CLOSED.value
         investor_pos.close_price = close_price
-        investor_pos.profit = net_profit
         investor_pos.closed_at = datetime.now(timezone.utc)
 
         # C-TRADE-4: lock the CF account row before crediting the mirror-close
         # P&L, so this can't race a manual close / transfer / withdrawal on the
         # same account (each of which also mutates balance under its own lock).
         investor_account = await lock_account(db, investor_pos.account_id)
-        if investor_account:
-            investor_account.balance = (investor_account.balance or Decimal("0")) + net_profit
-            margin_release = await margin_for(
-                investor_pos.lots, investor_pos.open_price, instrument, investor_account.leverage,
-            )
-            investor_account.margin_used = max(
-                Decimal("0"), (investor_account.margin_used or Decimal("0")) - margin_release
-            )
-            investor_account.equity = investor_account.balance + (investor_account.credit or Decimal("0"))
-            investor_account.free_margin = investor_account.equity - investor_account.margin_used
-
         alloc = await db.get(InvestorAllocation, copy.investor_allocation_id)
-        if alloc:
-            alloc.total_profit = (alloc.total_profit or Decimal("0")) + net_profit
+        performance_fee = Decimal("0")
+        if investor_account:
+            investor_account.balance = (investor_account.balance or Decimal("0")) + gross_profit
+            db.add(Transaction(
+                user_id=investor_account.user_id,
+                account_id=investor_account.id,
+                type="profit" if gross_profit >= 0 else "loss",
+                amount=gross_profit,
+                balance_after=investor_account.balance,
+                reference_id=investor_pos.id,
+                description=f"Copy close {instrument.symbol} {investor_pos.lots} lots @ {close_price}",
+            ))
+            performance_fee = await settle_copy_fee(
+                db, master=master, alloc=alloc, gross_profit=gross_profit,
+                investor_account=investor_account, reference_id=investor_pos.id,
+            )
+            await db.flush()
+            await recompute_account_margin(db, investor_account)
+        net_profit = gross_profit - performance_fee
+        investor_pos.profit = net_profit
 
         history = TradeHistory(
             position_id=investor_pos.id,
@@ -753,67 +743,6 @@ class CopyTradeEngine:
             closed_at=datetime.now(timezone.utc),
         )
         db.add(history)
-
-        if investor_account and investor_account.user_id:
-            if performance_fee > 0:
-                db.add(
-                    Transaction(
-                        user_id=investor_account.user_id,
-                        account_id=investor_account.id,
-                        type="commission",
-                        amount=-performance_fee,
-                        balance_after=investor_account.balance,
-                        reference_id=investor_pos.id,
-                        description=f"Performance fee ({master.performance_fee_pct}%) on copy trade",
-                    )
-                )
-
-        if performance_fee > 0:
-            # C-TRADE-4: lock the master pool row before crediting its
-            # performance-fee share (mirrors the investor-side lock above), so it
-            # can't race a concurrent close / transfer / withdrawal on that account.
-            master_account = await lock_account(db, master.account_id)
-            if master_account:
-                master_share = performance_fee - admin_fee
-                master_account.balance = (master_account.balance or Decimal("0")) + master_share
-                master_account.equity = master_account.balance + (master_account.credit or Decimal("0"))
-                master_account.free_margin = master_account.equity - (master_account.margin_used or Decimal("0"))
-
-                db.add(
-                    Transaction(
-                        user_id=master.user_id,
-                        account_id=master_account.id,
-                        type="ib_commission",
-                        amount=master_share,
-                        balance_after=master_account.balance,
-                        reference_id=investor_pos.id,
-                        description="Performance fee earned from copy trade",
-                    )
-                )
-
-                if admin_fee > 0:
-                    await credit_admin_fee(
-                        db, admin_fee,
-                        description=f"Platform commission ({master.admin_commission_pct}%) from master {master_account.account_number} copy trade",
-                        reference_id=investor_pos.id,
-                    )
-                    # XP_Reward_mechanism slide 6: 50% of the platform's
-                    # copy-trade cut is redistributed across the follower's
-                    # 10-level referral chain. Best-effort — failure here
-                    # must not roll back the trade close.
-                    try:
-                        from ..services.social_service import distribute_copy_trade_platform_fee
-                        await distribute_copy_trade_platform_fee(
-                            db,
-                            follower_user_id=alloc.investor_user_id,
-                            platform_fee=admin_fee,
-                            reference_id=investor_pos.id,
-                        )
-                    except Exception as _e:
-                        logger.warning("copy-trade fee network distribution failed: %s", _e)
-
-                # Update master's total fee earned
-                master.total_fee_earned = (master.total_fee_earned or Decimal("0")) + master_share
 
         copy.status = "closed"
 
@@ -842,5 +771,81 @@ class CopyTradeEngine:
             copy.master_position_id,
         )
 
+
+
+async def settle_copy_fee(
+    db, *, master, alloc, gross_profit, investor_account, reference_id,
+) -> Decimal:
+    """Settle the performance fee on a closed copy position, whatever closed it
+    (master mirror, follower's own close, SL/TP, unfollow).
+
+    Contract: the follower's account (locked by the caller) has ALREADY been
+    credited the GROSS profit. This debits the high-water-mark fee from it
+    with a ledger row, credits the master's share (performance_fee) and the
+    platform's cut, pays the follower's referral network out of the
+    platform's cut, and updates the allocation / master totals. Returns the
+    fee (0 on a loss or below the high-water mark).
+
+    QA 2026-09-29: a follower closing the copy himself paid no fee at all,
+    and unfollow deducted the fee without paying it to anyone."""
+    if master is None or alloc is None:
+        return Decimal("0")
+    fee = apply_hwm_fee(alloc, gross_profit, master.performance_fee_pct or Decimal("0"))
+    alloc.total_profit = (alloc.total_profit or Decimal("0")) + (gross_profit - fee)
+    if fee <= 0:
+        return Decimal("0")
+
+    investor_account.balance = (investor_account.balance or Decimal("0")) - fee
+    db.add(Transaction(
+        user_id=investor_account.user_id,
+        account_id=investor_account.id,
+        type="performance_fee",
+        amount=-fee,
+        balance_after=investor_account.balance,
+        reference_id=reference_id,
+        description=f"Performance fee ({master.performance_fee_pct}%) on copy trade",
+    ))
+
+    admin_fee = fee * (master.admin_commission_pct or Decimal("0")) / Decimal("100")
+    master_share = fee - admin_fee
+    master_account = await lock_account(db, master.account_id) if master.account_id else None
+    if master_account is not None and master_share > 0:
+        master_account.balance = (master_account.balance or Decimal("0")) + master_share
+        master_account.equity = master_account.balance + (master_account.credit or Decimal("0"))
+        master_account.free_margin = master_account.equity - (master_account.margin_used or Decimal("0"))
+        db.add(Transaction(
+            user_id=master.user_id,
+            account_id=master_account.id,
+            type="performance_fee",
+            amount=master_share,
+            balance_after=master_account.balance,
+            reference_id=reference_id,
+            description="Performance fee earned from copy trade",
+        ))
+        master.total_fee_earned = (master.total_fee_earned or Decimal("0")) + master_share
+
+    if admin_fee > 0:
+        # The follower's referral network is paid OUT OF the platform's cut:
+        # only what is left is booked as platform revenue (it used to credit
+        # the network on top of the full platform fee, funded by nothing).
+        paid_network = Decimal("0")
+        try:
+            from ..services.social_service import distribute_copy_trade_platform_fee
+            async with db.begin_nested():
+                paid_network = await distribute_copy_trade_platform_fee(
+                    db, follower_user_id=alloc.investor_user_id,
+                    platform_fee=admin_fee, reference_id=reference_id,
+                )
+        except Exception as _e:
+            logger.warning("copy-trade fee network distribution failed: %s", _e)
+            paid_network = Decimal("0")
+        retained = admin_fee - paid_network
+        if retained > 0:
+            await credit_admin_fee(
+                db, retained,
+                description=f"Platform commission ({master.admin_commission_pct}%) from copy trade",
+                reference_id=reference_id,
+            )
+    return fee
 
 copy_engine = CopyTradeEngine()

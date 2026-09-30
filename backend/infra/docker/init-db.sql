@@ -579,7 +579,7 @@ CREATE TABLE investor_allocations (
     allocation_pct DECIMAL(5,2),
     max_drawdown_pct DECIMAL(5,2),
     max_lot_override DECIMAL(10,4),
-    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('pending', 'active', 'paused', 'closed', 'withdrawn', 'rejected', 'stopped')),
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('pending', 'active', 'paused', 'paused_drawdown', 'closed', 'withdrawn', 'rejected', 'stopped')),
     total_profit DECIMAL(18,8) DEFAULT 0,
     last_distribution_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW()

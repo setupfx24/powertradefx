@@ -57,7 +57,8 @@ class StopCopyRealBalanceTests(unittest.TestCase):
         )
         # Real CF balance has drifted to 1200 (e.g. realised gains already booked).
         inv_acct = SimpleNamespace(
-            id=acct_id, balance=Decimal("1200"), equity=Decimal("1200"),
+            id=acct_id, account_number="CF12345678",  # dedicated copy account
+            balance=Decimal("1200"), equity=Decimal("1200"),
             free_margin=Decimal("1200"), margin_used=Decimal("0"), is_active=True,
         )
         user = SimpleNamespace(id=uid, main_wallet_balance=Decimal("0"))
@@ -78,8 +79,36 @@ class StopCopyRealBalanceTests(unittest.TestCase):
         self.assertEqual(inv_acct.balance, Decimal("0"))
         self.assertFalse(inv_acct.is_active)
         txns = [t for t in db.added if isinstance(t, Transaction)]
-        self.assertEqual(len(txns), 1)
-        self.assertEqual(txns[0].amount, Decimal("1200"))
+        # Both sides of the move are in the ledger: out of the copy account,
+        # into the main wallet.
+        self.assertEqual(sorted(t.amount for t in txns), [Decimal("-1200"), Decimal("1200")])
+
+    def test_existing_account_is_not_swept(self):
+        """A follower copying into their OWN account keeps it: only copied
+        positions close; no refund, no deactivation."""
+        uid = uuid4()
+        acct_id = uuid4()
+        allocation = SimpleNamespace(
+            id=uuid4(), investor_user_id=uid, status="active",
+            master_id=uuid4(), investor_account_id=acct_id,
+            allocation_amount=Decimal("1000"), total_profit=Decimal("0"),
+        )
+        own = SimpleNamespace(
+            id=acct_id, account_number="PT48711913",
+            balance=Decimal("5000"), equity=Decimal("5000"),
+            free_margin=Decimal("5000"), margin_used=Decimal("0"), is_active=True,
+        )
+        user = SimpleNamespace(id=uid, main_wallet_balance=Decimal("0"))
+        db = _DB([
+            _Res(scalar=allocation), _Res(scalar=user), _Res(items=[]),
+            _Res(scalar=None), _Res(scalar=own),
+        ], None)
+        out = asyncio.run(stop_copy(allocation.id, uid, db))
+        self.assertEqual(out["returned_to_wallet"], 0.0)
+        self.assertEqual(own.balance, Decimal("5000"))
+        self.assertTrue(own.is_active)
+        self.assertEqual(user.main_wallet_balance, Decimal("0"))
+        self.assertEqual(allocation.status, "stopped")
 
 
 if __name__ == "__main__":

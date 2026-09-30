@@ -16,8 +16,8 @@ from packages.common.src.models import (
     Referral, AccountGroup, Instrument,
 )
 from packages.common.src.copy_fees import apply_hwm_fee
-from packages.common.src.row_locks import lock_user, lock_account
-from packages.common.src.redis_client import redis_client
+from packages.common.src.row_locks import lock_user, lock_account, lock_position
+from packages.common.src.redis_client import redis_client, is_tick_stale
 from packages.common.src.price_cache import price_cache
 from packages.common.src.trading_service import calc_position_pnl, cross_rate_for
 
@@ -753,31 +753,41 @@ async def stop_copy(allocation_id: UUID, user_id: UUID, db: AsyncSession) -> dic
         if allocation.investor_account_id else None
     )
 
+    # A dedicated copy account (created by start_copy, number CF/IF...) holds
+    # only this subscription's money: it is refunded and closed. A follower's
+    # OWN existing account may hold other money and trades: only the copied
+    # positions are closed and the account is left alone (QA: unfollow swept
+    # and deactivated the follower's whole existing account).
+    dedicated = bool(
+        inv_acct is not None
+        and str(inv_acct.account_number or "").upper().startswith(("CF", "IF"))
+    )
+    from ..engines.copy_engine import settle_copy_fee
+    from packages.common.src.trading_service import quote_to_account_pnl, recompute_account_margin
+    from datetime import datetime, timezone
+
     for copy in open_copies:
-        investor_pos = await db.get(Position, copy.investor_position_id)
-        if not investor_pos or investor_pos.status != PositionStatus.OPEN:
+        investor_pos = await lock_position(db, copy.investor_position_id) if copy.investor_position_id else None
+        st = (investor_pos.status.value if investor_pos is not None and hasattr(investor_pos.status, "value")
+              else (str(investor_pos.status) if investor_pos is not None else ""))
+        if investor_pos is None or st != "open":
             copy.status = "closed"
             continue
-
         instrument = investor_pos.instrument
         if not instrument:
             copy.status = "closed"
             continue
-
         tick_data = await price_cache.get(instrument.symbol)
         if not tick_data:
-            continue
-
+            raise HTTPException(status_code=409, detail=f"No live price for {instrument.symbol}; try again shortly")
         tick = json.loads(tick_data)
+        if is_tick_stale(tick):
+            raise HTTPException(status_code=409, detail=f"Price feed for {instrument.symbol} is stale; try again shortly")
         side_val = investor_pos.side.value if hasattr(investor_pos.side, "value") else str(investor_pos.side)
         close_price = Decimal(str(tick["bid"])) if side_val == "buy" else Decimal(str(tick["ask"]))
         contract_size = instrument.contract_size or Decimal("100000")
-
-        if side_val == "buy":
-            gross = (close_price - investor_pos.open_price) * investor_pos.lots * contract_size
-        else:
-            gross = (investor_pos.open_price - close_price) * investor_pos.lots * contract_size
-        from packages.common.src.trading_service import quote_to_account_pnl
+        gross = ((close_price - investor_pos.open_price) if side_val == "buy"
+                 else (investor_pos.open_price - close_price)) * investor_pos.lots * contract_size
         gross = quote_to_account_pnl(
             gross,
             getattr(instrument, "base_currency", None),
@@ -786,25 +796,27 @@ async def stop_copy(allocation_id: UUID, user_id: UUID, db: AsyncSession) -> dic
             symbol=getattr(instrument, "symbol", None),
             cross_rate=await cross_rate_for(instrument),
         )
-
-        # Same high-water mark as the mirror-close path.
-        perf_fee = Decimal("0")
-        if master:
-            perf_fee = apply_hwm_fee(
-                allocation, gross, master.performance_fee_pct or Decimal("0")
+        pos_acct = inv_acct if (inv_acct is not None and inv_acct.id == investor_pos.account_id)             else await lock_account(db, investor_pos.account_id)
+        fee = Decimal("0")
+        if pos_acct is not None:
+            pos_acct.balance = (pos_acct.balance or Decimal("0")) + gross
+            db.add(Transaction(
+                user_id=user_id, account_id=pos_acct.id,
+                type="profit" if gross >= 0 else "loss", amount=gross,
+                balance_after=pos_acct.balance, reference_id=investor_pos.id,
+                description=f"Copy stopped: {instrument.symbol} {side_val} {investor_pos.lots} lots @ {close_price}",
+            ))
+            fee = await settle_copy_fee(
+                db, master=master, alloc=allocation, gross_profit=gross,
+                investor_account=pos_acct, reference_id=investor_pos.id,
             )
-        net = gross - perf_fee
+        net = gross - fee
         total_pnl += net
-        # Realise this position's P&L onto the CF account balance.
-        if inv_acct is not None:
-            inv_acct.balance = (inv_acct.balance or Decimal("0")) + net
 
         investor_pos.status = PositionStatus.CLOSED.value
         investor_pos.close_price = close_price
         investor_pos.profit = net
-        from datetime import datetime, timezone
         investor_pos.closed_at = datetime.now(timezone.utc)
-
         db.add(TradeHistory(
             position_id=investor_pos.id, account_id=investor_pos.account_id,
             instrument_id=investor_pos.instrument_id, side=investor_pos.side,
@@ -815,39 +827,41 @@ async def stop_copy(allocation_id: UUID, user_id: UUID, db: AsyncSession) -> dic
             closed_at=datetime.now(timezone.utc),
         ))
         copy.status = "closed"
+        if pos_acct is not None:
+            await db.flush()
+            await recompute_account_margin(db, pos_acct)
 
-    # No master-pool deduct: signal/copy trade keeps follower funds in the follower's
-    # own CF account throughout. Master never held this money.
-
-    # Return capital + PnL to main wallet (user row already locked above).
-    # C-TRADE-1: refund the CF account's REAL balance (capital with realised P&L
-    # already applied above), then zero the account so it can't be swept again.
-    # Fall back to the reconstructed figure only for legacy allocations that
-    # never had a dedicated CF account.
-    if inv_acct is not None:
+    return_amount = Decimal("0")
+    if dedicated and inv_acct is not None:
+        # Refund the dedicated account's REAL balance, then close it so it can
+        # never be swept again.
         return_amount = inv_acct.balance or Decimal("0")
         if return_amount < 0:
             return_amount = Decimal("0")
+        if return_amount > 0:
+            db.add(Transaction(
+                user_id=user_id, account_id=inv_acct.id, type="transfer",
+                amount=-return_amount, balance_after=Decimal("0"),
+                description="Copy trading stopped — balance returned to main wallet",
+            ))
         inv_acct.balance = Decimal("0")
         inv_acct.equity = Decimal("0")
         inv_acct.free_margin = Decimal("0")
         inv_acct.margin_used = Decimal("0")
         inv_acct.is_active = False
-    else:
-        return_amount = (allocation.allocation_amount or Decimal("0")) + total_pnl
-        if return_amount < 0:
-            return_amount = Decimal("0")
+    elif inv_acct is None:
+        # Legacy allocation without its own account.
+        return_amount = max(Decimal("0"), (allocation.allocation_amount or Decimal("0")) + total_pnl)
 
-    if user:
+    if user and return_amount > 0:
         user.main_wallet_balance = (user.main_wallet_balance or Decimal("0")) + return_amount
         db.add(Transaction(
-            user_id=user_id, account_id=None, type="deposit",
-            amount=return_amount,
-            description="Copy trading withdrawal (capital + P&L)",
+            user_id=user_id, account_id=None, type="transfer",
+            amount=return_amount, balance_after=user.main_wallet_balance,
+            description="Copy trading stopped (capital + P&L)",
         ))
 
     allocation.status = "stopped"
-    allocation.total_profit = (allocation.total_profit or Decimal("0")) + total_pnl
 
     if master and master.followers_count and master.followers_count > 0:
         master.followers_count -= 1
@@ -1306,12 +1320,17 @@ async def distribute_copy_trade_platform_fee(
             current = ancestor_id
             continue
 
-        anc = (await db.execute(
-            select(User).where(User.id == ancestor_id).with_for_update()
-        )).scalar_one_or_none()
+        anc = await lock_user(db, ancestor_id)
         if anc is None:
             break
         anc.main_wallet_balance = Decimal(str(anc.main_wallet_balance or 0)) + payout
+        # Every credit has a ledger row (QA: these wallet credits had none).
+        db.add(Transaction(
+            user_id=anc.id, account_id=None, type="network_payout",
+            amount=payout, balance_after=anc.main_wallet_balance,
+            reference_id=reference_id,
+            description=f"Copy-trade network reward (level {level_idx + 1})",
+        ))
         paid_out += payout
         current = ancestor_id
     return paid_out
