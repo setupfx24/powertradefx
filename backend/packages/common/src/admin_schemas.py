@@ -277,12 +277,18 @@ class TradeHistoryOut(BaseModel):
 
 
 class ModifyPositionRequest(BaseModel):
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
-    open_price: Optional[float] = None
-    commission: Optional[float] = None
-    swap: Optional[float] = None
-    lots: Optional[float] = None
+    # Bounds: prices and lots must be real, positive numbers (QA: negative
+    # lots/prices and NaN were accepted and corrupted balances).
+    stop_loss: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
+    take_profit: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
+    open_price: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
+    commission: Optional[float] = Field(None, ge=0, le=1_000_000, allow_inf_nan=False)
+    swap: Optional[float] = Field(None, ge=-1_000_000, le=1_000_000, allow_inf_nan=False)
+    lots: Optional[float] = Field(None, gt=0, le=1000, allow_inf_nan=False)
+    # SL/TP are validated against the live price like a trader's own edit
+    # (a level on the wrong side would close the trade instantly at a price
+    # the market never traded). Set force=true to override deliberately.
+    force: bool = False
     # Admin can flip side from buy→sell or sell→buy as a correction. When
     # set, the position direction is reversed and any open copy-trade
     # mirrors flip in sync so master and follower stay aligned. The
@@ -325,11 +331,11 @@ class CreateTradeRequest(BaseModel):
     account_id: str
     instrument_id: Optional[str] = None
     symbol: Optional[str] = None
-    side: str
-    lots: float
-    price: Optional[float] = None
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
+    side: str = Field(..., pattern="^(?i)(buy|sell)$")
+    lots: float = Field(..., gt=0, le=1000, allow_inf_nan=False)
+    price: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
+    stop_loss: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
+    take_profit: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
     comment: Optional[str] = None
 
 

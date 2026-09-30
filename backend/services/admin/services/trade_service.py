@@ -23,8 +23,12 @@ from packages.common.src.admin_schemas import (
 from packages.common.src.database import AsyncSessionLocal
 from packages.common.src.instrument_pricing import resolve_commission
 from packages.common.src.redis_client import publish_instrument_config_reload
-from packages.common.src.row_locks import lock_account
-from packages.common.src.trading_service import margin_for, quote_to_account_pnl, cross_rate_for
+from packages.common.src.row_locks import lock_account, lock_position
+from packages.common.src.redis_client import is_tick_stale
+from packages.common.src.instrument_pricing import resolve_user_quote, symmetric_quote_from_mid
+from packages.common.src.ib_commission import accrue_ib_commission_safe
+from packages.common.src.config import get_settings
+from packages.common.src.trading_service import margin_for, quote_to_account_pnl, cross_rate_for, recompute_account_margin
 from dependencies import write_audit_log
 
 # Admin uses Redis db 1, but market ticks are on db 0 (gateway).
@@ -309,6 +313,12 @@ async def modify_position(
     pos = result.scalar_one_or_none()
     if not pos:
         raise HTTPException(status_code=404, detail="Position not found")
+    # Lock account -> position (fresh) and re-check: an edit must never land
+    # on a position closed a moment earlier (QA).
+    await lock_account(db, pos.account_id)
+    pos = await lock_position(db, position_id)
+    if pos is None:
+        raise HTTPException(status_code=404, detail="Position not found")
     if (pos.status.value if hasattr(pos.status, 'value') else pos.status) != PositionStatus.OPEN.value:
         raise HTTPException(status_code=400, detail="Position is not open")
 
@@ -353,6 +363,29 @@ async def modify_position(
     # circuits the clear case. Reported bug: "TP/SL edit nahi hota,
     # purana SL TP show karta rehta hai".
     fields_set = body.model_fields_set
+    if body.side is not None and body.side.strip().lower() not in ("buy", "sell"):
+        raise HTTPException(status_code=400, detail="side must be 'buy' or 'sell'")
+    _new_sl = body.stop_loss if "stop_loss" in fields_set else pos.stop_loss
+    _new_tp = body.take_profit if "take_profit" in fields_set else pos.take_profit
+    if not body.force and (("stop_loss" in fields_set and body.stop_loss is not None)
+                           or ("take_profit" in fields_set and body.take_profit is not None)
+                           or body.side is not None):
+        # Validate against the price the position closes at NOW (bid for a
+        # buy, ask for a sell) with the side it will have after this edit.
+        _side_after = (body.side or (pos.side.value if hasattr(pos.side, "value") else str(pos.side))).strip().lower()
+        _inst = (await db.execute(select(Instrument).where(Instrument.id == pos.instrument_id))).scalar_one_or_none()
+        _tick = await _get_live_price(_inst.symbol) if _inst else None
+        if _tick and not is_tick_stale(_tick):
+            _ref = Decimal(str(_tick["bid"])) if _side_after == "buy" else Decimal(str(_tick["ask"]))
+            for _lbl, _lvl, _bad in (
+                ("Stop-loss", _new_sl, (lambda l: l >= _ref) if _side_after == "buy" else (lambda l: l <= _ref)),
+                ("Take-profit", _new_tp, (lambda l: l <= _ref) if _side_after == "buy" else (lambda l: l >= _ref)),
+            ):
+                if _lvl is not None and _bad(Decimal(str(_lvl))):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{_lbl} {_lvl} would trigger immediately (current {_side_after} close price {_ref}). Send force=true to apply it anyway.",
+                    )
     if "stop_loss" in fields_set:
         pos.stop_loss = Decimal(str(body.stop_loss)) if body.stop_loss is not None else None
     if "take_profit" in fields_set:
@@ -510,8 +543,17 @@ async def close_position(
     pos = result.scalar_one_or_none()
     if not pos:
         raise HTTPException(status_code=404, detail="Position not found")
+
+    # Lock account -> position (fresh values), the order every close path
+    # uses, and re-check the position is still open. QA 2026-09-29: admin
+    # close took no locks, so racing a user close booked the P&L twice with
+    # two history rows.
+    acc = await lock_account(db, pos.account_id)
+    pos = await lock_position(db, position_id)
+    if pos is None:
+        raise HTTPException(status_code=404, detail="Position not found")
     if (pos.status.value if hasattr(pos.status, 'value') else pos.status) != PositionStatus.OPEN.value:
-        raise HTTPException(status_code=400, detail="Position is not open")
+        raise HTTPException(status_code=409, detail="Position is already closed")
 
     side_val = pos.side.value if hasattr(pos.side, "value") else str(pos.side)
 
@@ -523,10 +565,27 @@ async def close_position(
         close_price = Decimal(str(body.close_price))
     elif inst:
         tick = await _get_live_price(inst.symbol)
-        if tick:
-            close_price = Decimal(str(tick["bid"])) if side_val == "buy" else Decimal(str(tick["ask"]))
-        else:
-            raise HTTPException(status_code=400, detail="No market price available")
+        if not tick or is_tick_stale(tick):
+            raise HTTPException(status_code=400, detail="No live market price available (feed stale); provide a close price")
+        bid, ask = Decimal(str(tick["bid"])), Decimal(str(tick["ask"]))
+        # Close at the SAME quote the trader's own close would use: a per-trade
+        # spread override first, else the user's execution spread (QA: admin
+        # close ignored both, so the realised price differed from the user's).
+        if pos.spread_override is not None:
+            mid = (bid + ask) / Decimal("2")
+            bid, ask = symmetric_quote_from_mid(
+                mid, Decimal(str(pos.spread_override)), (pos.spread_override_type or "pips"),
+                Decimal(str(inst.pip_size or "0.0001")), int(inst.digits or 5), Decimal("0"),
+            )
+        elif get_settings().USER_SPREAD_AT_EXECUTION and acc is not None:
+            try:
+                bid, ask = await resolve_user_quote(
+                    db, inst, bid, ask, user_id=acc.user_id,
+                    account_group_id=acc.account_group_id, trading_account_id=acc.id,
+                )
+            except Exception:
+                pass
+        close_price = bid if side_val == "buy" else ask
     else:
         raise HTTPException(status_code=400, detail="No price available")
 
@@ -552,14 +611,21 @@ async def close_position(
     pos.closed_at = datetime.utcnow()
     pos.is_admin_modified = True
 
-    acc_q = await db.execute(select(TradingAccount).where(TradingAccount.id == pos.account_id))
-    acc = acc_q.scalar_one_or_none()
     if acc:
         acc.balance = (acc.balance or Decimal("0")) + profit
-        margin_release = await margin_for(lots, open_price, inst, acc.leverage)
-        acc.margin_used = max(Decimal("0"), (acc.margin_used or Decimal("0")) - margin_release)
-        acc.equity = acc.balance + (acc.credit or Decimal("0"))
-        acc.free_margin = acc.equity - acc.margin_used
+        # Ledger row for the realised P&L (QA: admin close wrote none).
+        db.add(Transaction(
+            user_id=acc.user_id,
+            account_id=acc.id,
+            type="profit" if profit >= 0 else "loss",
+            amount=profit,
+            balance_after=acc.balance,
+            reference_id=pos.id,
+            description=f"Closed by admin: {getattr(inst, 'symbol', '')} {side_val} {lots} lots @ {close_price}",
+            created_by=admin_id,
+        ))
+        await db.flush()
+        await recompute_account_margin(db, acc)
 
     # Detect whether the close price has already crossed the position's
     # SL/TP — covers two cases where admin clicks Close:
@@ -609,6 +675,13 @@ async def close_position(
         ip_address=ip_address,
     )
     await db.commit()
+    try:
+        await _redis_prices.publish(f"account:{pos.account_id}", json.dumps({
+            "type": "position_closed", "position_id": str(pos.id), "reason": detected_reason,
+            "profit": str(profit), "close_price": str(close_price),
+        }))
+    except Exception:
+        pass
     return {"message": "Position closed successfully", "profit": float(profit)}
 
 
@@ -643,6 +716,13 @@ async def modify_trade_history(
     contract_size = Decimal(str(inst.contract_size)) if inst and inst.contract_size else Decimal("100000")
 
     old_profit = Decimal(str(th.profit or 0))
+    _old_gross = (
+        (Decimal(str(th.close_price or 0)) - Decimal(str(th.open_price or 0)))
+        if _sv(th.side) == "buy" else
+        (Decimal(str(th.open_price or 0)) - Decimal(str(th.close_price or 0)))
+    ) * Decimal(str(th.lots or 0)) * contract_size
+    _old_commission = Decimal(str(th.commission or 0))
+    _old_swap = Decimal(str(th.swap or 0))
     old_values = {
         "open_price": float(th.open_price or 0),
         "close_price": float(th.close_price or 0),
@@ -684,21 +764,36 @@ async def modify_trade_history(
     lots = Decimal(str(th.lots or 0))
     gross = (close_p - open_p) * lots * contract_size if side_val == "buy" \
         else (open_p - close_p) * lots * contract_size
-    new_profit = quote_to_account_pnl(
-        gross,
-        getattr(inst, "base_currency", None),
-        getattr(inst, "quote_currency", None),
-        close_p,
-        symbol=getattr(inst, "symbol", None),
+    price_fields_changed = any(
+        getattr(body, f, None) is not None for f in ("open_price", "close_price", "lots", "side")
     )
+    if not price_fields_changed:
+        # Nothing that determines P&L changed: the booked profit stands. (QA:
+        # a no-op edit on CADJPY re-booked the P&L without a cross rate and
+        # debited $89.40.)
+        new_profit = old_profit
+    elif _old_gross != 0 and old_profit != 0:
+        # Re-value with the conversion rate the trade was ORIGINALLY booked at
+        # (profit / quote-currency gross), not today's rate.
+        new_profit = gross * (old_profit / _old_gross)
+    else:
+        new_profit = quote_to_account_pnl(
+            gross,
+            getattr(inst, "base_currency", None),
+            getattr(inst, "quote_currency", None),
+            close_p,
+            symbol=getattr(inst, "symbol", None),
+            cross_rate=await cross_rate_for(inst) if inst else None,
+        )
     th.profit = new_profit
 
-    delta = Decimal(str(new_profit)) - old_profit
+    # Commission was debited and swap booked on the balance already; editing
+    # them must move the balance too (QA: the edit changed only the record).
+    delta = (Decimal(str(new_profit)) - old_profit) \
+        - (Decimal(str(th.commission or 0)) - _old_commission) \
+        + (Decimal(str(th.swap or 0)) - _old_swap)
 
-    acc_q = await db.execute(
-        select(TradingAccount).where(TradingAccount.id == th.account_id).with_for_update()
-    )
-    acc = acc_q.scalar_one_or_none()
+    acc = await lock_account(db, th.account_id)
     if acc and delta != 0:
         acc.balance = (acc.balance or Decimal("0")) + delta
         acc.equity = (acc.balance or Decimal("0")) + (acc.credit or Decimal("0"))
@@ -768,10 +863,9 @@ async def list_instruments(search: str | None, db: AsyncSession) -> dict:
 async def create_stealth_trade(
     body: CreateTradeRequest, admin_id: uuid.UUID, ip_address: str | None, db: AsyncSession,
 ) -> dict:
-    acc_q = await db.execute(
-        select(TradingAccount).where(TradingAccount.id == uuid.UUID(body.account_id))
-    )
-    account = acc_q.scalar_one_or_none()
+    # Locked + fresh: a concurrent user order on the same account must not
+    # lose this commission debit (QA lost updates).
+    account = await lock_account(db, uuid.UUID(body.account_id))
     if not account:
         raise HTTPException(status_code=404, detail="Trading account not found")
 
@@ -852,15 +946,24 @@ async def create_stealth_trade(
     )
     db.add(position)
 
-    margin_required = await margin_for(lots_dec, fill_price, instrument, account.leverage)
-    account.margin_used = (account.margin_used or Decimal("0")) + margin_required
-    # Debit commission from balance just like the user-placed-trade path
-    # (trading_service.place_order:322). Keeps balance / equity consistent
-    # with the per-position commission column and prevents free trades
-    # for admin-created positions.
+    # Debit commission from balance just like the user-placed-trade path,
+    # with a ledger row, then recompute margin from the open positions.
     account.balance = (account.balance or Decimal("0")) - commission
-    account.equity = (account.balance or Decimal("0")) + (account.credit or Decimal("0"))
-    account.free_margin = account.equity - account.margin_used
+    if commission and Decimal(str(commission)) != 0:
+        db.add(Transaction(
+            user_id=account.user_id,
+            account_id=account.id,
+            type="commission",
+            amount=-Decimal(str(commission)),
+            balance_after=account.balance,
+            reference_id=order.id,
+            description=f"Commission {instrument.symbol} admin-created trade {lots_dec} lots",
+            created_by=admin_id,
+        ))
+    await db.flush()
+    await recompute_account_margin(db, account)
+    # Admin-created trades on live accounts accrue IB commission like any fill.
+    await accrue_ib_commission_safe(db, account.user_id, order.id, lots_dec, instrument.symbol)
 
     await write_audit_log(
         db, admin_id, "create_stealth_trade", "position", None,

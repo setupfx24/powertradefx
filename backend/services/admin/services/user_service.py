@@ -660,39 +660,56 @@ async def kill_switch(
         raise HTTPException(status_code=404, detail="User not found")
     await _assert_can_target(db, admin_id, user)  # H-ADMIN-2
 
-    accounts_q = await db.execute(
-        select(TradingAccount).where(TradingAccount.user_id == user_id)
-    )
-    accounts = accounts_q.scalars().all()
-    account_ids = [a.id for a in accounts]
+    # Block FIRST, so no new order can slip in while positions are closed.
+    far_future = datetime.utcnow() + timedelta(days=36500)
+    user.trading_blocked_until = far_future
+    await db.commit()
 
-    closed_count = 0
+    accounts_q = await db.execute(
+        select(TradingAccount.id).where(TradingAccount.user_id == user_id)
+    )
+    account_ids = list(accounts_q.scalars().all())
+
+    # Close every open position through the REAL admin close routine (locks,
+    # market price, trade history, ledger row, margin recompute, user event).
+    # QA 2026-09-29: the old kill switch set positions to closed at their open
+    # price with zero P&L and no history, ledger or margin release, erasing
+    # the trader's real profit or loss.
+    from .trade_service import close_position as _admin_close
+    from packages.common.src.admin_schemas import ClosePositionRequest
+    closed_count, left_open = 0, []
     if account_ids:
-        positions_q = await db.execute(
-            select(Position).where(
+        pos_ids = (await db.execute(
+            select(Position.id).where(
                 Position.account_id.in_(account_ids),
                 Position.status == PositionStatus.OPEN.value,
             )
+        )).scalars().all()
+        for pid in pos_ids:
+            try:
+                await _admin_close(pid, ClosePositionRequest(), admin_id, ip_address, db)
+                closed_count += 1
+            except HTTPException as e:
+                await db.rollback()
+                left_open.append(f"{pid}: {e.detail}")
+        # Cancel resting pending orders so nothing fills after the kill.
+        await db.execute(
+            Order.__table__.update()
+            .where(Order.account_id.in_(account_ids), Order.status == "pending")
+            .values(status="cancelled")
         )
-        positions = positions_q.scalars().all()
-        for pos in positions:
-            pos.status = PositionStatus.CLOSED.value
-            pos.close_price = pos.open_price
-            pos.closed_at = datetime.utcnow()
-            pos.profit = Decimal("0")
-            pos.is_admin_modified = True
-            closed_count += 1
-
-    far_future = datetime.utcnow() + timedelta(days=36500)
-    user.trading_blocked_until = far_future
+        await db.commit()
 
     await write_audit_log(
         db, admin_id, "kill_switch", "user", user_id,
-        new_values={"positions_closed": closed_count, "trading_blocked": True},
+        new_values={"positions_closed": closed_count, "left_open": left_open, "trading_blocked": True},
         ip_address=ip_address,
     )
     await db.commit()
-    return {"message": f"Kill switch activated. {closed_count} positions closed. Trading disabled."}
+    msg = f"Kill switch activated. {closed_count} positions closed. Trading disabled."
+    if left_open:
+        msg += f" {len(left_open)} position(s) could not be closed now (no live price) — close them when the market is live."
+    return {"message": msg, "positions_closed": closed_count, "left_open": left_open}
 
 
 async def login_as_user(
