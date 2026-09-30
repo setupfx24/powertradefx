@@ -1,5 +1,7 @@
 """Instrument Service — Listing, market status, price retrieval."""
+import asyncio
 import json
+import time
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -79,7 +81,31 @@ async def get_symbol_market_status(symbol: str, db: AsyncSession) -> dict:
     )
 
 
+_ALL_PRICES_TTL = 1.0
+_all_prices_cache: tuple[float, list[dict]] = (0.0, [])
+_all_prices_lock = asyncio.Lock()
+
+
 async def get_all_prices() -> list[dict]:
+    """All current quotes, served from a per-process snapshot at most 1 s old.
+
+    Building it SCANs the whole Redis keyspace twice. Every dashboard and
+    fallback poller calls this, so doing that per request cost Redis and CPU
+    in proportion to the number of open tabs; now it costs one build per
+    worker per second."""
+    global _all_prices_cache
+    now = time.monotonic()
+    if now - _all_prices_cache[0] < _ALL_PRICES_TTL:
+        return _all_prices_cache[1]
+    async with _all_prices_lock:
+        if time.monotonic() - _all_prices_cache[0] < _ALL_PRICES_TTL:
+            return _all_prices_cache[1]
+        prices = await _build_all_prices()
+        _all_prices_cache = (time.monotonic(), prices)
+        return prices
+
+
+async def _build_all_prices() -> list[dict]:
     # Live ticks first — authoritative whenever present.
     live_keys = []
     async for key in redis_client.scan_iter(f"{PriceChannel.TICK_PREFIX}*"):

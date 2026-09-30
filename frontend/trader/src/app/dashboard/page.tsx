@@ -258,8 +258,9 @@ function BrokerHome() {
       void refreshAccounts({ silent: true });
       void refreshMoverTicks();
     };
-    // 5 s (was 2 s): /accounts is DB- and price-heavy; see capacity review.
-    const interval = setInterval(tick, 5000);
+    // 10 s (was 2 s, then 5 s): /accounts is DB- and price-heavy, and every
+    // open dashboard tab pays it; see the 2026-09-30 capacity load test.
+    const interval = setInterval(tick, 10_000);
     const onVisibility = () => {
       if (typeof document !== 'undefined' && !document.hidden) tick();
     };

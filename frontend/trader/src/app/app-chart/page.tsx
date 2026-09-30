@@ -164,13 +164,23 @@ export default function ChartPage() {
     });
     const pricePoll = setInterval(async () => {
       if (document.hidden) return;
+      // Fallback only: the live socket already streams every price with this
+      // user's spread; the raw REST snapshot on top made prices flicker.
+      if (wsManager.isLive()) return;
       try {
         const p = await api.get<unknown>('/instruments/prices/all');
         useTradingStore.getState().updatePrices(extractTicksFromPayload(p));
       } catch { /* ignore */ }
     }, 1500);
+    // Open P&L is priced from ticks on the client; the positions poll only
+    // picks up server-side closes (SL/TP, stop-out). 5 s while prices stream,
+    // 1.5 s while the socket is down.
+    let lastPosPoll = 0;
     const posPoll = setInterval(() => {
       if (document.hidden) return;
+      const now = Date.now();
+      if (wsManager.isLive() && now - lastPosPoll < 5000) return;
+      lastPosPoll = now;
       void useTradingStore.getState().refreshPositions();
     }, 1500);
 

@@ -15,8 +15,16 @@ class WSManager {
   private _status: ConnectionStatus = 'disconnected';
   private subscribedChannels = new Set<string>();
   private activeAccountId: string | null = null;
+  private lastMessageAt = 0;
 
   get status() { return this._status; }
+
+  /** True while the socket is connected and has delivered something (a tick
+   *  or the 30 s server ping) recently. Pollers use it to stay idle: the
+   *  stream carries every price, already adjusted for this user's spread. */
+  isLive(maxSilenceMs = 35_000): boolean {
+    return this._status === 'connected' && Date.now() - this.lastMessageAt < maxSilenceMs;
+  }
 
   private setStatus(s: ConnectionStatus) {
     this._status = s;
@@ -50,6 +58,7 @@ class WSManager {
       };
 
       this.ws.onmessage = (event) => {
+        this.lastMessageAt = Date.now();
         try {
           const data = JSON.parse(event.data);
           const type = data.type || data.symbol || 'unknown';
