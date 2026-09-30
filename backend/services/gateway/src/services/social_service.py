@@ -887,12 +887,36 @@ async def withdraw_managed_account(
     - Deactivates the allocation
     """
     result = await db.execute(
-        select(InvestorAllocation).where(
+        select(InvestorAllocation.master_id).where(
             InvestorAllocation.id == allocation_id,
             InvestorAllocation.investor_user_id == user_id,
         )
     )
-    allocation = result.scalar_one_or_none()
+    master_id = result.scalar_one_or_none()
+    if master_id is None:
+        raise HTTPException(status_code=404, detail="Investment not found")
+
+    # Serialise every subscribe/redeem on this pool and re-check under lock.
+    # Order: investor user -> master row -> pool account -> allocation (the
+    # same order invest_managed_account uses). QA 2026-09-29: concurrent
+    # withdrawals all passed the unlocked status check and each paid out,
+    # draining the pool.
+    locked_user = await lock_user(db, user_id)
+    await db.execute(
+        select(MasterAccount.id).where(MasterAccount.id == master_id)
+        .with_for_update(key_share=True)
+    )
+    _master_acct_id = (await db.execute(
+        select(MasterAccount.account_id).where(MasterAccount.id == master_id)
+    )).scalar_one_or_none()
+    if _master_acct_id:
+        await lock_account(db, _master_acct_id)
+    allocation = (await db.execute(
+        select(InvestorAllocation).where(
+            InvestorAllocation.id == allocation_id,
+            InvestorAllocation.investor_user_id == user_id,
+        ).with_for_update(key_share=True).execution_options(populate_existing=True)
+    )).scalar_one_or_none()
     if not allocation:
         raise HTTPException(status_code=404, detail="Investment not found")
     if allocation.status != "active":
@@ -915,10 +939,10 @@ async def withdraw_managed_account(
     # master.balance. Deduct that cash from master, credit investor wallet,
     # apply performance fee on any profit component.
     if allocation.copy_type == "pamm":
-        user_result = await db.execute(select(User).where(User.id == user_id))
-        user = user_result.scalar_one_or_none()
+        user = locked_user
 
-        pool_account = await db.get(TradingAccount, master.account_id) if (master and master.account_id) else None
+        # Already locked above (fresh): the pool balance can't change under us.
+        pool_account = await lock_account(db, master.account_id) if (master and master.account_id) else None
         if not pool_account:
             raise HTTPException(status_code=500, detail="Master pool account missing")
 
@@ -1675,12 +1699,18 @@ async def invest_managed_account(
     max_drawdown_pct: Decimal | None, volume_scaling_pct: Decimal,
     user_id: UUID, db: AsyncSession, account_id: UUID | None = None,
 ) -> dict:
+    # Lock order (same as withdraw_managed_account): investor user -> master
+    # row -> pool account. Every check below runs on locked, fresh rows, so
+    # concurrent invests can't all pass the balance / slot / existing-
+    # allocation checks (QA 2026-09-29: the wallet was debited once but
+    # several allocations and unit grants were created).
+    locked_user = await lock_user(db, user_id)
     master_result = await db.execute(
         select(MasterAccount).where(
             MasterAccount.id == master_id,
             MasterAccount.status == "approved",
             MasterAccount.master_type.in_(["mamm", "pamm"]),
-        )
+        ).with_for_update(key_share=True).execution_options(populate_existing=True)
     )
     master = master_result.scalar_one_or_none()
     if not master:
@@ -1698,9 +1728,8 @@ async def invest_managed_account(
     if investor_count.scalar() >= master.max_investors:
         raise HTTPException(status_code=400, detail="No slots available")
 
-    # Deduct from main wallet
-    user_result = await db.execute(select(User).where(User.id == user_id))
-    user = user_result.scalar_one_or_none()
+    # Deduct from main wallet (user row locked + fresh above)
+    user = locked_user
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     wallet_bal = user.main_wallet_balance or Decimal("0")
@@ -1719,8 +1748,8 @@ async def invest_managed_account(
     # Deduct from wallet
     user.main_wallet_balance = wallet_bal - amount
 
-    # Add funds to master's pool trading account
-    pool_account = await db.get(TradingAccount, master.account_id) if master.account_id else None
+    # Add funds to master's pool trading account (locked + fresh)
+    pool_account = await lock_account(db, master.account_id) if master.account_id else None
 
     # ── PAMM units (NAV) ─────────────────────────────────────────────────
     # Snapshot the pool value + units BEFORE this deposit lands so the

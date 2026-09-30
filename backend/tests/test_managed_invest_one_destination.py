@@ -79,8 +79,10 @@ class ManagedInvestOneDestinationTests(unittest.TestCase):
         master = _master("mamm")
         user = _user(uid)
         pool = _pool()
+        # Lock order: user -> master -> (slot count, existing allocation) -> pool.
         db = _DB([
-            _Res(scalar=master), _Res(scalarv=0), _Res(scalar=user), _Res(scalar=None),
+            _Res(scalar=user), _Res(scalar=master), _Res(scalarv=0), _Res(scalar=None),
+            _Res(scalar=pool),   # lock_account(pool)
         ], pool)
         asyncio.run(ss.invest_managed_account(
             master.id, Decimal("100"), None, Decimal("0"), uid, db,
@@ -97,7 +99,8 @@ class ManagedInvestOneDestinationTests(unittest.TestCase):
         user = _user(uid)
         pool = _pool()
         db = _DB([
-            _Res(scalar=master), _Res(scalarv=0), _Res(scalar=user), _Res(scalar=None),
+            _Res(scalar=user), _Res(scalar=master), _Res(scalarv=0), _Res(scalar=None),
+            _Res(scalar=pool),   # lock_account(pool)
             _Res(items=[]),      # _pool_value_with_floating: open positions
             _Res(scalarv=0),     # total units before
         ], pool)
