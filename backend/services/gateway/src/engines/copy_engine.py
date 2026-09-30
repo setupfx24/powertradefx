@@ -26,7 +26,7 @@ from packages.common.src.models import (
     MasterAccount, InvestorAllocation, CopyTrade, Position, PositionStatus,
     TradingAccount, TradeHistory, Transaction, Order,
 )
-from packages.common.src.redis_client import redis_client, PriceChannel
+from packages.common.src.redis_client import redis_client, PriceChannel, is_tick_stale
 from packages.common.src.price_cache import price_cache
 from packages.common.src.admin_fees import credit_admin_fee
 from packages.common.src.copy_fees import apply_hwm_fee
@@ -196,7 +196,18 @@ class CopyTradeEngine:
                             )
                         )
                         for master in masters.scalars().all():
-                            await self.process_master(master, db)
+                            # One master's failure (bad row, constraint, a
+                            # follower's drawdown pause...) rolls back only its
+                            # own savepoint. QA 2026-09-29: a single rejected
+                            # status aborted the shared transaction and stopped
+                            # copy trading for EVERY master.
+                            n_events = len(self._pending_events)
+                            try:
+                                async with db.begin_nested():
+                                    await self.process_master(master, db)
+                            except Exception as e:
+                                del self._pending_events[n_events:]
+                                logger.error("Copy sync failed for master %s: %s", master.id, e, exc_info=True)
                         await db.commit()
                     # Durably committed — now fan out the real-time events so
                     # followers' terminals update without a manual refresh.
@@ -236,9 +247,12 @@ class CopyTradeEngine:
             return
         logger.info("Global orphan sweep: closing %d stuck copy mirror(s)", len(rows))
         for copy, master in rows:
+            n_events = len(self._pending_events)
             try:
-                await self._close_copy(copy, master, db)
+                async with db.begin_nested():
+                    await self._close_copy(copy, master, db)
             except Exception as e:
+                del self._pending_events[n_events:]
                 logger.error("Global orphan sweep failed for copy=%s: %s", copy.id, e)
 
     async def _sum_active_allocation_pool(self, master_id: UUID, db: AsyncSession) -> float:
@@ -361,6 +375,22 @@ class CopyTradeEngine:
                     db,
                 )
 
+        # Master PARTIAL closes: a copy is sized master_lots x ratio (ratio
+        # stored at open), so after the master reduces a position every copy
+        # is reduced to its share of what the master still holds. QA
+        # 2026-09-29: a master's partial close was never mirrored and
+        # followers kept the full exposure.
+        for pos_id in current_master_pos_ids & prev_master_pos_ids:
+            master_pos = master_open[pos_id]
+            open_copies = (await db.execute(
+                select(CopyTrade).where(
+                    CopyTrade.master_position_id == UUID(pos_id),
+                    CopyTrade.status == "open",
+                )
+            )).scalars().all()
+            for copy in open_copies:
+                await self._mirror_partial(copy, master, master_pos, db)
+
         for closed_id in closed_positions:
             copies = await db.execute(
                 select(CopyTrade).where(
@@ -400,6 +430,84 @@ class CopyTradeEngine:
             await self._close_copy(copy, master, db)
 
         self._master_positions[master_id_str] = current_master_pos_ids
+
+
+    async def _mirror_partial(self, copy, master, master_pos, db: AsyncSession) -> None:
+        """Reduce one open copy to master_pos.lots x copy.ratio (lot-step
+        rounded) by partially closing the difference at the follower's
+        close price, with history, ledger, fee settlement and margin recompute."""
+        from packages.common.src.row_locks import lock_position
+        from packages.common.src.trading_service import quote_to_account_pnl, cross_rate_for
+        ratio = Decimal(str(copy.ratio or 1))
+        inst = master_pos.instrument
+        if inst is None or not copy.investor_position_id:
+            return
+        step = Decimal(str(getattr(inst, "lot_step", None) or "0.01"))
+        target = (Decimal(str(master_pos.lots)) * ratio / step).to_integral_value() * step
+        acct_id = (await db.execute(
+            select(Position.account_id).where(Position.id == copy.investor_position_id)
+        )).scalar_one_or_none()
+        if acct_id is None:
+            return
+        account = await lock_account(db, acct_id)
+        fpos = await lock_position(db, copy.investor_position_id)
+        if account is None or fpos is None:
+            return
+        fst = fpos.status.value if hasattr(fpos.status, "value") else str(fpos.status)
+        if fst != "open":
+            return
+        excess = Decimal(str(fpos.lots)) - target
+        if excess < step:
+            return  # already in line (or master grew: never auto-increase)
+        if target < step:
+            await self._close_copy(copy, master, db)  # nothing meaningful left
+            return
+        raw = await redis_client.get(PriceChannel.tick_key(inst.symbol))
+        if not raw:
+            return
+        tick = json.loads(raw)
+        if is_tick_stale(tick):
+            return
+        side = fpos.side.value if hasattr(fpos.side, "value") else str(fpos.side)
+        close_price = Decimal(str(tick["bid"])) if side == "buy" else Decimal(str(tick["ask"]))
+        cs = inst.contract_size or Decimal("100000")
+        gross = ((close_price - fpos.open_price) if side == "buy" else (fpos.open_price - close_price)) * excess * cs
+        gross = quote_to_account_pnl(
+            gross, getattr(inst, "base_currency", None), getattr(inst, "quote_currency", None),
+            close_price, symbol=inst.symbol, cross_rate=await cross_rate_for(inst),
+        )
+        share = excess / Decimal(str(fpos.lots))
+        part_comm = (fpos.commission or Decimal("0")) * share
+        part_swap = (fpos.swap or Decimal("0")) * share
+        account.balance = (account.balance or Decimal("0")) + gross
+        db.add(Transaction(
+            user_id=account.user_id, account_id=account.id,
+            type="profit" if gross >= 0 else "loss", amount=gross,
+            balance_after=account.balance, reference_id=fpos.id,
+            description=f"Copy partial close {inst.symbol} {excess} lots @ {close_price} (master reduced)",
+        ))
+        alloc = await db.get(InvestorAllocation, copy.investor_allocation_id)
+        fee = await settle_copy_fee(
+            db, master=master, alloc=alloc, gross_profit=gross,
+            investor_account=account, reference_id=fpos.id,
+        )
+        db.add(TradeHistory(
+            position_id=fpos.id, account_id=fpos.account_id, instrument_id=fpos.instrument_id,
+            side=fpos.side, lots=excess, open_price=fpos.open_price, close_price=close_price,
+            swap=part_swap, commission=part_comm, profit=gross - fee,
+            close_reason="copy_close", opened_at=fpos.created_at,
+            closed_at=datetime.now(timezone.utc),
+        ))
+        fpos.lots = Decimal(str(fpos.lots)) - excess
+        fpos.commission = (fpos.commission or Decimal("0")) - part_comm
+        fpos.swap = (fpos.swap or Decimal("0")) - part_swap
+        await db.flush()
+        await recompute_account_margin(db, account)
+        self._pending_events.append((
+            f"account:{fpos.account_id}",
+            json.dumps({"type": "position_updated", "position_id": str(fpos.id), "lots": float(fpos.lots)}),
+        ))
+        logger.info("Copy partial-closed %s lots of %s to follow master reduction", excess, fpos.id)
 
     async def _open_copy(
         self,
@@ -527,11 +635,21 @@ class CopyTradeEngine:
                     instrument.symbol,
                 )
 
+        # Lock the follower's account (fresh) before any balance/margin math.
+        investor_account = await lock_account(db, investor_account.id) or investor_account
         required_margin = await margin_for(
             Decimal(str(copy_lots)), Decimal(str(open_price)), instrument, investor_account.leverage,
         )
+        # A copied trade is a real trade: charged the follower's resolved
+        # commission like any market order (QA: copies charged 0, so the
+        # follower's IB never earned and the house lost the commission).
+        from packages.common.src.instrument_pricing import resolve_commission
+        copy_commission = await resolve_commission(
+            db, instrument, Decimal(str(copy_lots)), Decimal(str(open_price)),
+            user_id=investor_account.user_id, account_group_id=investor_account.account_group_id,
+        )
 
-        if required_margin > (investor_account.free_margin or Decimal("0")):
+        if required_margin + copy_commission > (investor_account.free_margin or Decimal("0")):
             logger.warning(
                 "Insufficient margin for copy: investor_account=%s allocation=%s master_pos=%s",
                 investor.investor_account_id,
@@ -553,7 +671,7 @@ class CopyTradeEngine:
             lots=Decimal(str(copy_lots)),
             filled_price=open_price,
             filled_at=datetime.now(timezone.utc),
-            commission=Decimal("0"),
+            commission=copy_commission,
             comment=comment,
         )
         db.add(order)
@@ -570,6 +688,7 @@ class CopyTradeEngine:
             stop_loss=master_pos.stop_loss,
             take_profit=master_pos.take_profit,
             comment=comment,
+            commission=copy_commission,
         )
         db.add(position)
         await db.flush()
@@ -583,25 +702,26 @@ class CopyTradeEngine:
         )
         db.add(copy_record)
 
-        investor_account.margin_used = (investor_account.margin_used or Decimal("0")) + required_margin
-        investor_account.free_margin = investor_account.equity - investor_account.margin_used
+        if copy_commission and copy_commission != 0:
+            investor_account.balance = (investor_account.balance or Decimal("0")) - copy_commission
+            db.add(Transaction(
+                user_id=investor_account.user_id,
+                account_id=investor_account.id,
+                type="commission",
+                amount=-copy_commission,
+                balance_after=investor_account.balance,
+                reference_id=order.id,
+                description=f"Commission {instrument.symbol} copy trade {copy_lots} lots",
+            ))
+        await db.flush()
+        await recompute_account_margin(db, investor_account)
 
-        # Copy trades count as real trading volume — flow IB commission up the
-        # investor's referrer chain (same rate as regular trades).
-        try:
-            from .ib_engine import distribute_ib_commission
-            await distribute_ib_commission(
-                db,
-                investor_account.user_id,
-                order.id,
-                Decimal(str(copy_lots)),
-                instrument.symbol,
-            )
-        except Exception as e:
-            logger.error(
-                "IB commission distribute failed for copy trade investor=%s order=%s: %s",
-                investor.id, order.id, e,
-            )
+        # Copy trades count as real trading volume: accrue for the follower's
+        # IB chain (savepoint-safe, idempotent).
+        from packages.common.src.ib_commission import accrue_ib_commission_safe
+        await accrue_ib_commission_safe(
+            db, investor_account.user_id, order.id, Decimal(str(copy_lots)), instrument.symbol,
+        )
 
         logger.info(
             "Copy opened: %s %s %s lots investor=%s master_pos=%s copy_type=%s (master %s lots)",

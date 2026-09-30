@@ -292,6 +292,28 @@ async def account_unrealized_pnl(db: AsyncSession, account, user_id: UUID) -> tu
     return total, len(rows)
 
 
+async def _settle_follower_fee_if_copy(db: AsyncSession, pos, gross_profit, account, *, final: bool) -> None:
+    """A follower closing a COPIED position himself pays the same high-water-
+    mark performance fee as when the master's close is mirrored (QA
+    2026-09-29: closing the copy yourself skipped the fee entirely). On the
+    final close the CopyTrade is marked closed so the engine won't touch it."""
+    copy = (await db.execute(
+        select(CopyTrade).where(CopyTrade.investor_position_id == pos.id, CopyTrade.status == "open")
+    )).scalar_one_or_none()
+    if copy is None:
+        return
+    from packages.common.src.models import InvestorAllocation, MasterAccount
+    from ..engines.copy_engine import settle_copy_fee
+    alloc = await db.get(InvestorAllocation, copy.investor_allocation_id) if copy.investor_allocation_id else None
+    master = await db.get(MasterAccount, alloc.master_id) if alloc is not None else None
+    await settle_copy_fee(
+        db, master=master, alloc=alloc, gross_profit=Decimal(str(gross_profit)),
+        investor_account=account, reference_id=pos.id,
+    )
+    if final:
+        copy.status = "closed"
+
+
 # ─── Orders ───────────────────────────────────────────────────────────────
 
 async def place_order(
@@ -1072,8 +1094,39 @@ async def modify_position(position_id: UUID, req, user_id: UUID, db: AsyncSessio
         pos.take_profit = req.take_profit  # None clears it
         updated = True
 
+    mirrored_accounts: list = []
+    if updated:
+        # A master's SL/TP change applies to every open copy of this position
+        # (QA 2026-09-29: copies kept the SL/TP from the moment they opened,
+        # and followers can't edit them). Only the brackets actually sent are
+        # copied; null clears them, as on the master.
+        copies = (await db.execute(
+            select(CopyTrade).where(CopyTrade.master_position_id == position_id, CopyTrade.status == "open")
+        )).scalars().all()
+        for c in copies:
+            fp = await lock_position(db, c.investor_position_id) if c.investor_position_id else None
+            if fp is None:
+                continue
+            fst = fp.status.value if hasattr(fp.status, "value") else str(fp.status)
+            if fst != "open":
+                continue
+            if "stop_loss" in fields_set:
+                fp.stop_loss = req.stop_loss
+            if "take_profit" in fields_set:
+                fp.take_profit = req.take_profit
+            mirrored_accounts.append((fp.account_id, fp.id, fp.stop_loss, fp.take_profit))
+
     if updated:
         await db.commit()
+        for _acc, _pid, _sl, _tp in mirrored_accounts:
+            try:
+                await redis_client.publish(f"account:{_acc}", json.dumps({
+                    "type": "position_updated", "position_id": str(_pid),
+                    "stop_loss": float(_sl) if _sl else None,
+                    "take_profit": float(_tp) if _tp else None,
+                }))
+            except Exception:
+                pass
 
         # Push a position_updated event so every client on this account (chart
         # lines, positions table, mobile) reflects the new SL/TP live via WS.
@@ -1263,6 +1316,7 @@ async def close_position(
         db.add(history)
 
         account.balance += partial_profit
+        await _settle_follower_fee_if_copy(db, pos, partial_profit, account, final=False)
         partial_margin = await margin_for(close_lots, pos.open_price, pos.instrument, account.leverage)
         account.margin_used = max(Decimal("0"), (account.margin_used or Decimal("0")) - partial_margin)
 
@@ -1292,6 +1346,7 @@ async def close_position(
         db.add(history)
 
         account.balance += full_profit
+        await _settle_follower_fee_if_copy(db, pos, full_profit, account, final=True)
         margin_release = await margin_for(pos.lots, pos.open_price, pos.instrument, account.leverage)
         account.margin_used = max(Decimal("0"), (account.margin_used or Decimal("0")) - margin_release)
 

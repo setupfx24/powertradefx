@@ -64,7 +64,8 @@ def _build():
     investor_account = SimpleNamespace(
         id=uuid4(), is_active=True, leverage=500, free_margin=Decimal("1000000"),
         equity=Decimal("1000"), margin_used=Decimal("0"), user_id=uuid4(),
-        account_number="ACC1",
+        account_number="ACC1", account_group_id=None,
+        balance=Decimal("1000"), credit=Decimal("0"),
     )
     master_account = SimpleNamespace(id=uuid4())
     master = SimpleNamespace(id=uuid4())
@@ -75,11 +76,27 @@ class CopyCatchupPriceTests(unittest.TestCase):
     def setUp(self):
         self._orig_cache = copy_engine.price_cache
         self._orig_rct = copy_engine.resolve_copy_type
+        self._orig_rcm = copy_engine.recompute_account_margin
         copy_engine.resolve_copy_type = lambda inv, m: "signal"
+
+        async def _no_recompute(*_a, **_k):
+            return Decimal("0")
+        copy_engine.recompute_account_margin = _no_recompute
+
+        # Commission resolution is covered by its own tests; here it is zero.
+        from packages.common.src import instrument_pricing as _ip
+        self._ip = _ip
+        self._orig_rc = _ip.resolve_commission
+
+        async def _zero_commission(*_a, **_k):
+            return Decimal("0")
+        _ip.resolve_commission = _zero_commission
 
     def tearDown(self):
         copy_engine.price_cache = self._orig_cache
         copy_engine.resolve_copy_type = self._orig_rct
+        copy_engine.recompute_account_margin = self._orig_rcm
+        self._ip.resolve_commission = self._orig_rc
 
     def _run(self, catch_up):
         instr, master_pos, investor, investor_account, master_account, master = _build()
