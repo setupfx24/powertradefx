@@ -28,7 +28,7 @@ from packages.common.src.models import (
     OrderSide, Notification, Transaction, TradeHistory, User,
 )
 from packages.common.src.redis_client import redis_client, PriceChannel, is_tick_stale
-from packages.common.src.row_locks import lock_account
+from packages.common.src.row_locks import lock_account, lock_position
 from packages.common.src.trading_service import margin_for
 from packages.common.src.kafka_client import produce_event, KafkaTopics
 from packages.common.src.config import get_settings
@@ -69,280 +69,327 @@ class RiskEngine:
     async def stop(self):
         self._running = False
 
+    # NUMERIC(10,4) holds at most 999999.9999; a tiny margin on a big account
+    # overflowed it and the exception aborted the WHOLE pass, so nobody could
+    # be stopped out (QA 2026-09-29). Store a clamped value.
+    _MARGIN_LEVEL_CAP = Decimal("999999")
+
+    async def _live_float(self, pos):
+        """(floating P&L at MID in account ccy, close price at the side, ok).
+        ok=False when the price is missing/stale or a needed cross rate is
+        unavailable: the account's equity is then UNKNOWN and nobody may be
+        stopped out on it (a stale winning position used to count as 0 and
+        trigger a false stop-out)."""
+        from packages.common.src.trading_service import quote_to_account_pnl, cross_rate_for, _needs_cross_rate
+        inst = pos.instrument
+        if inst is None:
+            return Decimal("0"), None, False
+        raw = await redis_client.get(PriceChannel.tick_key(inst.symbol))
+        if not raw:
+            return Decimal("0"), None, False
+        tick = json.loads(raw)
+        if is_tick_stale(tick):
+            return Decimal("0"), None, False
+        bid, ask = Decimal(str(tick["bid"])), Decimal(str(tick["ask"]))
+        if getattr(pos, "spread_override", None) is not None:
+            from packages.common.src.instrument_pricing import symmetric_quote_from_mid
+            m = (bid + ask) / Decimal("2")
+            bid, ask = symmetric_quote_from_mid(
+                m, Decimal(str(pos.spread_override)), (pos.spread_override_type or "pips"),
+                Decimal(str(inst.pip_size or "0.0001")), int(inst.digits or 5), Decimal("0"),
+            )
+        # Decision on the MID: an artificial spread change must never force a
+        # stop-out the market did not warrant. The close itself books at the
+        # side's real price (bid for a buy, ask for a sell).
+        mid = (bid + ask) / Decimal("2")
+        is_buy = pos.side == OrderSide.BUY or str(getattr(pos.side, "value", pos.side)).lower() == "buy"
+        cs = inst.contract_size or Decimal("100000")
+        raw_pnl = (mid - pos.open_price) * pos.lots * cs if is_buy else (pos.open_price - mid) * pos.lots * cs
+        cross = await cross_rate_for(inst)
+        if cross is None and _needs_cross_rate(inst):
+            return Decimal("0"), None, False
+        pnl = quote_to_account_pnl(
+            raw_pnl, getattr(inst, "base_currency", None), getattr(inst, "quote_currency", None),
+            mid, symbol=inst.symbol, cross_rate=cross,
+        )
+        return pnl, (bid if is_buy else ask), True
+
     async def _margin_monitor(self):
-        """Monitor margin levels for all accounts with open positions."""
+        """Monitor margin levels; each account in its OWN short transaction.
+
+        QA 2026-09-29: the monitor updated every account inside one
+        transaction, so a deadlock or one bad account rolled back the whole
+        pass and stop-outs were skipped for everyone. Now a failure affects
+        one account for one pass."""
         logger.info("Margin monitor started")
+        from packages.common.src.settings_store import get_float_setting
         while self._running:
             try:
                 async with AsyncSessionLocal() as db:
-                    result = await db.execute(
-                        select(TradingAccount).where(
+                    ids = (await db.execute(
+                        select(TradingAccount.id).where(
                             TradingAccount.margin_used > 0,
-                            TradingAccount.is_active == True,
+                            TradingAccount.is_active == True,  # noqa: E712
                         )
-                    )
-                    accounts = result.scalars().all()
-
-                    for account in accounts:
-                        positions_result = await db.execute(
-                            select(Position).where(
-                                Position.account_id == account.id,
-                                Position.status == PositionStatus.OPEN,
-                            )
-                        )
-                        positions = positions_result.scalars().all()
-                        if not positions:
-                            continue
-
-                        unrealized_pnl = Decimal("0")
-                        for pos in positions:
-                            tick_data = await redis_client.get(PriceChannel.tick_key(pos.instrument.symbol))
-                            if not tick_data:
-                                continue
-                            tick = json.loads(tick_data)
-                            # Stale-price guard: don't let a frozen/refresher
-                            # quote drive a stop-out decision. Skipping the
-                            # position (treats its float as 0 for this tick) is
-                            # the fail-safe direction — we never stop-out on
-                            # dead-feed prices.
-                            if is_tick_stale(tick):
-                                continue
-                            # Value the float on the MID, not the spread-adjusted
-                            # bid/ask. bid/ask move with the platform spread, so a
-                            # spread change — including an admin widening it while
-                            # the market never moved — would drop the float and
-                            # margin level and could force a stop-out the real
-                            # market never warranted. The mid ties the stop-out
-                            # decision to genuine price movement only. (An actual
-                            # stop-out still books at the real bid/ask in
-                            # _execute_stop_out — the user pays the spread on a
-                            # forced close; it just cannot be TRIGGERED by spread.)
-                            current_price = (Decimal(str(tick["bid"])) + Decimal(str(tick["ask"]))) / Decimal("2")
-
-                            if pos.side == OrderSide.BUY:
-                                pnl = (current_price - pos.open_price) * pos.lots * pos.instrument.contract_size
-                            else:
-                                pnl = (pos.open_price - current_price) * pos.lots * pos.instrument.contract_size
-                            from packages.common.src.trading_service import quote_to_account_pnl, cross_rate_for
-                            pnl = quote_to_account_pnl(
-                                pnl,
-                                getattr(pos.instrument, "base_currency", None),
-                                getattr(pos.instrument, "quote_currency", None),
-                                current_price,
-                                symbol=getattr(pos.instrument, "symbol", None),
-                                cross_rate=await cross_rate_for(pos.instrument),
-                            )
-                            unrealized_pnl += pnl
-
-                        equity = account.balance + account.credit + unrealized_pnl
-                        margin_level = (equity / account.margin_used * 100) if account.margin_used > 0 else Decimal("9999")
-
-                        account.equity = equity
-                        account.free_margin = equity - account.margin_used
-                        account.margin_level = margin_level
-
-                        from packages.common.src.settings_store import get_float_setting
-                        stop_out = await get_float_setting("stop_out_level", settings.STOP_OUT_LEVEL)
-                        margin_call = await get_float_setting("margin_call_level", settings.MARGIN_CALL_LEVEL)
-
-                        if margin_level <= Decimal(str(stop_out)):
-                            await self._execute_stop_out(account, positions, db)
-
-                        elif margin_level <= Decimal(str(margin_call)):
-                            acct_key = str(account.id)
-                            if acct_key not in self._margin_call_sent:
-                                self._margin_call_sent.add(acct_key)
-                                notif = Notification(
-                                    user_id=account.user_id,
-                                    title="Margin Call Warning",
-                                    message=f"Your margin level is at {margin_level:.1f}%. Please add funds or close positions.",
-                                    type="margin_call",
-                                )
-                                db.add(notif)
-
-                                await redis_client.publish(f"account:{account.id}", json.dumps({
-                                    "type": "margin_call",
-                                    "margin_level": str(margin_level),
-                                }))
-
-                                # Email the user — fire-and-forget, never blocks
-                                # the risk loop on SMTP latency.
-                                if not bool(account.is_demo):
-                                    await self._send_margin_call_email(
-                                        account=account,
-                                        margin_level=margin_level,
-                                        equity=equity,
-                                        used_margin=account.margin_used,
-                                        free_margin=account.free_margin,
-                                        db=db,
-                                    )
-                        else:
-                            self._margin_call_sent.discard(str(account.id))
-
-                    await db.commit()
-
+                    )).scalars().all()
+                stop_out = Decimal(str(await get_float_setting("stop_out_level", settings.STOP_OUT_LEVEL)))
+                margin_call = Decimal(str(await get_float_setting("margin_call_level", settings.MARGIN_CALL_LEVEL)))
+                for account_id in ids:
+                    try:
+                        await self._check_account(account_id, stop_out, margin_call)
+                    except Exception as e:
+                        logger.error("Margin check failed for account %s: %s", account_id, e, exc_info=True)
             except Exception as e:
                 logger.error(f"Margin monitor error: {e}")
 
             await asyncio.sleep(1)
 
-    async def _execute_stop_out(self, account: TradingAccount, positions: list[Position], db: AsyncSession):
-        """Close positions until margin level is restored above stop-out."""
-        logger.warning(f"Stop-out triggered for account {account.account_number}")
+    async def _check_account(self, account_id, stop_out: Decimal, margin_call: Decimal) -> None:
+        async with AsyncSessionLocal() as db:
+            account = (await db.execute(
+                select(TradingAccount).where(TradingAccount.id == account_id)
+            )).scalar_one_or_none()
+            if account is None:
+                return
+            positions = (await db.execute(
+                select(Position).where(
+                    Position.account_id == account.id,
+                    Position.status == PositionStatus.OPEN,
+                )
+            )).scalars().all()
+            if not positions:
+                return
 
-        # Lock the account row FOR UPDATE before mutating balance — otherwise a
-        # concurrent close (manual, SL/TP) on the same account can lose-update the
-        # balance. Same session, so this locks the row the loaded object maps to.
-        locked_account = await lock_account(db, account.id)
-        if locked_account is not None:
-            account = locked_account
+            unrealized = Decimal("0")
+            known = True
+            for pos in positions:
+                pnl, _px, ok = await self._live_float(pos)
+                if not ok:
+                    known = False
+                    continue
+                unrealized += pnl
 
-        closed_count = 0
-        realized_pnl = Decimal("0")
+            equity = (account.balance or Decimal("0")) + (account.credit or Decimal("0")) + unrealized
+            used = account.margin_used or Decimal("0")
+            level = (equity / used * 100) if used > 0 else self._MARGIN_LEVEL_CAP
+            level = max(min(level, self._MARGIN_LEVEL_CAP), -self._MARGIN_LEVEL_CAP)
 
-        sorted_positions = sorted(positions, key=lambda p: p.profit)
+            if not known:
+                # Equity unknown (stale/missing price): never act on it.
+                logger.warning("Margin check skipped for %s: a price is stale or missing", account.account_number)
+                return
 
-        for pos in sorted_positions:
-            tick_data = await redis_client.get(PriceChannel.tick_key(pos.instrument.symbol))
-            if not tick_data:
-                continue
+            account.equity = equity
+            account.free_margin = equity - used
+            account.margin_level = level
+            await db.commit()
 
-            tick = json.loads(tick_data)
-            # Stale-price guard: never close a position at a frozen/refresher
-            # price during a stop-out. Leaving it open is safer than booking a
-            # loss at a dead-feed quote.
-            if is_tick_stale(tick):
-                continue
-            close_price = Decimal(str(tick["bid"])) if pos.side == OrderSide.BUY else Decimal(str(tick["ask"]))
-
-            if pos.side == OrderSide.BUY:
-                profit = (close_price - pos.open_price) * pos.lots * pos.instrument.contract_size
+            if level <= stop_out:
+                await self._execute_stop_out(account.id, stop_out)
+            elif level <= margin_call:
+                acct_key = str(account.id)
+                if acct_key not in self._margin_call_sent:
+                    self._margin_call_sent.add(acct_key)
+                    async with AsyncSessionLocal() as ndb:
+                        ndb.add(Notification(
+                            user_id=account.user_id,
+                            title="Margin Call Warning",
+                            message=f"Your margin level is at {level:.1f}%. Please add funds or close positions.",
+                            type="margin_call",
+                        ))
+                        await ndb.commit()
+                        await redis_client.publish(f"account:{account.id}", json.dumps({
+                            "type": "margin_call",
+                            "margin_level": str(level),
+                        }))
+                        if not bool(account.is_demo):
+                            await self._send_margin_call_email(
+                                account=account,
+                                margin_level=level,
+                                equity=equity,
+                                used_margin=used,
+                                free_margin=account.free_margin,
+                                db=ndb,
+                            )
             else:
-                profit = (pos.open_price - close_price) * pos.lots * pos.instrument.contract_size
-            from packages.common.src.trading_service import quote_to_account_pnl, cross_rate_for
-            profit = quote_to_account_pnl(
-                profit,
-                getattr(pos.instrument, "base_currency", None),
-                getattr(pos.instrument, "quote_currency", None),
-                close_price,
-                symbol=getattr(pos.instrument, "symbol", None),
-                cross_rate=await cross_rate_for(pos.instrument),
-            )
+                self._margin_call_sent.discard(str(account.id))
 
-            pos.status = PositionStatus.CLOSED
-            pos.close_price = close_price
-            pos.profit = profit
-            pos.closed_at = datetime.now(timezone.utc)
-            pos.comment = "Auto-closed by STOP OUT"
+    async def _execute_stop_out(self, account_id, stop_out: Decimal) -> None:
+        """Close positions, LARGEST FLOATING LOSS first, until the margin level
+        (including the floating P&L of the positions still open) is back above
+        the stop-out level. Runs in its own transaction holding the account
+        lock and every position lock (account -> positions ascending id), and
+        re-evaluates everything on FRESH values, so it never overwrites a
+        concurrent balance change or re-closes a position closed meanwhile.
 
-            account.balance += profit
-            margin_release = await margin_for(pos.lots, pos.open_price, pos.instrument, account.leverage)
-            account.margin_used = max(Decimal("0"), account.margin_used - margin_release)
-            account.equity = account.balance + account.credit
-            account.free_margin = account.equity - account.margin_used
+        QA 2026-09-29 fixes: sorted by Position.profit (always 0 while open) so
+        it closed arbitrary positions; recomputed the level from balance only
+        (ignoring the remaining floating P&L) and over-liquidated; worked from
+        the pass-start snapshot."""
+        from packages.common.src.trading_service import recompute_account_margin
+        async with AsyncSessionLocal() as db:
+            try:
+                account = await lock_account(db, account_id)
+                if account is None:
+                    await db.rollback()
+                    return
+                ids = (await db.execute(
+                    select(Position.id).where(
+                        Position.account_id == account.id,
+                        Position.status == PositionStatus.OPEN,
+                    ).order_by(Position.id)
+                )).scalars().all()
+                open_pos = []
+                for pid in ids:
+                    p = await lock_position(db, pid)
+                    st = p.status.value if p is not None and hasattr(p.status, "value") else (str(p.status) if p else "")
+                    if p is not None and st == "open":
+                        open_pos.append(p)
+                if not open_pos:
+                    await db.rollback()
+                    return
 
-            # Durable audit trail — every close path MUST write TradeHistory +
-            # Transaction in the same session as the balance mutation. This
-            # path used to write neither, which is exactly the hole the
-            # gateway's _heal_missing_trade_history() loop was papering over
-            # (it fabricated rows minutes later with a WARNING).
-            db.add(TradeHistory(
-                position_id=pos.id,
-                account_id=pos.account_id,
-                instrument_id=pos.instrument_id,
-                side=pos.side,
-                lots=pos.lots,
-                open_price=pos.open_price,
-                close_price=close_price,
-                swap=pos.swap or Decimal("0"),
-                commission=pos.commission or Decimal("0"),
-                profit=profit,
-                close_reason="stop_out",
-                opened_at=pos.created_at,
-                closed_at=pos.closed_at,
-            ))
-            db.add(Transaction(
-                user_id=account.user_id,
-                account_id=pos.account_id,
-                type="profit" if profit >= 0 else "loss",
-                amount=profit,
-                balance_after=account.balance,
-                reference_id=pos.id,
-                description=(
-                    f"Stop-out: {pos.instrument.symbol} "
-                    f"{pos.side.value if hasattr(pos.side, 'value') else pos.side} "
-                    f"{pos.lots} lots @ {close_price}"
-                ),
-            ))
-            db.add(Notification(
-                user_id=account.user_id,
-                title=f"Stop Out — {pos.instrument.symbol}",
-                message=(
-                    f"Position closed by stop-out at {close_price} | "
-                    f"P&L: {'+' if profit >= 0 else ''}{float(profit):.2f}"
-                ),
-                type="margin_call",
-            ))
-            # NOTE: bonus wagering release (wallet_service.release_bonuses_after_trade)
-            # lives in the gateway package and is not importable from this service;
-            # stop-out lots therefore don't feed the bonus FIFO. Known gap.
+                live = {}
+                for p in open_pos:
+                    pnl, close_px, ok = await self._live_float(p)
+                    if not ok:
+                        logger.warning("Stop-out for %s deferred: stale/missing price", account.account_number)
+                        await db.rollback()
+                        return
+                    live[p.id] = (pnl, close_px)
 
-            closed_count += 1
-            realized_pnl += profit
+                def level_now(remaining):
+                    eq = (account.balance or Decimal("0")) + (account.credit or Decimal("0")) + sum(
+                        live[x.id][0] for x in remaining
+                    )
+                    used = account.margin_used or Decimal("0")
+                    return (eq / used * 100) if used > 0 else self._MARGIN_LEVEL_CAP, eq
 
+                lvl, _eq = level_now(open_pos)
+                if lvl > stop_out:
+                    await db.rollback()
+                    return  # recovered between the check and the lock
+                logger.warning(f"Stop-out triggered for account {account.account_number} (level {lvl:.2f}%)")
+
+                remaining = sorted(open_pos, key=lambda x: live[x.id][0])  # most negative first
+                closed_count = 0
+                realized_pnl = Decimal("0")
+                while remaining:
+                    pos = remaining.pop(0)
+                    close_price = live[pos.id][1]
+                    profit = await self._book_close(db, account, pos, close_price)
+                    closed_count += 1
+                    realized_pnl += profit
+                    await db.flush()
+                    await recompute_account_margin(db, account)
+                    lvl, eq = level_now(remaining)
+                    if lvl > stop_out:
+                        break
+                eq = level_now(remaining)[1]
+                account.equity = eq
+                account.free_margin = eq - (account.margin_used or Decimal("0"))
+                account.margin_level = max(min(lvl, self._MARGIN_LEVEL_CAP), -self._MARGIN_LEVEL_CAP)
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
+
+            if closed_count > 0 and not bool(account.is_demo):
+                await self._send_stop_out_email(
+                    account=account,
+                    closed_count=closed_count,
+                    realized_pnl=realized_pnl,
+                    new_equity=account.equity,
+                    db=db,
+                )
+
+    async def _book_close(self, db: AsyncSession, account: TradingAccount, pos: Position, close_price: Decimal) -> Decimal:
+        """Close one position at close_price (side price) with history, ledger,
+        notification and A-book forward. Returns realised profit."""
+        from packages.common.src.trading_service import quote_to_account_pnl, cross_rate_for
+        is_buy = pos.side == OrderSide.BUY or str(getattr(pos.side, "value", pos.side)).lower() == "buy"
+        cs = pos.instrument.contract_size or Decimal("100000")
+        raw = (close_price - pos.open_price) * pos.lots * cs if is_buy else (pos.open_price - close_price) * pos.lots * cs
+        profit = quote_to_account_pnl(
+            raw,
+            getattr(pos.instrument, "base_currency", None),
+            getattr(pos.instrument, "quote_currency", None),
+            close_price,
+            symbol=getattr(pos.instrument, "symbol", None),
+            cross_rate=await cross_rate_for(pos.instrument),
+        )
+        pos.status = PositionStatus.CLOSED
+        pos.close_price = close_price
+        pos.profit = profit
+        pos.closed_at = datetime.now(timezone.utc)
+        pos.comment = "Auto-closed by STOP OUT"
+        account.balance = (account.balance or Decimal("0")) + profit
+
+        db.add(TradeHistory(
+            position_id=pos.id,
+            account_id=pos.account_id,
+            instrument_id=pos.instrument_id,
+            side=pos.side,
+            lots=pos.lots,
+            open_price=pos.open_price,
+            close_price=close_price,
+            swap=pos.swap or Decimal("0"),
+            commission=pos.commission or Decimal("0"),
+            profit=profit,
+            close_reason="stop_out",
+            opened_at=pos.created_at,
+            closed_at=pos.closed_at,
+        ))
+        db.add(Transaction(
+            user_id=account.user_id,
+            account_id=pos.account_id,
+            type="profit" if profit >= 0 else "loss",
+            amount=profit,
+            balance_after=account.balance,
+            reference_id=pos.id,
+            description=(
+                f"Stop-out: {pos.instrument.symbol} "
+                f"{pos.side.value if hasattr(pos.side, 'value') else pos.side} "
+                f"{pos.lots} lots @ {close_price}"
+            ),
+        ))
+        db.add(Notification(
+            user_id=account.user_id,
+            title=f"Stop Out — {pos.instrument.symbol}",
+            message=(
+                f"Position closed by stop-out at {close_price} | "
+                f"P&L: {'+' if profit >= 0 else ''}{float(profit):.2f}"
+            ),
+            type="margin_call",
+        ))
+        try:
             await redis_client.publish(f"account:{account.id}", json.dumps({
                 "type": "stop_out",
                 "position_id": str(pos.id),
                 "symbol": pos.instrument.symbol,
                 "profit": str(profit),
             }))
+        except Exception:
+            pass
+        logger.info(f"Stop-out closed {pos.instrument.symbol} {getattr(pos.side, 'value', pos.side)}, profit: {profit}")
 
-            logger.info(f"Stop-out closed {pos.instrument.symbol} {pos.side.value}, profit: {profit}")
+        _pos_id, _cp, _pnl, _is_demo, _uid = str(pos.id), close_price, profit, bool(account.is_demo), account.user_id
 
-            # ── A-Book: forward stop-out close to Corecen LP ─────────────
-            # Decimal preserved — corecen_trade_client stringifies it
-            # exactly, so the LP's record matches ours digit-for-digit.
-            _pos_id = str(pos.id)
-            _cp = close_price
-            _pnl = profit
-            _is_demo = bool(account.is_demo)
+        async def _forward_stopout(pid=_pos_id, cp=_cp, pnl=_pnl, is_demo=_is_demo, uid=_uid):
+            if is_demo:
+                return
+            try:
+                async with AsyncSessionLocal() as bg_db:
+                    u = (await bg_db.execute(select(User).where(User.id == uid))).scalar_one_or_none()
+                    if u and (u.book_type or "B") == "A":
+                        await corecen_trade_client.forward_trade_close(
+                            position_id=pid, close_price=cp, pnl=pnl, closed_by="STOP_OUT",
+                        )
+            except Exception as exc:
+                logger.error("[A-BOOK] Stop-out close forward failed: %s", exc)
 
-            async def _forward_stopout(pid=_pos_id, cp=_cp, pnl=_pnl, is_demo=_is_demo):
-                # Demo account stop-outs never hit LP.
-                if is_demo:
-                    return
-                try:
-                    async with AsyncSessionLocal() as bg_db:
-                        u = (await bg_db.execute(
-                            select(User).where(User.id == account.user_id)
-                        )).scalar_one_or_none()
-                        if u and (u.book_type or "B") == "A":
-                            await corecen_trade_client.forward_trade_close(
-                                position_id=pid, close_price=cp,
-                                pnl=pnl, closed_by="STOP_OUT",
-                            )
-                except Exception as exc:
-                    logger.error("[A-BOOK] Stop-out close forward failed: %s", exc)
-
-            asyncio.create_task(_forward_stopout())
-
-            margin_level = (account.equity / account.margin_used * 100) if account.margin_used > 0 else Decimal("9999")
-            from packages.common.src.settings_store import get_float_setting as _gfs
-            _so = await _gfs("stop_out_level", settings.STOP_OUT_LEVEL)
-            if margin_level > Decimal(str(_so)):
-                break
-
-        # After the stop-out loop ends — email the user a summary. Skipped on
-        # demo accounts, and on the no-op case where nothing was actually
-        # closed (defensive — shouldn't happen but cheap to guard).
-        if closed_count > 0 and not bool(account.is_demo):
-            await self._send_stop_out_email(
-                account=account,
-                closed_count=closed_count,
-                realized_pnl=realized_pnl,
-                new_equity=account.equity,
-                db=db,
-            )
+        asyncio.create_task(_forward_stopout())
+        return profit
 
     async def _send_margin_call_email(
         self,
@@ -452,7 +499,7 @@ class RiskEngine:
                         db.add(Transaction(
                             user_id=account.user_id,
                             account_id=account.id,
-                            type="adjustment",
+                            type="negative_balance",
                             amount=deficit,
                             balance_after=Decimal("0"),
                             description="Negative balance protection: deficit written off",

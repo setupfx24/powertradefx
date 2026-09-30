@@ -143,18 +143,34 @@ async def charge_due_positions(db: AsyncSession, now: Optional[datetime] = None)
 
     booked = 0
     for pos in rows:
+        # Each position is its own unit of work: commit after it (releasing the
+        # account lock at once instead of holding every account for the whole
+        # pass) and a failure skips only that position until the next check.
+        try:
+            if await _book_one(db, pos, now):
+                booked += 1
+            await db.commit()
+        except Exception as e:
+            logger.error("Swap booking failed for position %s: %s", getattr(pos, "id", "?"), e, exc_info=True)
+            await db.rollback()
+    return booked
+
+
+async def _book_one(db: AsyncSession, pos, now: datetime) -> bool:
+    """Book the due rollovers for one position. True if money moved."""
+    if True:
         anchor = _utc(pos.last_swap_at) or _utc(pos.created_at)
         if anchor is None:
-            continue
+            return False
         rolls = rollovers_between(anchor, now)
         if not rolls:
-            continue
+            return False
         last_roll = rolls[-1]
 
         account = pos.account
         instrument = pos.instrument
         if account is None or instrument is None:
-            continue
+            return False
 
         # Exemptions: mark the rollovers as handled so they are not re-walked.
         ag: AccountGroup | None = account.account_group
@@ -166,7 +182,7 @@ async def charge_due_positions(db: AsyncSession, now: Optional[datetime] = None)
         leverage = int(account.leverage or 1)
         if exempt or leverage <= 1:
             pos.last_swap_at = last_roll
-            continue
+            return False
 
         side = (pos.side.value if hasattr(pos.side, "value") else str(pos.side or "buy")).lower()
         terms = await resolve_swap_terms(
@@ -178,7 +194,7 @@ async def charge_due_positions(db: AsyncSession, now: Optional[datetime] = None)
         days = sum(swap_days_for(r, terms.triple_day, is_24_7) for r in rolls)
         if terms.swap_free or terms.pct_per_year == 0 or days == 0:
             pos.last_swap_at = last_roll
-            continue
+            return False
 
         notional = await notional_in_account(pos.lots or 0, pos.open_price or 0, instrument)
         if notional is None:
@@ -186,10 +202,10 @@ async def charge_due_positions(db: AsyncSession, now: Optional[datetime] = None)
                 "Swap: no conversion rate for %s yet; position %s retried next check",
                 instrument.symbol, pos.id,
             )
-            continue
+            return False
         if notional <= 0:
             pos.last_swap_at = last_roll
-            continue
+            return False
 
         borrowed = Decimal(leverage - 1) / Decimal(leverage)
         amount = (
@@ -197,13 +213,13 @@ async def charge_due_positions(db: AsyncSession, now: Optional[datetime] = None)
         ).quantize(Decimal("0.00000001"))
         if amount == 0:
             pos.last_swap_at = last_roll
-            continue
+            return False
 
         # Lock the account row before touching the balance so swap can't race
         # a close / transfer / withdrawal on the same account.
         locked = await lock_account(db, account.id)
         if locked is None:
-            continue
+            return False
         locked.balance = Decimal(str(locked.balance or 0)) + amount
         locked.equity = locked.balance + Decimal(str(locked.credit or 0))
         locked.free_margin = locked.equity - Decimal(str(locked.margin_used or 0))
@@ -222,9 +238,7 @@ async def charge_due_positions(db: AsyncSession, now: Optional[datetime] = None)
                 f" on {notional:.2f} (borrowed {borrowed:.4f})"
             ),
         ))
-        booked += 1
-
-    return booked
+        return True
 
 
 overnight_fee_engine = OvernightFeeEngine()

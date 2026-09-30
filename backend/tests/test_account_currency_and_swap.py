@@ -156,6 +156,12 @@ class _DB:
     def add(self, obj):
         self.added.append(obj)
 
+    async def commit(self):
+        return None
+
+    async def rollback(self):
+        return None
+
 
 class SwapEngineTests(unittest.TestCase):
     def setUp(self):
