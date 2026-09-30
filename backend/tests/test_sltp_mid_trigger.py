@@ -1,100 +1,51 @@
-"""SL/TP must trigger on the MID, not the spread-adjusted bid/ask.
+"""SL/TP trigger and fill rules (sltp_engine.SLTPEngine._trigger).
 
-A wide spread (e.g. an admin widening it while the market never moved) drops the
-bid far below a BUY's stop-loss even though the true market (mid) never reached
-it. The engine must NOT close on that; it must close only when the mid crosses
-the level. Regression guard for the "admin set a big spread and the trade
-auto-closed" report.
+TRIGGER on the MID, never the spread-adjusted bid/ask: a wide spread (e.g. an
+admin widening it while the market never moved) must not close a trade — the
+"admin set a big spread and the trade auto-closed" report.
+
+FILL at the level when the level is inside the current quote; through a GAP at
+the side's real market price (QA 2026-09-29: filling a gapped stop at the SL
+level made the broker absorb the gap).
 """
-import asyncio
-import json
 import unittest
-from datetime import datetime, timezone
-from decimal import Decimal
-from types import SimpleNamespace
-from uuid import uuid4
+from decimal import Decimal as D
 
-from services.gateway.src.engines import sltp_engine as se
+from services.gateway.src.engines.sltp_engine import SLTPEngine
 
-
-class _Res:
-    def __init__(self, items):
-        self._items = items
-
-    def scalars(self):
-        return self
-
-    def all(self):
-        return self._items
+T = SLTPEngine._trigger
 
 
-class _DB:
-    def __init__(self, positions):
-        self._positions = positions
-
-    async def execute(self, *a, **k):
-        return _Res(self._positions)
-
-    async def commit(self):
-        return None
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *a):
-        return False
-
-
-def _pos(side, open_price, sl=None, tp=None):
-    return SimpleNamespace(
-        id=uuid4(), account_id=uuid4(), status="open", side=side,
-        open_price=Decimal(str(open_price)), lots=Decimal("0.01"),
-        stop_loss=Decimal(str(sl)) if sl is not None else None,
-        take_profit=Decimal(str(tp)) if tp is not None else None,
-        instrument=SimpleNamespace(symbol="XAUUSD"),
-    )
-
-
-class SltpMidTriggerTests(unittest.TestCase):
-    def _run(self, pos, bid, ask):
-        closed = []
-
-        async def _fake_close(db, p, close_price, reason):
-            closed.append((p.id, Decimal(str(close_price)), reason))
-
-        orig_session = se.AsyncSessionLocal
-        orig_stale = se.is_tick_stale
-        se.AsyncSessionLocal = lambda: _DB([pos])
-        se.is_tick_stale = lambda *_a, **_k: False
-        engine = se.SLTPEngine()
-        engine._prices = {"XAUUSD": {"bid": str(bid), "ask": str(ask)}}
-        engine._close_position = _fake_close
-        try:
-            asyncio.run(engine._check_positions_locked())
-        finally:
-            se.AsyncSessionLocal = orig_session
-            se.is_tick_stale = orig_stale
-        return closed
-
+class SltpTriggerTests(unittest.TestCase):
     def test_wide_spread_below_sl_does_not_trigger_when_mid_above(self):
-        # BUY, SL 4284. Bid 4283 (below SL) but ask 4287 -> mid 4285 (above SL).
-        # A 400-point spread; the market (mid) never reached the SL.
-        closed = self._run(_pos("buy", 4285, sl=4284), bid=4283, ask=4287)
-        self.assertEqual(closed, [])  # spread must NOT fire the stop
+        # BUY SL 4284; bid 4283 below it but mid 4285 above: no real move.
+        self.assertEqual(T("buy", D("4284"), None, D("4283"), D("4287")), (None, None))
 
     def test_mid_crossing_sl_triggers_and_closes_at_sl(self):
-        # Mid 4283.95 (<= SL 4284) -> real move through the stop -> fires.
-        pos = _pos("buy", 4285, sl=4284)
-        closed = self._run(pos, bid=4283.90, ask=4284.00)
-        self.assertEqual(len(closed), 1)
-        self.assertEqual(closed[0][0], pos.id)
-        self.assertEqual(closed[0][1], Decimal("4284"))  # books at the SL level
-        self.assertEqual(closed[0][2], "sl")
+        # Mid 4283.95 <= SL, level inside the quote -> closes at the level.
+        self.assertEqual(T("buy", D("4284"), None, D("4283.90"), D("4284.00")), ("sl", D("4284")))
 
     def test_wide_spread_above_tp_does_not_trigger_when_mid_below(self):
-        # BUY, TP 4290. Ask irrelevant; bid 4291 (above TP) but mid 4288 < TP.
-        closed = self._run(_pos("buy", 4285, tp=4290), bid=4291, ask=4285)
-        self.assertEqual(closed, [])
+        self.assertEqual(T("buy", None, D("4290"), D("4291"), D("4285")), (None, None))
+
+    def test_gap_through_buy_sl_fills_at_bid(self):
+        # Market gapped from above 4284 to 4270/4271: fill at the real bid.
+        self.assertEqual(T("buy", D("4284"), None, D("4270"), D("4271")), ("sl", D("4270")))
+
+    def test_gap_through_sell_sl_fills_at_ask(self):
+        self.assertEqual(T("sell", D("1.1000"), None, D("1.1050"), D("1.1052")), ("sl", D("1.1052")))
+
+    def test_gap_through_buy_tp_fills_at_better_bid(self):
+        self.assertEqual(T("buy", None, D("100"), D("105"), D("105.2")), ("tp", D("105")))
+
+    def test_sell_tp_inside_quote_fills_at_level(self):
+        self.assertEqual(T("sell", None, D("50.00"), D("49.99"), D("50.01")), ("tp", D("50.00")))
+
+    def test_sl_takes_precedence_and_directions_are_not_inverted(self):
+        # A sell whose price ROSE through its SL is a loss, never a TP.
+        reason, px = T("sell", D("10"), D("5"), D("10.5"), D("10.6"))
+        self.assertEqual(reason, "sl")
+        self.assertEqual(px, D("10.6"))
 
 
 if __name__ == "__main__":

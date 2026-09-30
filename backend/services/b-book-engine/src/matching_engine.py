@@ -13,17 +13,18 @@ from decimal import Decimal
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.database import AsyncSessionLocal
 from packages.common.src.models import (
     Order, OrderType, OrderSide, OrderStatus,
-    Position, PositionStatus, TradingAccount, Instrument,
+    Position, PositionStatus, TradingAccount, Instrument, Transaction,
 )
 from packages.common.src.redis_client import redis_client, PriceChannel, is_tick_stale
 from packages.common.src.instrument_pricing import resolve_commission
-from packages.common.src.ib_commission import distribute_ib_commission, settle_ib_commissions
+from packages.common.src.ib_commission import accrue_ib_commission_safe, settle_ib_commissions
+from packages.common.src.row_locks import lock_account
 from packages.common.src.pending_orders import evaluate_trigger
 from packages.common.src.market_hours import is_market_open
 from packages.common.src.settings_store import get_bool_setting
@@ -84,58 +85,101 @@ class MatchingEngine:
         return Decimal(str(tick["bid"])), Decimal(str(tick["ask"]))
 
     async def _monitor_pending_orders(self):
-        """Monitor and trigger pending orders when price conditions are met."""
+        """Monitor pending orders and fill / convert / expire them.
+
+        Each pass READS the pending book without locks and evaluates triggers
+        against live ticks. Every order that needs action is then handled in
+        its OWN short transaction (lock account -> lock order FOR UPDATE SKIP
+        LOCKED -> re-check it is still pending -> act -> commit). QA
+        2026-09-29: the whole pass used to be one transaction, so a single
+        failing fill (e.g. an IB accrual error) rolled back or froze every
+        pending fill platform-wide, and row locks were held for the whole pass.
+        """
         logger.info("Pending order monitor started")
         while self._running:
             try:
                 async with AsyncSessionLocal() as db:
-                    # H-TRADE-9: lock the pending rows with SKIP LOCKED so that
-                    # with multiple engine workers each row is processed by
-                    # exactly one worker — rows another worker already holds are
-                    # skipped this pass instead of being double-filled.
-                    result = await db.execute(
-                        select(Order).where(Order.status == OrderStatus.PENDING)
-                        .with_for_update(skip_locked=True)
-                    )
-                    pending_orders = result.scalars().all()
-
-                    for order in pending_orders:
-                        if order.expires_at and datetime.now(timezone.utc) > order.expires_at:
-                            order.status = OrderStatus.EXPIRED
-                            await db.commit()
-                            continue
-
-                        price_data = await self._get_price(order.instrument.symbol)
+                    rows = (await db.execute(
+                        select(
+                            Order.id, Order.account_id, Order.order_type, Order.side,
+                            Order.price, Order.stop_limit_price, Order.expires_at,
+                            Instrument.symbol,
+                        )
+                        .join(Instrument, Instrument.id == Order.instrument_id)
+                        .where(Order.status == OrderStatus.PENDING)
+                    )).all()
+                now = datetime.now(timezone.utc)
+                prices: dict = {}
+                for (oid, acct_id, otype, side, price, slp, expires_at, symbol) in rows:
+                    try:
+                        if expires_at is not None:
+                            exp = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)
+                            if now > exp:
+                                await self._expire_order(oid)
+                                continue
+                        if symbol not in prices:
+                            prices[symbol] = await self._get_price(symbol)
+                        price_data = prices[symbol]
                         if not price_data:
                             continue
-
                         bid, ask = price_data
-                        decision = evaluate_trigger(
-                            order.order_type, order.side, order.price,
-                            order.stop_limit_price, bid, ask,
-                        )
+                        decision = evaluate_trigger(otype, side, price, slp, bid, ask)
                         if decision.convert_to_limit is not None:
-                            # Stop leg of a stop-limit hit: it now rests as a
-                            # plain limit at the limit price (MT5 semantics).
-                            # stop_limit_price is kept on the row for audit.
-                            order.order_type = OrderType.LIMIT
-                            order.price = decision.convert_to_limit
-                            logger.info(
-                                "Stop-limit %s triggered: now a %s limit @ %s",
-                                order.id, order.side.value, order.price,
-                            )
-                            continue
-                        if decision.triggered:
-                            await self._execute_pending_order(order, decision.fill_price, db)
-
-                    await db.commit()
-
+                            await self._convert_stop_limit(oid, decision.convert_to_limit)
+                        elif decision.triggered:
+                            await self._fill_one(oid, acct_id, decision.fill_price)
+                    except Exception as e:  # one bad order never blocks the rest
+                        logger.error("Pending order %s failed this pass: %s", oid, e, exc_info=True)
             except Exception as e:
                 logger.error(f"Pending order monitor error: {e}")
 
             await asyncio.sleep(0.1)
 
-    async def _execute_pending_order(self, order: Order, fill_price: Decimal, db: AsyncSession):
+    async def _expire_order(self, order_id) -> None:
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                update(Order).where(Order.id == order_id, Order.status == OrderStatus.PENDING)
+                .values(status=OrderStatus.EXPIRED)
+            )
+            await db.commit()
+
+    async def _convert_stop_limit(self, order_id, limit_price) -> None:
+        """Stop leg of a stop-limit hit: it now rests as a plain limit at the
+        limit price (MT5 semantics). stop_limit_price stays on the row for audit."""
+        async with AsyncSessionLocal() as db:
+            res = await db.execute(
+                update(Order)
+                .where(Order.id == order_id, Order.status == OrderStatus.PENDING,
+                       Order.order_type == OrderType.STOP_LIMIT)
+                .values(order_type=OrderType.LIMIT, price=limit_price)
+            )
+            await db.commit()
+            if res.rowcount:
+                logger.info("Stop-limit %s triggered: now a limit @ %s", order_id, limit_price)
+
+    async def _fill_one(self, order_id, account_id, fill_price) -> None:
+        """Fill one triggered order in its own transaction."""
+        async with AsyncSessionLocal() as db:
+            try:
+                # Canonical lock order: account -> order. The gateway's
+                # place_order / cancel take the account / conditional-update
+                # the order the same way, so they serialise, never deadlock.
+                account = await lock_account(db, account_id)
+                order = (await db.execute(
+                    select(Order).where(Order.id == order_id)
+                    .with_for_update(skip_locked=True)
+                    .execution_options(populate_existing=True)
+                )).scalar_one_or_none()
+                if order is None or order.status != OrderStatus.PENDING:
+                    await db.rollback()  # cancelled / filled / held elsewhere
+                    return
+                await self._execute_pending_order(order, fill_price, db, account=account)
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
+
+    async def _execute_pending_order(self, order: Order, fill_price: Decimal, db: AsyncSession, account=None):
         """Open the position for a triggered pending order at fill_price
         (limit price for limits, market for stops — see pending_orders)."""
         # Maintenance mode blocks pending fills exactly like it blocks
@@ -155,12 +199,8 @@ class MatchingEngine:
         # margin_used/balance. The gateway's place_order takes the same
         # FOR UPDATE lock, so the two serialize instead of double-spending
         # the margin pool. Released at the outer loop's commit.
-        locked_q = await db.execute(
-            select(TradingAccount)
-            .where(TradingAccount.id == order.account_id)
-            .with_for_update()
-        )
-        account = locked_q.scalar_one_or_none()
+        if account is None:
+            account = await lock_account(db, order.account_id)
         if not account or not account.is_active:
             order.status = OrderStatus.REJECTED
             return
@@ -245,6 +285,7 @@ class MatchingEngine:
         order.filled_price = fill_price
         order.filled_at = datetime.now(timezone.utc)
         order.commission = commission
+        await db.flush()
 
         position = Position(
             account_id=account.id,
@@ -260,22 +301,28 @@ class MatchingEngine:
         )
         db.add(position)
 
-        account.margin_used += margin
+        # Recomputed total (never increment a stored value that can drift).
+        account.margin_used = open_margin + margin
         account.balance = (account.balance or Decimal("0")) - commission
         account.equity = (account.balance or Decimal("0")) + (account.credit or Decimal("0"))
         account.free_margin = account.equity - account.margin_used
+        if commission and Decimal(str(commission)) != 0:
+            db.add(Transaction(
+                user_id=account.user_id,
+                account_id=account.id,
+                type="commission",
+                amount=-Decimal(str(commission)),
+                balance_after=account.balance,
+                reference_id=order.id,
+                description=f"Commission {instrument.symbol} pending fill {order.lots} lots",
+            ))
 
-        # A filled pending order is a real trade — pay the IB chain just like a
-        # market order does (gateway). Previously pending fills skipped this
-        # entirely, so referred users who traded via limit/stop generated no IB
-        # commission. Best-effort: never let a distribution error block the fill;
-        # the outer monitor loop owns the commit.
-        try:
-            await distribute_ib_commission(
-                db, account.user_id, order.id, order.lots, instrument.symbol,
-            )
-        except Exception as e:
-            logger.error(f"IB commission distribution failed for order {order.id}: {e}")
+        # A filled pending order is a real trade: accrue for the IB chain like
+        # a market order does. Runs in a SAVEPOINT (accrue_ib_commission_safe)
+        # so an IB error can never roll back this fill or any other.
+        await accrue_ib_commission_safe(
+            db, account.user_id, order.id, Decimal(str(order.lots)), instrument.symbol,
+        )
 
         logger.info(f"Pending order {order.id} executed: {instrument.symbol} {order.side.value} @ {fill_price}")
 

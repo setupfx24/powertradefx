@@ -21,8 +21,8 @@ from packages.common.src.models import (
 from packages.common.src.notify import create_notification
 from packages.common.src import corecen_trade_client
 from packages.common.src.engine_lock import engine_lock
-from packages.common.src.row_locks import lock_account
-from packages.common.src.trading_service import margin_for
+from packages.common.src.row_locks import lock_account, lock_position
+from packages.common.src.trading_service import margin_for, recompute_account_margin
 from ..services import wallet_service
 
 logger = logging.getLogger("gateway.sltp")
@@ -98,115 +98,116 @@ class SLTPEngine:
                 return
             await self._check_positions_locked()
 
-    async def _check_positions_locked(self):
-        async with AsyncSessionLocal() as db:
-            # SKIP LOCKED so the gateway's `--workers N` uvicorn fleet
-            # doesn't double-process the same trigger. Worker A takes a
-            # row-level lock on the open SL/TP positions for this tick;
-            # Worker B's identical SELECT skips those rows and only sees
-            # whatever's left. Without this, every TP/SL hit was
-            # inserting one TradeHistory + one Transaction row PER WORKER,
-            # crediting the user the P&L twice and showing two rows in
-            # the trade history.
-            result = await db.execute(
-                select(Position)
-                .where(Position.status == "open")
-                .where(
-                    (Position.stop_loss.isnot(None)) | (Position.take_profit.isnot(None))
-                )
-                .with_for_update(skip_locked=True)
+    def _side_quote(self, tick, spread_override, spread_override_type, pip_size, digits):
+        """(bid, ask) this position trades at: the broadcast quote, re-centred
+        on the per-trade admin spread override when one is set (the same quote
+        the trader sees and a manual close uses)."""
+        bid = Decimal(str(tick["bid"]))
+        ask = Decimal(str(tick["ask"]))
+        if spread_override is not None:
+            from packages.common.src.instrument_pricing import symmetric_quote_from_mid
+            mid = (bid + ask) / Decimal("2")
+            bid, ask = symmetric_quote_from_mid(
+                mid, Decimal(str(spread_override)), (spread_override_type or "pips"),
+                Decimal(str(pip_size or "0.0001")), int(digits or 5), Decimal("0"),
             )
-            positions = result.scalars().all()
+        return bid, ask
 
-            if positions:
-                logger.info("Checking %d positions with SL/TP", len(positions))
+    @staticmethod
+    def _trigger(side, sl, tp, bid, ask):
+        """(reason, close_price) or (None, None).
 
-            for pos in positions:
-                symbol = pos.instrument.symbol if pos.instrument else None
-                if not symbol or symbol not in self._prices:
-                    continue
+        TRIGGER on the MID: an artificial spread (e.g. an admin widening it
+        while the market never moved) must never fire a trader's SL/TP — a
+        client complaint this rule exists for. FILL: at the level when the
+        level is inside the current quote (the market really traded there);
+        through a GAP (the whole quote jumped past the level) at the side's
+        real market price — bid for a buy, ask for a sell — so the broker
+        does not absorb the gap (QA 2026-09-29) and a gap in the trader's
+        favour on a TP is honoured at the better price."""
+        mid = (bid + ask) / Decimal("2")
+        market = bid if side == "buy" else ask
 
-                tick = self._prices[symbol]
-                # Stale-price guard: a dead feed (or a refresher republish)
-                # must never trigger an SL/TP close at a frozen price.
-                if is_tick_stale(tick):
-                    continue
-                bid = Decimal(str(tick["bid"]))
-                ask = Decimal(str(tick["ask"]))
-                side = _side_val(pos.side)
+        def fill(level):
+            return level if bid <= level <= ask else market
 
-                # Trigger on the MID, never the spread-adjusted bid/ask. bid/ask
-                # move with the platform spread, so triggering on them let a
-                # spread change — including an admin widening the spread while
-                # the market itself never moved — fire a user's SL/TP at a level
-                # the real market never reached. The mid is the true market
-                # reference, so an SL/TP now fires only on genuine price
-                # movement. Fills still book at the SL/TP level itself (below),
-                # so the trader is never closed at a worse price than their own
-                # level. (Same principle as the risk engine's mid-based
-                # stop-out: an artificial spread must not auto-close a trade.)
-                mid = (bid + ask) / Decimal("2")
+        if sl is not None:
+            sl = Decimal(str(sl))
+            if (side == "buy" and mid <= sl) or (side == "sell" and mid >= sl):
+                return "sl", fill(sl)
+        if tp is not None:
+            tp = Decimal(str(tp))
+            if (side == "buy" and mid >= tp) or (side == "sell" and mid <= tp):
+                return "tp", fill(tp)
+        return None, None
 
-                triggered = None
+    async def _check_positions_locked(self):
+        """Read open SL/TP positions WITHOUT locks, evaluate triggers, then
+        close each triggered position in its OWN transaction (lock account ->
+        lock position -> re-check on fresh values). One failing close never
+        rolls back the others, and no row locks are held across the pass."""
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(
+                select(
+                    Position.id, Position.account_id, Position.side,
+                    Position.stop_loss, Position.take_profit,
+                    Position.spread_override, Position.spread_override_type,
+                    Instrument.symbol, Instrument.pip_size, Instrument.digits,
+                )
+                .join(Instrument, Instrument.id == Position.instrument_id)
+                .where(Position.status == "open")
+                .where((Position.stop_loss.isnot(None)) | (Position.take_profit.isnot(None)))
+            )).all()
 
-                # Trigger purely on side + level. SL and TP are already
-                # distinct fields, so the direction is unambiguous without
-                # comparing to the open price.
-                #
-                # The old code guarded each with `sl < open_price` /
-                # `tp > open_price`. That silently broke every stop moved into
-                # profit — a break-even or trailing SL sits ABOVE entry on a
-                # buy, so `sl < open_price` was false and the stop NEVER fired
-                # even as price fell back through it. set-time validation
-                # (trading_service.check_sltp_levels) deliberately validates
-                # against the CURRENT price, not the open, precisely to allow
-                # those stops — so the trigger side must match, or a level the
-                # platform accepts can never execute. It also guarantees a level
-                # is never already-through when set, so comparing by side alone
-                # here cannot fire one prematurely.
-                if pos.stop_loss:
-                    sl = Decimal(str(pos.stop_loss))
-                    if side == "buy" and mid <= sl:
-                        triggered = "sl"
-                    elif side == "sell" and mid >= sl:
-                        triggered = "sl"
+        for (pid, acct_id, side_raw, sl, tp, ovr, ovr_type, symbol, pip, digits) in rows:
+            tick = self._prices.get(symbol)
+            if not tick or is_tick_stale(tick):
+                continue  # a dead feed never triggers an SL/TP
+            try:
+                bid, ask = self._side_quote(tick, ovr, ovr_type, pip, digits)
+                reason, _px = self._trigger(_side_val(side_raw), sl, tp, bid, ask)
+                if reason:
+                    await self._close_one(pid, acct_id)
+            except Exception as e:
+                logger.error("SL/TP close failed for position %s: %s", pid, e, exc_info=True)
 
-                if not triggered and pos.take_profit:
-                    tp = Decimal(str(pos.take_profit))
-                    if side == "buy" and mid >= tp:
-                        triggered = "tp"
-                    elif side == "sell" and mid <= tp:
-                        triggered = "tp"
-
-                if triggered:
-                    # Close at the SL/TP price itself (not market price) — MT5 behavior
-                    if triggered == "sl":
-                        close_price = Decimal(str(pos.stop_loss))
-                    else:
-                        close_price = Decimal(str(pos.take_profit))
-                    await self._close_position(db, pos, close_price, triggered)
-
-            await db.commit()
+    async def _close_one(self, position_id, account_id):
+        async with AsyncSessionLocal() as db:
+            try:
+                account = await lock_account(db, account_id)
+                pos = await lock_position(db, position_id)
+                if pos is None or account is None:
+                    await db.rollback()
+                    return
+                st = pos.status.value if hasattr(pos.status, "value") else str(pos.status)
+                if st != "open" or not pos.instrument:
+                    await db.rollback()
+                    return  # closed meanwhile by the user / admin / stop-out
+                tick = self._prices.get(pos.instrument.symbol)
+                if not tick or is_tick_stale(tick):
+                    await db.rollback()
+                    return
+                bid, ask = self._side_quote(
+                    tick, pos.spread_override, pos.spread_override_type,
+                    pos.instrument.pip_size, pos.instrument.digits,
+                )
+                # Re-evaluate on the fresh row: SL/TP may have been edited.
+                reason, close_px = self._trigger(_side_val(pos.side), pos.stop_loss, pos.take_profit, bid, ask)
+                if not reason:
+                    await db.rollback()
+                    return
+                await self._close_position(db, pos, close_px, reason, account=account)
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
 
     async def _close_position(
-        self, db: AsyncSession, pos: Position, close_price: Decimal, reason: str
+        self, db: AsyncSession, pos: Position, close_price: Decimal, reason: str,
+        account=None,
     ):
-        # Defensive: re-acquire the row with FOR UPDATE and confirm it's
-        # still open before doing anything. Even with SKIP LOCKED on the
-        # outer SELECT, a manual close (POST /positions/{id}/close) on
-        # the same position could land between our SELECT and our close
-        # work. Without this guard the manual close + the engine would
-        # BOTH write a TradeHistory row.
-        locked_q = await db.execute(
-            select(Position).where(Position.id == pos.id).with_for_update()
-        )
-        locked = locked_q.scalar_one_or_none()
-        if not locked:
-            return
-        cur_status = locked.status.value if hasattr(locked.status, "value") else str(locked.status)
-        if cur_status != "open":
-            return  # Already closed by another worker / manual close.
-        pos = locked
+        """Book the close. Caller holds the account lock and the position lock
+        (lock_account -> lock_position) and has re-checked the position is open."""
 
         side = _side_val(pos.side)
         contract_size = pos.instrument.contract_size if pos.instrument else Decimal("100000")
@@ -235,13 +236,12 @@ class SLTPEngine:
         # Lock the account row (FOR UPDATE) before mutating balance — otherwise a
         # concurrent close on the same account (manual close, another SL/TP, or a
         # stop-out) can lose-update the balance. Position is already locked above.
-        account = await lock_account(db, pos.account_id)
+        if account is None:
+            account = await lock_account(db, pos.account_id)
         if account:
-            margin_release = await margin_for(pos.lots, pos.open_price, pos.instrument, account.leverage)
             account.balance += profit
-            account.margin_used = max(Decimal("0"), (account.margin_used or Decimal("0")) - margin_release)
-            account.equity = account.balance + (account.credit or Decimal("0"))
-            account.free_margin = account.equity - account.margin_used
+            await db.flush()
+            await recompute_account_margin(db, account)
 
         history = TradeHistory(
             position_id=pos.id,
