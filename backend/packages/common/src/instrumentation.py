@@ -10,7 +10,6 @@ Usage in any FastAPI service:
 """
 import logging
 import time
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response, JSONResponse
 
@@ -249,27 +248,6 @@ except ImportError:
     _PROM_AVAILABLE = False
 
 
-class PrometheusMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        if not _PROM_AVAILABLE:
-            return await call_next(request)
-
-        method = request.method
-        path = request.url.path
-        start = time.perf_counter()
-        response = await call_next(request)
-        duration = time.perf_counter() - start
-
-        # Normalize path to avoid high-cardinality labels
-        endpoint = path.split("?")[0]
-        if len(endpoint) > 80:
-            endpoint = endpoint[:80]
-
-        REQUEST_COUNT.labels(method=method, endpoint=endpoint, status=response.status_code).inc()
-        REQUEST_LATENCY.labels(method=method, endpoint=endpoint).observe(duration)
-        return response
-
-
 def add_metrics_endpoint(app):
     """Add /metrics endpoint for Prometheus scraping — internal scrapers only."""
     if not _PROM_AVAILABLE:
@@ -292,38 +270,63 @@ def add_metrics_endpoint(app):
 # ---------------------------------------------------------------------------
 # 5. Structured Request Logging Middleware
 # ---------------------------------------------------------------------------
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Assert baseline security headers on every API response. The nginx blocks
-    for the trader/admin hosts already set these, but the api.powertradefx.com
-    JSON host was missing HSTS / Referrer-Policy / Permissions-Policy — set them
-    at the app so they hold regardless of the (host-managed) proxy config."""
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        h = response.headers
-        # Only the three the nginx blocks were missing on the api host —
-        # X-Frame-Options / X-Content-Type-Options are already set by nginx
-        # everywhere, so setting them here too would just duplicate the header.
-        h.setdefault("Strict-Transport-Security", "max-age=15552000; includeSubDomains")
-        h.setdefault("Referrer-Policy", "no-referrer")
-        h.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
-        return response
+_SECURITY_HEADERS = (
+    # The nginx blocks for the trader/admin hosts already set these, but the
+    # api host JSON responses were missing HSTS / Referrer-Policy /
+    # Permissions-Policy — set them at the app so they hold regardless of the
+    # (host-managed) proxy config. X-Frame-Options / X-Content-Type-Options are
+    # already set by nginx everywhere.
+    (b"strict-transport-security", b"max-age=15552000; includeSubDomains"),
+    (b"referrer-policy", b"no-referrer"),
+    (b"permissions-policy", b"camera=(), microphone=(), geolocation=(), payment=()"),
+)
 
 
-class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
+class ObservabilityMiddleware:
+    """Security headers + Prometheus metrics + request log in ONE pure ASGI layer.
+
+    These used to be three BaseHTTPMiddleware classes. Each of those runs the
+    rest of the app in a separate task and re-streams the response, which cost
+    real CPU on every request in the 2026-09-30 load test. The metric endpoint
+    label is the ROUTE TEMPLATE (/api/v1/positions/{position_id}), not the raw
+    path: raw paths with ids created a new time series per id, growing memory
+    without bound.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
         start = time.perf_counter()
-        response = await call_next(request)
-        duration_ms = (time.perf_counter() - start) * 1000
+        status = [500]
 
-        if not request.url.path.startswith(("/health", "/metrics")):
-            logger.info(
-                "%s %s %d %.1fms",
-                request.method,
-                request.url.path,
-                response.status_code,
-                duration_ms,
-            )
-        return response
+        async def wrapped_send(message):
+            if message["type"] == "http.response.start":
+                status[0] = message["status"]
+                headers = list(message.get("headers") or [])
+                present = {k.lower() for k, _ in headers}
+                for k, v in _SECURITY_HEADERS:
+                    if k not in present:
+                        headers.append((k, v))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        try:
+            await self.app(scope, receive, wrapped_send)
+        finally:
+            duration = time.perf_counter() - start
+            path = scope.get("path", "")
+            route = scope.get("route")
+            endpoint = getattr(route, "path", None) or "unmatched"
+            method = scope.get("method", "")
+            if _PROM_AVAILABLE:
+                REQUEST_COUNT.labels(method=method, endpoint=endpoint, status=status[0]).inc()
+                REQUEST_LATENCY.labels(method=method, endpoint=endpoint).observe(duration)
+            if not path.startswith(("/health", "/metrics")):
+                logger.info("%s %s %d %.1fms", method, path, status[0], duration * 1000)
 
 
 # ---------------------------------------------------------------------------
@@ -340,9 +343,7 @@ def add_middleware_stack(app, *, include_rate_limit: bool = False):
     fan-out). Pass include_rate_limit=True to re-enable; individual endpoints
     still have per-bucket rate_limit_http() guards where needed.
     """
-    app.add_middleware(RequestLoggingMiddleware)
-    app.add_middleware(SecurityHeadersMiddleware)
-    app.add_middleware(PrometheusMiddleware)
+    app.add_middleware(ObservabilityMiddleware)
     app.add_middleware(RequestSizeLimitMiddleware)
     add_metrics_endpoint(app)
     if include_rate_limit:

@@ -14,6 +14,7 @@ import logging
 from packages.common.src.database import AsyncSessionLocal
 from packages.common.src.redis_client import redis_client
 from packages.common.src import bars_store
+from packages.common.src.engine_lock import engine_lock
 
 logger = logging.getLogger("gateway.bars_persist")
 
@@ -55,7 +56,11 @@ class BarsPersistEngine:
     async def _loop(self) -> None:
         while self._running:
             try:
-                await self._persist_cycle()
+                # One worker per cycle: without the lock every gateway worker
+                # scanned Redis and re-upserted the same bars every 3 s.
+                async with engine_lock("bars_persist", ttl_seconds=30) as is_leader:
+                    if is_leader:
+                        await self._persist_cycle()
             except Exception as e:  # never let a bad cycle kill the loop
                 logger.warning("bars persist cycle error: %s", e)
             await asyncio.sleep(self._interval)
