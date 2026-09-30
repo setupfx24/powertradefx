@@ -90,12 +90,12 @@ class UserOut(BaseModel):
 
 
 class AccountTypeIn(BaseModel):
-    name: str
-    description: Optional[str] = None
-    leverage_default: int = 100
-    spread_markup_default: Decimal = Decimal("0")
-    commission_default: Decimal = Decimal("0")
-    minimum_deposit: Decimal = Decimal("0")
+    name: str = Field(..., min_length=1, max_length=50)
+    description: Optional[str] = Field(None, max_length=500)
+    leverage_default: int = Field(100, ge=1, le=2000)
+    spread_markup_default: Decimal = Field(Decimal("0"), ge=0, le=100_000)
+    commission_default: Decimal = Field(Decimal("0"), ge=0, le=100_000)
+    minimum_deposit: Decimal = Field(Decimal("0"), ge=0, le=10_000_000)
     swap_free: bool = False
     is_demo: bool = False
     is_active: bool = True
@@ -445,13 +445,15 @@ class BankAccountOut(BaseModel):
 
 
 class ChargeConfigIn(BaseModel):
-    scope: str
+    # Validated rules (QA 2026-09-29: unbounded / non-finite values were
+    # accepted and saved for every account).
+    scope: str = Field(..., pattern="^(?i)(default|segment|instrument|user|account_group)$")
     segment_id: Optional[str] = None
     instrument_id: Optional[str] = None
     user_id: Optional[str] = None
     account_group_id: Optional[str] = None
-    charge_type: str
-    value: float
+    charge_type: str = Field(..., pattern="^(commission_per_lot|per_lot|commission_per_trade|per_trade|commission_percentage|percentage|spread_percentage)$")
+    value: float = Field(..., ge=0, le=100_000, allow_inf_nan=False)
     is_enabled: bool = True
 
 
@@ -472,7 +474,7 @@ class ChargeConfigOut(BaseModel):
 
 
 class SpreadConfigIn(BaseModel):
-    scope: str
+    scope: str = Field(..., pattern="^(?i)(default|segment|instrument|user|account_group)$")
     segment_id: Optional[str] = None
     instrument_id: Optional[str] = None
     user_id: Optional[str] = None
@@ -480,8 +482,8 @@ class SpreadConfigIn(BaseModel):
     # user scope only: pin the override to ONE of the user's trading
     # accounts; None = all their accounts.
     trading_account_id: Optional[str] = None
-    spread_type: str
-    value: float
+    spread_type: str = Field(..., pattern="^(?i)(pips|percentage|fixed|variable)$")
+    value: float = Field(..., ge=0, le=100_000, allow_inf_nan=False)
     is_enabled: bool = True
 
 
@@ -505,13 +507,15 @@ class SpreadConfigOut(BaseModel):
 
 
 class SwapConfigIn(BaseModel):
-    scope: str
+    scope: str = Field(..., pattern="^(?i)(default|segment|instrument|user|account_group)$")
     segment_id: Optional[str] = None
     instrument_id: Optional[str] = None
     user_id: Optional[str] = None
     account_group_id: Optional[str] = None
-    swap_long: float = 0
-    swap_short: float = 0
+    # % per year, signed (negative = trader pays). +-100%/yr is far beyond any
+    # real swap; larger values are typos.
+    swap_long: float = Field(0, ge=-100, le=100, allow_inf_nan=False)
+    swap_short: float = Field(0, ge=-100, le=100, allow_inf_nan=False)
     triple_swap_day: int = Field(2, ge=0, le=6)  # 0 = Monday ... 6 = Sunday
     swap_free: bool = False
     is_enabled: bool = True

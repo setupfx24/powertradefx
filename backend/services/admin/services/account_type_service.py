@@ -10,6 +10,14 @@ from packages.common.src.admin_schemas import AccountTypeIn, AccountTypeOut
 from dependencies import write_audit_log
 
 
+async def _assert_unique_name(db: AsyncSession, name: str, exclude_id=None) -> None:
+    q = select(AccountGroup.id).where(func.lower(AccountGroup.name) == name.strip().lower())
+    if exclude_id is not None:
+        q = q.where(AccountGroup.id != exclude_id)
+    if (await db.execute(q.limit(1))).scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail=f"An account type named '{name.strip()}' already exists")
+
+
 async def list_account_types(db: AsyncSession) -> dict:
     result = await db.execute(select(AccountGroup).order_by(AccountGroup.name))
     rows = result.scalars().all()
@@ -40,6 +48,7 @@ async def create_account_type(
     ip_address: str | None,
     db: AsyncSession,
 ) -> dict:
+    await _assert_unique_name(db, body.name)
     g = AccountGroup(
         name=body.name.strip(),
         description=body.description,
@@ -75,6 +84,7 @@ async def update_account_type(
     if not g:
         raise HTTPException(status_code=404, detail="Account type not found")
 
+    await _assert_unique_name(db, body.name, exclude_id=group_id)
     g.name = body.name.strip()
     g.description = body.description
     g.leverage_default = body.leverage_default

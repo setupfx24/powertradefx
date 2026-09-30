@@ -46,6 +46,9 @@ EMPLOYEE_ROLE_PERMISSIONS = {
     },
     "risk_manager": {
         "trades.view", "positions.view", "users.view",
+        # Closed-trade corrections (the handler already restricts this action
+        # to super_admin + risk_manager; the route needs its own permission).
+        "trades.modify_history",
         "users.ban", "users.block_trading", "users.kill_switch",
         "analytics.view", "exposure.view",
         "audit_logs.view",

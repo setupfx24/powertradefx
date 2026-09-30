@@ -148,7 +148,7 @@ async def modify_trade_history(
     history_id: uuid.UUID,
     body: ModifyHistoryRequest,
     request: Request,
-    admin: User = Depends(require_permission("trades.modify")),
+    admin: User = Depends(require_permission("trades.modify_history")),
     db: AsyncSession = Depends(get_db),
 ):
     """Edit a closed trade. Any P&L change is reconciled to the account balance

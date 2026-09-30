@@ -3,7 +3,7 @@ import uuid
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import select, delete
+from sqlalchemy import text, select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.models import ChargeConfig, SpreadConfig, SwapConfig, TradingAccount
@@ -76,6 +76,15 @@ async def update_charges(
     ip_address: str | None,
     db: AsyncSession,
 ) -> dict:
+    # Serialise saves of this table (transaction-scoped advisory lock) and
+    # keep the full before-image in the audit log, so a save is atomic and
+    # every overwrite is recoverable (QA 2026-09-29: concurrent admins
+    # overwrote each other and the audit kept only a count).
+    await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": 49393})
+    _before = [
+        {k: (str(v) if v is not None else None) for k, v in r.__dict__.items() if not k.startswith("_")}
+        for r in (await db.execute(select(ChargeConfig))).scalars().all()
+    ]
     await db.execute(delete(ChargeConfig))
 
     for cfg in body.configs:
@@ -93,7 +102,7 @@ async def update_charges(
 
     await write_audit_log(
         db, admin_id, "update_charges", "charge_config", None,
-        new_values={"count": len(body.configs)}, ip_address=ip_address,
+        old_values={"rules": _before}, new_values={"count": len(body.configs), "rules": [c.model_dump() for c in body.configs]}, ip_address=ip_address,
     )
     await db.commit()
     return {"message": f"{len(body.configs)} charge configs saved"}
@@ -138,6 +147,15 @@ async def update_spreads(
     ip_address: str | None,
     db: AsyncSession,
 ) -> dict:
+    # Serialise saves of this table (transaction-scoped advisory lock) and
+    # keep the full before-image in the audit log, so a save is atomic and
+    # every overwrite is recoverable (QA 2026-09-29: concurrent admins
+    # overwrote each other and the audit kept only a count).
+    await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": 49394})
+    _before = [
+        {k: (str(v) if v is not None else None) for k, v in r.__dict__.items() if not k.startswith("_")}
+        for r in (await db.execute(select(SpreadConfig))).scalars().all()
+    ]
     await db.execute(delete(SpreadConfig))
 
     for cfg in body.configs:
@@ -156,7 +174,7 @@ async def update_spreads(
 
     await write_audit_log(
         db, admin_id, "update_spreads", "spread_config", None,
-        new_values={"count": len(body.configs)}, ip_address=ip_address,
+        old_values={"rules": _before}, new_values={"count": len(body.configs), "rules": [c.model_dump() for c in body.configs]}, ip_address=ip_address,
     )
     await db.commit()
     await publish_instrument_config_reload()
@@ -191,6 +209,15 @@ async def update_swaps(
     ip_address: str | None,
     db: AsyncSession,
 ) -> dict:
+    # Serialise saves of this table (transaction-scoped advisory lock) and
+    # keep the full before-image in the audit log, so a save is atomic and
+    # every overwrite is recoverable (QA 2026-09-29: concurrent admins
+    # overwrote each other and the audit kept only a count).
+    await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": 49395})
+    _before = [
+        {k: (str(v) if v is not None else None) for k, v in r.__dict__.items() if not k.startswith("_")}
+        for r in (await db.execute(select(SwapConfig))).scalars().all()
+    ]
     await db.execute(delete(SwapConfig))
 
     for cfg in body.configs:
@@ -210,7 +237,7 @@ async def update_swaps(
 
     await write_audit_log(
         db, admin_id, "update_swaps", "swap_config", None,
-        new_values={"count": len(body.configs)}, ip_address=ip_address,
+        old_values={"rules": _before}, new_values={"count": len(body.configs), "rules": [c.model_dump() for c in body.configs]}, ip_address=ip_address,
     )
     await db.commit()
     return {"message": f"{len(body.configs)} swap configs saved"}
