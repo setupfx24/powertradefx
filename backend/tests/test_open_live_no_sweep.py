@@ -37,6 +37,14 @@ class _DB:
     async def commit(self):
         return None
 
+    async def flush(self):
+        for o in self.added:
+            if getattr(o, "id", None) is None:
+                try:
+                    o.id = uuid4()
+                except Exception:
+                    pass
+
     async def refresh(self, *a, **k):
         return None
 
@@ -72,8 +80,8 @@ class OpenLiveNoSweepTests(unittest.TestCase):
         # TradingAccount was mutated (none were even loaded).
         self.assertEqual(user.main_wallet_balance, Decimal("400"))
         txns = [t for t in db.added if isinstance(t, Transaction)]
-        self.assertEqual(len(txns), 1)
-        self.assertEqual(txns[0].amount, Decimal("-100"))
+        # Both sides of the funding move: out of the wallet, into the account.
+        self.assertEqual(sorted(t.amount for t in txns), [Decimal("-100"), Decimal("100")])
 
     def test_refuses_when_wallet_short(self):
         uid = uuid4()

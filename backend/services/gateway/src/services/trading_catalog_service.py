@@ -24,7 +24,25 @@ async def _mid_price(symbol: str) -> Decimal:
     return (Decimal(str(t["bid"])) + Decimal(str(t["ask"]))) / Decimal("2")
 
 
+# The public catalog is the same for every visitor: serve it from a short
+# in-process cache (QA 2026-09-29: ~4.5 req/s, several queries per
+# instrument). Admin config edits show within CATALOG_TTL seconds.
+CATALOG_TTL = 30.0
+_catalog_cache: dict = {}
+
+
 async def list_trading_instruments(segment: str | None, db: AsyncSession) -> list[dict]:
+    import time as _time
+    key = (segment or "").lower()
+    hit = _catalog_cache.get(key)
+    if hit is not None and _time.monotonic() - hit[0] < CATALOG_TTL:
+        return hit[1]
+    out = await _build_catalog(segment, db)
+    _catalog_cache[key] = (_time.monotonic(), out)
+    return out
+
+
+async def _build_catalog(segment: str | None, db: AsyncSession) -> list[dict]:
     q = (
         select(Instrument)
         .where(Instrument.is_active == True)
@@ -38,12 +56,18 @@ async def list_trading_instruments(segment: str | None, db: AsyncSession) -> lis
     r = await db.execute(q)
     rows = r.scalars().unique().all()
 
+    # One query for every instrument's config instead of one per instrument.
+    ics = {}
+    if rows:
+        ics = {
+            c.instrument_id: c for c in (await db.execute(
+                select(InstrumentConfig).where(InstrumentConfig.instrument_id.in_([i.id for i in rows]))
+            )).scalars().all()
+        }
+
     out = []
     for inst in rows:
-        ic_r = await db.execute(
-            select(InstrumentConfig).where(InstrumentConfig.instrument_id == inst.id)
-        )
-        ic = ic_r.scalar_one_or_none()
+        ic = ics.get(inst.id)
         if ic and ic.is_enabled is False:
             continue
 

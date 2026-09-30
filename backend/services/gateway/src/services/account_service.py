@@ -242,6 +242,19 @@ async def open_live_account(
         is_active=True,
     )
     db.add(new_acc)
+    if new_balance and Decimal(str(new_balance)) > 0:
+        # The account's side of the funding move gets its own ledger row
+        # (QA: only the wallet debit was recorded, so the new account's
+        # balance could not be reconciled from transactions).
+        await db.flush()
+        db.add(Transaction(
+            user_id=user_id,
+            account_id=new_acc.id,
+            type="adjustment" if user_is_demo else "transfer",
+            amount=Decimal(str(new_balance)),
+            balance_after=Decimal(str(new_balance)),
+            description="Demo starting balance" if user_is_demo else "Funding from main wallet (account opened)",
+        ))
     await db.commit()
     await db.refresh(new_acc)
     return {

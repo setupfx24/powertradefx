@@ -37,7 +37,7 @@ FOREX_LIKE_SYMBOLS = {
 }
 
 #: US equity indices — NYSE/NASDAQ session  Mon–Fri 13:30–20:00 UTC
-US_INDEX_SYMBOLS = {"US30", "NAS100", "US500", "US2000", "SP500", "DJI", "NDX"}
+US_INDEX_SYMBOLS = {"US30", "NAS100", "US100", "USTEC", "US500", "SPX500", "US2000", "SP500", "DJI", "NDX"}
 US_INDEX_OPEN  = time(13, 30)
 US_INDEX_CLOSE = time(20, 0)
 
@@ -47,11 +47,14 @@ EU_INDEX_OPEN  = time(7, 0)
 EU_INDEX_CLOSE = time(15, 30)
 
 #: Asian equity indices — TSE / HKEX / ASX  Mon–Fri 00:00–06:00 UTC
-ASIAN_INDEX_SYMBOLS = {"JP225", "HKG33", "AUS200", "CHN50", "SGD30", "KOR200"}
+ASIAN_INDEX_SYMBOLS = {"JP225", "JPN225", "NIKKEI225", "HKG33", "HK50", "AUS200", "CHN50", "SGD30", "KOR200"}
 ASIAN_INDEX_OPEN  = time(0, 0)
 ASIAN_INDEX_CLOSE = time(6, 0)
 
 INDEX_SEGMENTS = {"indices", "index", "equities"}
+
+#: Single stocks (US listings) trade in the US cash session, never 24/5.
+STOCK_SEGMENTS = {"stocks", "stock", "shares", "us stocks", "us_stocks"}
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -98,6 +101,10 @@ def is_market_open(
     # 4. Commodities segment — treat the same as forex unless symbol overrides
     if "commodit" in seg:
         return _forex_session(weekday, cur_time)
+
+    # 4b. Stocks — US cash session (QA: they were treated as 24/5 forex)
+    if seg in STOCK_SEGMENTS:
+        return _fixed_session(weekday, cur_time, US_INDEX_OPEN, US_INDEX_CLOSE, "US stock market", "13:30–20:00 UTC")
 
     # 5. Indices — look up by symbol first, then fall back to any index session
     if seg in INDEX_SEGMENTS or _is_index_symbol(sym):

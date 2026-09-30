@@ -236,8 +236,10 @@ async def get_bars(
     symbol: str,
     request: Request,
     resolution: str = Query(default="5"),
-    from_time: int = Query(default=0, alias="from"),
-    to_time: int = Query(default=0, alias="to"),
+    # Bounded epoch seconds (0 .. year 2100). Unbounded ints overflowed the
+    # DB int64 and returned a non-JSON 500 (QA 2026-09-29).
+    from_time: int = Query(default=0, alias="from", ge=0, le=4102444800),
+    to_time: int = Query(default=0, alias="to", ge=0, le=4102444800),
     live: int = Query(default=0),
     current_user: dict = Depends(get_current_user),
     # How many bars the caller actually wants. The response used to be a
@@ -261,8 +263,14 @@ async def get_bars(
       3. Read the window from the store; append the in-progress bar for a live
          last candle.
     """
-    tf = _TV_RESOLUTION_TO_TF.get(resolution, "5m")
+    tf = _TV_RESOLUTION_TO_TF.get(resolution)
+    if tf is None:
+        # Unsupported resolutions used to silently return 5-minute bars.
+        raise HTTPException(status_code=400, detail=f"Unsupported resolution {resolution!r}")
     sym = symbol.upper()
+    import re as _re
+    if not _re.fullmatch(r"[A-Z0-9._\-]{1,24}", sym):
+        raise HTTPException(status_code=400, detail="Invalid symbol")
 
     # H-TRADE-7: this endpoint can trigger outbound provider calls (Infoway /
     # Binance) for the requested symbol, so it must be authenticated, per-user

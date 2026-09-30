@@ -137,19 +137,27 @@ async def algo_account(
         )
         open_count = int(open_q.scalar() or 0)
 
+        # LIVE figures (QA 2026-09-29: the stored equity/free margin could be
+        # minutes old, so a bot sized orders on stale numbers).
+        from packages.common.src.trading_service import calc_account_equity
+        zero = Decimal("0")
+        try:
+            equity, _unreal = await calc_account_equity(account, db)
+        except Exception:
+            equity = (account.balance or zero) + (account.credit or zero)
+        used = account.margin_used or zero
         await db.commit()
 
-        zero = Decimal("0")
         return {
             "account": account.account_number,
             "currency": account.currency or "USD",
             "leverage": int(account.leverage or 100),
             "balance": float(account.balance or zero),
             "credit": float(account.credit or zero),
-            "equity": float(account.equity or zero),
-            "margin_used": float(account.margin_used or zero),
-            "free_margin": float(account.free_margin or zero),
-            "margin_level": float(account.margin_level or zero),
+            "equity": float(equity),
+            "margin_used": float(used),
+            "free_margin": float(equity - used),
+            "margin_level": float((equity / used * 100) if used > 0 else zero),
             "is_demo": bool(account.is_demo),
             "open_positions": open_count,
         }

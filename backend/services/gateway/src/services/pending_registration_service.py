@@ -108,7 +108,10 @@ async def start_pending_registration(
     # Avoid the "burn this email forever" griefing pattern: cap to 3
     # starts per email per hour as well as the global 15/hour/IP cap
     # from the auth_service helper.
-    rate_limit_http(request, "register-start", 15, 3600.0)
+    # 60/hour/IP: mobile carriers put many real users behind one IP (CGNAT);
+    # 15 would block legitimate signups at launch. The per-email cap below
+    # (3/hour) still stops OTP griefing.
+    rate_limit_http(request, "register-start", 60, 3600.0)
     email_lower = email.strip().lower()
     rate_limit_http(request, f"register-start:{email_lower}", 3, 3600.0)
 
