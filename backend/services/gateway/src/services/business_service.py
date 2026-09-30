@@ -144,17 +144,21 @@ async def ib_dashboard(user_id: UUID, db: AsyncSession) -> dict:
     )
     total_referrals = referral_count.scalar()
 
-    total_commission = await db.execute(
-        select(func.coalesce(func.sum(IBCommission.amount), 0)).where(IBCommission.ib_id == profile.id)
+    # Per-status totals straight from the commission rows (the ledger).
+    # QA: "total_commission" summed every row, including rejected/cancelled
+    # ones that were never owed, and accrued (open-trade) money was invisible.
+    from packages.common.src.ib_commission import (
+        STATUS_ACCRUED, STATUS_PENDING, STATUS_PAID,
     )
-    total_comm = total_commission.scalar()
-
-    pending_comm = await db.execute(
-        select(func.coalesce(func.sum(IBCommission.amount), 0)).where(
-            IBCommission.ib_id == profile.id, IBCommission.status == "pending",
-        )
-    )
-    pending = pending_comm.scalar()
+    by_status = dict((await db.execute(
+        select(IBCommission.status, func.coalesce(func.sum(IBCommission.amount), 0))
+        .where(IBCommission.ib_id == profile.id)
+        .group_by(IBCommission.status)
+    )).all())
+    accrued = Decimal(str(by_status.get(STATUS_ACCRUED, 0) or 0))
+    pending = Decimal(str(by_status.get(STATUS_PENDING, 0) or 0))
+    paid = Decimal(str(by_status.get(STATUS_PAID, 0) or 0))
+    total_comm = accrued + pending + paid
 
     base_url = _get_frontend_url()
 
@@ -164,7 +168,11 @@ async def ib_dashboard(user_id: UUID, db: AsyncSession) -> dict:
         "level": profile.level,
         "total_referrals": total_referrals,
         "total_commission": float(total_comm),
-        "pending_payout": float(profile.pending_payout),
+        # accrued: on trades still open (not owed yet); pending: released,
+        # awaiting admin approval; paid: credited to the IB.
+        "accrued_commission": float(accrued),
+        "pending_payout": float(pending),
+        "paid_commission": float(paid),
         "total_earned": float(profile.total_earned),
         "is_active": profile.is_active,
     }

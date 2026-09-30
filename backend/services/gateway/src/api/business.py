@@ -62,7 +62,7 @@ async def ib_referrals(
 
 @router.get("/ib/commissions")
 async def ib_commissions(
-    status: str = Query(None, pattern="^(pending|paid|cancelled)$"),
+    status: str = Query(None, pattern="^(accrued|pending|paid|rejected|cancelled)$"),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
     current_user: dict = Depends(get_current_user),

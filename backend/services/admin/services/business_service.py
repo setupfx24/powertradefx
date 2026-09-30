@@ -1164,16 +1164,16 @@ async def approve_ib_payout(
     ib_id: uuid.UUID, admin_id: uuid.UUID, ip_address: str | None, db: AsyncSession,
 ) -> dict:
     """Release everything pending for one IB into their live trading account."""
-    ib = (await db.execute(
-        select(IBProfile).where(IBProfile.id == ib_id).with_for_update()
-    )).scalar_one_or_none()
+    ib = await _lock_fresh(db, select(IBProfile).where(IBProfile.id == ib_id))
     if not ib:
         raise HTTPException(status_code=404, detail="IB not found")
 
+    # Locked + fresh, and Postgres re-checks status='pending' after waiting on
+    # a concurrent approve, so a double-approve pays exactly once.
     pending = (await db.execute(
         select(IBCommission).where(
-            IBCommission.ib_id == ib_id, IBCommission.status == "pending"
-        ).with_for_update()
+            IBCommission.ib_id == ib_id, IBCommission.status == ST_PENDING
+        ).with_for_update().execution_options(populate_existing=True)
     )).scalars().all()
     if not pending:
         raise HTTPException(status_code=400, detail="Nothing pending for this IB")
@@ -1184,13 +1184,16 @@ async def approve_ib_payout(
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Pending total is zero")
 
-    account = (await db.execute(
-        select(TradingAccount).where(
+    target_id = (await db.execute(
+        select(TradingAccount.id).where(
             TradingAccount.user_id == ib.user_id,
             TradingAccount.is_demo == False,  # noqa: E712
             TradingAccount.is_active == True,  # noqa: E712
-        ).limit(1)
+        ).order_by(TradingAccount.created_at.asc()).limit(1)
     )).scalar_one_or_none()
+    # Lock (fresh) before crediting: an unlocked read-modify-write lost a
+    # concurrent trade's balance change on the IB's account (QA).
+    account = await lock_account(db, target_id) if target_id else None
     if not account:
         raise HTTPException(
             status_code=400,
@@ -1213,12 +1216,13 @@ async def approve_ib_payout(
 
     now = datetime.utcnow()
     for c in pending:
-        c.status = "paid"
+        c.status = ST_PAID
         c.paid_at = now
 
     ib.total_earned = (ib.total_earned or Decimal("0")) + amount
-    # Recomputed from the ledger, not decremented, so it cannot drift.
-    ib.pending_payout = Decimal("0")
+    # Subtract exactly what was paid. Forcing 0 erased commissions the
+    # settlement loop released at the same moment.
+    ib.pending_payout = max(Decimal("0"), (ib.pending_payout or Decimal("0")) - amount)
 
     await write_audit_log(
         db, admin_id=admin_id, action="ib_payout_approved",
@@ -1241,24 +1245,24 @@ async def reject_ib_payout(
     ip_address: str | None, db: AsyncSession,
 ) -> dict:
     """Void everything pending for one IB. Nothing is credited."""
-    ib = (await db.execute(
-        select(IBProfile).where(IBProfile.id == ib_id).with_for_update()
-    )).scalar_one_or_none()
+    ib = await _lock_fresh(db, select(IBProfile).where(IBProfile.id == ib_id))
     if not ib:
         raise HTTPException(status_code=404, detail="IB not found")
 
+    # Locked + fresh, and Postgres re-checks status='pending' after waiting on
+    # a concurrent approve, so a double-approve pays exactly once.
     pending = (await db.execute(
         select(IBCommission).where(
-            IBCommission.ib_id == ib_id, IBCommission.status == "pending"
-        ).with_for_update()
+            IBCommission.ib_id == ib_id, IBCommission.status == ST_PENDING
+        ).with_for_update().execution_options(populate_existing=True)
     )).scalars().all()
     if not pending:
         raise HTTPException(status_code=400, detail="Nothing pending for this IB")
 
     amount = sum((Decimal(str(c.amount or 0)) for c in pending), Decimal("0"))
     for c in pending:
-        c.status = "rejected"
-    ib.pending_payout = Decimal("0")
+        c.status = ST_REJECTED
+    ib.pending_payout = max(Decimal("0"), (ib.pending_payout or Decimal("0")) - amount)
 
     await write_audit_log(
         db, admin_id=admin_id, action="ib_payout_rejected",
