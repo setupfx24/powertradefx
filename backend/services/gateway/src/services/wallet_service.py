@@ -38,7 +38,10 @@ from packages.common.src.notify import create_notification
 from packages.common.src.config import get_settings
 from packages.common.src.path_safety import PathTraversalError, safe_join_under_base
 from packages.common.src.email_branding import apply_email_brand
-from packages.common.src.withdrawal_limits import available_to_withdraw
+from packages.common.src.withdrawal_limits import (
+    available_to_withdraw, live_trading_withdrawable, assert_not_managed_pool,
+)
+from packages.common.src.row_locks import lock_user, lock_account, lock_accounts
 from packages.common.src.bonus_service import apply_deposit_bonus, outstanding_bonus
 from . import oxapay_service, razorpay_service
 
@@ -1717,21 +1720,22 @@ async def internal_wallet_transfer(req, user_id: UUID, db: AsyncSession) -> dict
     # is the source / destination, so a second transfer in the opposite
     # direction can never deadlock with us (both processes will request
     # locks in the same canonical order).
-    id_a, id_b = sorted([req.from_account_id, req.to_account_id])
-    locked_q = await db.execute(
-        select(TradingAccount).where(
-            TradingAccount.id.in_([id_a, id_b]),
-            TradingAccount.user_id == user_id,
-            TradingAccount.is_demo == False,
-        ).with_for_update().order_by(TradingAccount.id)
-    )
-    locked = {a.id: a for a in locked_q.scalars().all()}
+    if amt <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+    locked = await lock_accounts(db, [req.from_account_id, req.to_account_id])
     from_a = locked.get(req.from_account_id)
     to_a = locked.get(req.to_account_id)
-    if not from_a or not to_a:
+    if (not from_a or not to_a or from_a.user_id != user_id or to_a.user_id != user_id
+            or from_a.is_demo or to_a.is_demo):
         raise HTTPException(status_code=404, detail="Account not found")
+    # Investors' PAMM/MAM pool money never leaves through the manager's own
+    # wallet endpoints (QA: a manager moved pool money to himself).
+    await assert_not_managed_pool(db, from_a.id, to_a.id)
 
-    free = (from_a.balance or Decimal("0")) - (from_a.margin_used or Decimal("0"))
+    # LIVE free funds: balance - margin_used minus any floating LOSS, credit
+    # excluded (QA: floating loss was ignored, collateral left the account and
+    # the broker absorbed the deficit at stop-out).
+    free = await live_trading_withdrawable(db, from_a)
     if free < amt:
         raise HTTPException(
             status_code=400,
@@ -1776,25 +1780,17 @@ async def transfer_trading_to_main(req, user_id: UUID, db: AsyncSession) -> dict
     # concurrent transfers from the same trading account both read the
     # pre-debit balance, both pass the free-margin check, and both
     # deduct — the trading account overdraws and main_wallet over-credits.
-    user_q = await db.execute(
-        select(User).where(User.id == user_id).with_for_update()
-    )
-    user_row = user_q.scalar_one_or_none()
+    if amt <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+    user_row = await lock_user(db, user_id)
     if not user_row:
         raise HTTPException(status_code=404, detail="User not found")
-
-    acc_q = await db.execute(
-        select(TradingAccount).where(
-            TradingAccount.id == req.from_account_id,
-            TradingAccount.user_id == user_id,
-            TradingAccount.is_demo == False,
-        ).with_for_update()
-    )
-    account = acc_q.scalar_one_or_none()
-    if not account:
+    account = await lock_account(db, req.from_account_id, user_id=user_id)
+    if not account or account.is_demo:
         raise HTTPException(status_code=404, detail="Trading account not found")
+    await assert_not_managed_pool(db, account.id)
 
-    free = (account.balance or Decimal("0")) - (account.margin_used or Decimal("0"))
+    free = await live_trading_withdrawable(db, account)
     if free < amt:
         raise HTTPException(
             status_code=400,

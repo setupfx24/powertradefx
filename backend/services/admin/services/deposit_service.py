@@ -197,7 +197,7 @@ async def set_payment_link(
         )
 
     result = await db.execute(
-        select(Deposit).where(Deposit.id == deposit_id).with_for_update()
+        select(Deposit).where(Deposit.id == deposit_id).with_for_update().execution_options(populate_existing=True)
     )
     deposit = result.scalar_one_or_none()
     if not deposit:
@@ -289,7 +289,7 @@ async def approve_deposit(
     # moment can't both flip pending → approved and credit twice. The
     # status guard below then makes the second one fail cleanly.
     result = await db.execute(
-        select(Deposit).where(Deposit.id == deposit_id).with_for_update()
+        select(Deposit).where(Deposit.id == deposit_id).with_for_update().execution_options(populate_existing=True)
     )
     deposit = result.scalar_one_or_none()
     if not deposit:
@@ -304,7 +304,7 @@ async def approve_deposit(
     # Lock the user row too — concurrent transactions touching
     # main_wallet_balance must serialise to avoid lost-update writes.
     user_q = await db.execute(
-        select(User).where(User.id == deposit.user_id).with_for_update()
+        select(User).where(User.id == deposit.user_id).with_for_update().execution_options(populate_existing=True)
     )
     user_row = user_q.scalar_one_or_none()
     if not user_row:
@@ -320,7 +320,10 @@ async def approve_deposit(
                 TradingAccount.id == deposit.account_id,
                 TradingAccount.user_id == deposit.user_id,
                 TradingAccount.is_active.is_(True),
-            ).with_for_update().limit(1)
+                # Real money never lands on a demo account (QA: a deposit tagged
+                # with a demo account_id was credited to the demo account).
+                TradingAccount.is_demo.is_(False),
+            ).with_for_update().execution_options(populate_existing=True).limit(1)
         )
         wallet_acc = tagged_q.scalar_one_or_none()
     if wallet_acc is None:
@@ -329,7 +332,8 @@ async def approve_deposit(
                 TradingAccount.user_id == deposit.user_id,
                 TradingAccount.is_wallet_account.is_(True),
                 TradingAccount.is_active.is_(True),
-            ).with_for_update().limit(1)
+                TradingAccount.is_demo.is_(False),
+            ).with_for_update().execution_options(populate_existing=True).limit(1)
         )
         wallet_acc = wallet_acc_q.scalar_one_or_none()
 
@@ -371,7 +375,10 @@ async def approve_deposit(
     # Best-effort — a CPA problem must never block crediting a deposit.
     try:
         from packages.common.src.ib_commission import distribute_ib_cpa
-        await distribute_ib_cpa(db, deposit.user_id, deposit.amount)
+        # SAVEPOINT: a CPA failure rolls back only the CPA rows, never the
+        # deposit credit.
+        async with db.begin_nested():
+            await distribute_ib_cpa(db, deposit.user_id, deposit.amount)
     except Exception as _cpa_exc:
         import logging as _lg
         _lg.getLogger("admin-deposits").error(
@@ -486,7 +493,7 @@ async def reject_deposit(
     # Phase 3: lock the row like approve_deposit does, so a reject can't race a
     # concurrent approve/auto-approve (both passing the pending check).
     result = await db.execute(
-        select(Deposit).where(Deposit.id == deposit_id).with_for_update()
+        select(Deposit).where(Deposit.id == deposit_id).with_for_update().execution_options(populate_existing=True)
     )
     deposit = result.scalar_one_or_none()
     if not deposit:
@@ -526,7 +533,7 @@ async def approve_withdrawal(
     # "not pending" on the second click; the user row + account row are
     # then locked so balance reads are consistent with the debit.
     result = await db.execute(
-        select(Withdrawal).where(Withdrawal.id == withdrawal_id).with_for_update()
+        select(Withdrawal).where(Withdrawal.id == withdrawal_id).with_for_update().execution_options(populate_existing=True)
     )
     withdrawal = result.scalar_one_or_none()
     if not withdrawal:
@@ -542,7 +549,7 @@ async def approve_withdrawal(
 
     if withdrawal.account_id:
         acc_q = await db.execute(
-            select(TradingAccount).where(TradingAccount.id == withdrawal.account_id).with_for_update()
+            select(TradingAccount).where(TradingAccount.id == withdrawal.account_id).with_for_update().execution_options(populate_existing=True)
         )
         account = acc_q.scalar_one_or_none()
         if account:
@@ -553,12 +560,11 @@ async def approve_withdrawal(
                 # account into a margin deficit. Same rule as the user-facing
                 # withdrawal paths (account row is locked above, so this is
                 # consistent with the debit).
-                avail = available_to_withdraw(
-                    "trading",
-                    balance=account.balance,
-                    margin_used=account.margin_used,
-                    free_margin=account.free_margin,
-                )
+                # Live: balance - margin_used, minus any FLOATING LOSS, credit
+                # excluded (QA: stored free_margin ignored floating loss, so
+                # collateral left while the account was under water).
+                from packages.common.src.withdrawal_limits import live_trading_withdrawable
+                avail = await live_trading_withdrawable(db, account)
                 if avail < withdrawal.amount:
                     raise HTTPException(
                         status_code=400,
@@ -581,15 +587,23 @@ async def approve_withdrawal(
             db.add(txn)
     else:
         uw = await db.execute(
-            select(User).where(User.id == withdrawal.user_id).with_for_update()
+            select(User).where(User.id == withdrawal.user_id).with_for_update().execution_options(populate_existing=True)
         )
         user_row = uw.scalar_one_or_none()
         if not user_row:
             raise HTTPException(status_code=400, detail="User not found")
         if not already_debited:
             main_bal = user_row.main_wallet_balance or Decimal("0")
-            if main_bal < withdrawal.amount:
-                raise HTTPException(status_code=400, detail="Insufficient main wallet balance")
+            # Bonus money is never withdrawable: check what is free AFTER the
+            # outstanding bonus at approval time too (QA: several pending
+            # withdrawals, each under the limit alone, cashed out the bonus).
+            from packages.common.src.bonus_service import outstanding_bonus as _ob
+            avail_main = available_to_withdraw(
+                "main", main_wallet_balance=main_bal,
+                outstanding_bonus=await _ob(db, withdrawal.user_id),
+            )
+            if avail_main < withdrawal.amount:
+                raise HTTPException(status_code=400, detail="Insufficient withdrawable main wallet balance (bonus is not withdrawable)")
             user_row.main_wallet_balance = main_bal - withdrawal.amount
         db.add(
             Transaction(
@@ -667,7 +681,7 @@ async def reject_withdrawal(
     # Row-lock so the refund branch (below) is safe against a concurrent
     # approve on the same row.
     result = await db.execute(
-        select(Withdrawal).where(Withdrawal.id == withdrawal_id).with_for_update()
+        select(Withdrawal).where(Withdrawal.id == withdrawal_id).with_for_update().execution_options(populate_existing=True)
     )
     withdrawal = result.scalar_one_or_none()
     if not withdrawal:
@@ -688,7 +702,7 @@ async def reject_withdrawal(
             acc_q = await db.execute(
                 select(TradingAccount).where(
                     TradingAccount.id == withdrawal.account_id
-                ).with_for_update()
+                ).with_for_update().execution_options(populate_existing=True)
             )
             acc = acc_q.scalar_one_or_none()
             if acc is not None:
@@ -710,7 +724,7 @@ async def reject_withdrawal(
                 )
         else:
             uw = await db.execute(
-                select(User).where(User.id == withdrawal.user_id).with_for_update()
+                select(User).where(User.id == withdrawal.user_id).with_for_update().execution_options(populate_existing=True)
             )
             user_row = uw.scalar_one_or_none()
             if user_row:
@@ -799,7 +813,7 @@ async def mark_withdrawal_paid(
         raise HTTPException(status_code=400, detail="tx_hash is required")
 
     result = await db.execute(
-        select(Withdrawal).where(Withdrawal.id == withdrawal_id).with_for_update()
+        select(Withdrawal).where(Withdrawal.id == withdrawal_id).with_for_update().execution_options(populate_existing=True)
     )
     withdrawal = result.scalar_one_or_none()
     if not withdrawal:
@@ -951,7 +965,7 @@ async def approve_with_razorpay(
     """
     _ = amount_override  # unused — see docstring
     result = await db.execute(
-        select(Deposit).where(Deposit.id == deposit_id).with_for_update()
+        select(Deposit).where(Deposit.id == deposit_id).with_for_update().execution_options(populate_existing=True)
     )
     deposit = result.scalar_one_or_none()
     if not deposit:

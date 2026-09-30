@@ -107,9 +107,8 @@ async def create_onchain_withdrawal(
 
     destination = _validate_destination(net, destination_address or "")
 
-    user = (await db.execute(
-        select(User).where(User.id == user_id).with_for_update()
-    )).scalar_one_or_none()
+    from packages.common.src.row_locks import lock_user, lock_account
+    user = await lock_user(db, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -119,14 +118,13 @@ async def create_onchain_withdrawal(
     from packages.common.src.withdrawal_limits import available_to_withdraw
     source_kind, source_row = await _resolve_debit_source(db, user_id, preference=source)
     if source_kind == "trading":
-        # C-MONEY-3 / H-MONEY-1: only funds NOT backing open positions are
-        # withdrawable — via the shared helper so every withdrawal path agrees.
-        available = available_to_withdraw(
-            "trading",
-            balance=source_row.balance,
-            margin_used=source_row.margin_used,
-            free_margin=source_row.free_margin,
-        )
+        # Locked (fresh) and LIVE: funds backing open positions, credit and
+        # any floating loss are never withdrawable.
+        from packages.common.src.withdrawal_limits import live_trading_withdrawable
+        source_row = await lock_account(db, source_row.id, user_id=user_id)
+        if source_row is None:
+            raise HTTPException(status_code=404, detail="Wallet account not found")
+        available = await live_trading_withdrawable(db, source_row)
     else:
         from packages.common.src.bonus_service import outstanding_bonus
         available = available_to_withdraw(
@@ -157,7 +155,9 @@ async def create_onchain_withdrawal(
         source_row.equity = (source_row.equity or Decimal("0")) - amt
         source_row.free_margin = (source_row.free_margin or Decimal("0")) - amt
     else:
-        user.main_wallet_balance = available - amt
+        # Debit only the withdrawn amount. (QA: `available - amt` also erased
+        # the user's outstanding bonus, since `available` already excludes it.)
+        user.main_wallet_balance = (user.main_wallet_balance or Decimal("0")) - amt
 
     withdrawal = Withdrawal(
         user_id=user.id,

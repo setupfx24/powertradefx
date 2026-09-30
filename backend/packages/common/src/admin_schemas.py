@@ -160,7 +160,7 @@ class PaginatedResponse(BaseModel):
 
 class FundRequest(BaseModel):
     account_id: Optional[str] = None  # Optional: add_fund goes to main wallet; deduct_fund uses this as fallback
-    amount: float = Field(gt=0)
+    amount: float = Field(ge=0.01, le=10_000_000, allow_inf_nan=False)
     description: Optional[str] = None
     # For deduct_fund only: "main_wallet" → deduct only from main wallet;
     # "trading_account" → deduct only from the given account_id; omit/None → try
@@ -170,7 +170,7 @@ class FundRequest(BaseModel):
 
 class CreditRequest(BaseModel):
     account_id: str
-    amount: float = Field(gt=0)
+    amount: float = Field(ge=0.01, le=10_000_000, allow_inf_nan=False)
     description: Optional[str] = None
 
 

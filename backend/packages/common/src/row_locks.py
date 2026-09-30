@@ -28,12 +28,20 @@ from .models import User, TradingAccount, Position
 # the locked row's current values overwrite the in-session copy.
 _FRESH = {"populate_existing": True}
 
+# FOR NO KEY UPDATE (key_share=True): serialises every balance writer on the
+# row exactly like FOR UPDATE, but does NOT block other transactions inserting
+# rows that REFERENCE it (a new Position/Transaction/audit row takes a KEY
+# SHARE lock on its users/trading_accounts parent). With plain FOR UPDATE a
+# transfer holding the user row deadlocked against an order inserting an
+# audit row for the same user (QA 2026-09-29, HTTP 500s).
+_LOCK = {"key_share": True}
+
 
 async def lock_user(db: AsyncSession, user_id: UUID) -> User | None:
     """Lock and return the User row (FOR UPDATE). Lock this BEFORE any account."""
     return (
         await db.execute(
-            select(User).where(User.id == user_id).with_for_update().execution_options(**_FRESH)
+            select(User).where(User.id == user_id).with_for_update(**_LOCK).execution_options(**_FRESH)
         )
     ).scalar_one_or_none()
 
@@ -46,7 +54,7 @@ async def lock_account(
     q = select(TradingAccount).where(TradingAccount.id == account_id)
     if user_id is not None:
         q = q.where(TradingAccount.user_id == user_id)
-    return (await db.execute(q.with_for_update().execution_options(**_FRESH))).scalar_one_or_none()
+    return (await db.execute(q.with_for_update(**_LOCK).execution_options(**_FRESH))).scalar_one_or_none()
 
 
 async def lock_accounts(db: AsyncSession, account_ids) -> dict:
@@ -69,6 +77,6 @@ async def lock_position(db: AsyncSession, position_id: UUID) -> Position | None:
     or credited twice."""
     return (
         await db.execute(
-            select(Position).where(Position.id == position_id).with_for_update().execution_options(**_FRESH)
+            select(Position).where(Position.id == position_id).with_for_update(**_LOCK).execution_options(**_FRESH)
         )
     ).scalar_one_or_none()

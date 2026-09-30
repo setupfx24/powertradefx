@@ -6,11 +6,16 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+# Money amounts: at least one cent, at most 10 million, two decimals, never
+# NaN/Infinity (QA 2026-09-29: huge/infinite amounts crashed endpoints with
+# 500 and amounts below 1e-8 were stored as 0).
+MONEY_FIELD = dict(ge=Decimal("0.01"), le=Decimal("10000000"), max_digits=12, decimal_places=2, allow_inf_nan=False)
+
 
 class DepositRequest(BaseModel):
     """account_id is optional — approved deposits credit main_wallet_balance regardless."""
     account_id: Optional[UUID] = None
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(**MONEY_FIELD)
     method: str
     transaction_id: Optional[str] = None
     screenshot_url: Optional[str] = None
@@ -31,7 +36,7 @@ class WithdrawalRequest(BaseModel):
         else main wallet)
     """
 
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(**MONEY_FIELD)
     method: str
     bank_details: Optional[dict] = None
     crypto_address: Optional[str] = None
@@ -42,14 +47,14 @@ class TransferTradingToMainRequest(BaseModel):
     """Move available cash from a live trading account into the user main wallet."""
 
     from_account_id: UUID
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(**MONEY_FIELD)
 
 
 class TransferMainToTradingRequest(BaseModel):
     """Fund a live trading account from the main wallet."""
 
     to_account_id: UUID
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(**MONEY_FIELD)
 
 
 class InternalWalletTransferRequest(BaseModel):
@@ -57,7 +62,7 @@ class InternalWalletTransferRequest(BaseModel):
 
     from_account_id: UUID
     to_account_id: UUID
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(**MONEY_FIELD)
 
 
 class DepositResponse(BaseModel):
@@ -107,7 +112,7 @@ class RazorpayOrderRequest(BaseModel):
     `account_target` ("wallet" | "main" | None) chooses where the credited
     USD lands when the payment settles.
     """
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(**MONEY_FIELD)
     account_target: Optional[str] = None
 
 

@@ -447,6 +447,31 @@ async def migrate_to_wallet_account(
                 status_code=400,
                 detail="That account is already the wallet account.",
             )
+        # Never sweep an account that still backs open trades or pending
+        # orders (QA: the sweep emptied an account with open positions).
+        from packages.common.src.models import Position as _Pos, Order as _Ord
+        from sqlalchemy import func as _f
+        open_n = (await db.execute(
+            select(_f.count(_Pos.id)).where(_Pos.account_id == source_acc.id, _Pos.status == "open")
+        )).scalar() or 0
+        pend_n = (await db.execute(
+            select(_f.count(_Ord.id)).where(_Ord.account_id == source_acc.id, _Ord.status == "pending")
+        )).scalar() or 0
+        if open_n or pend_n:
+            raise HTTPException(
+                status_code=400,
+                detail="Close all open positions and cancel pending orders on that account before migrating it.",
+            )
+
+    # Bonus money must stay non-withdrawable; the wallet account's balance is
+    # withdrawable, so refuse while a bonus is still being wagered (QA: the
+    # migration turned bonus into withdrawable money).
+    from packages.common.src.bonus_service import outstanding_bonus as _ob
+    if (await _ob(db, user_id)) > 0:
+        raise HTTPException(
+            status_code=400,
+            detail="You have an active bonus. Complete its trading requirement (or ask support to remove it) before migrating to a wallet account.",
+        )
 
     # Compute starting balance from main_wallet + optional source acc.
     main_amount = Decimal(str(user.main_wallet_balance or 0))
