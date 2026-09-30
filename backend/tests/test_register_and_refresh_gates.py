@@ -17,6 +17,13 @@ class _Res:
     def __init__(self, scalar=None):
         self._scalar = scalar
 
+    def first(self):
+        # Emulates the atomic claim: UPDATE ... SET revoked=true RETURNING user_id.
+        if self._scalar is None:
+            return None
+        self._scalar.revoked = True
+        return (self._scalar.user_id,)
+
     def scalar_one_or_none(self):
         return self._scalar
 

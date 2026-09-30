@@ -18,10 +18,9 @@ class UpdateProfileRequest(BaseModel):
     language: str | None = Field(None, max_length=10)
     theme: str | None = Field(None, pattern="^(light|dark)$")
     date_of_birth: str | None = None
-    # Self-declared Islamic preference. When true, the account picker
-    # hides non-swap-free groups and the overnight fee engine skips
-    # this user's leveraged positions (Trading_Mechanism.docx —
-    # Islamic accounts).
+    # Self-declared Islamic PREFERENCE: the account picker then offers only
+    # swap-free account types. It does not by itself make any account swap-
+    # free — only a swap-free account type (admin-controlled) does.
     is_islamic: bool | None = None
 
 

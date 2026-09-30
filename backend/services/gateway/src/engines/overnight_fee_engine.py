@@ -18,8 +18,8 @@ receives) and resolved per user, account type, instrument, segment and
 default rule (see resolve_swap_terms). With no rule the platform default
 of -3.6% a year (0.01% a day) applies.
 
-Skipped: swap-free rules, swap-free (Islamic) account types, Islamic users,
-fully funded positions and leverage <= 1.
+Skipped: swap-free rules, swap-free (Islamic) account types, fully funded
+positions and leverage <= 1.
 
 Idempotency: positions.last_swap_at stores the last rollover booked. A
 missed night (deploy, outage) is caught up on the next check, and a rollover
@@ -174,11 +174,12 @@ async def _book_one(db: AsyncSession, pos, now: datetime) -> bool:
 
         # Exemptions: mark the rollovers as handled so they are not re-walked.
         ag: AccountGroup | None = account.account_group
+        # Swap-free only through the ACCOUNT TYPE (admin-controlled swap_free
+        # group, e.g. Islamic) or a fully funded position. The user's own
+        # profile "Islamic" preference only filters which account types they
+        # are offered; it no longer exempts every account (QA 2026-09-29: any
+        # user could tick it via PUT /profile and stop paying swap).
         exempt = bool(ag is not None and ag.swap_free) or bool(getattr(pos, "is_fully_funded", False))
-        if not exempt and account.user_id is not None:
-            exempt = bool((await db.execute(
-                select(User.is_islamic).where(User.id == account.user_id)
-            )).scalar_one_or_none())
         leverage = int(account.leverage or 1)
         if exempt or leverage <= 1:
             pos.last_swap_at = last_roll

@@ -896,17 +896,29 @@ async def refresh_token(request: Request, db: AsyncSession) -> JSONResponse:
         raise AuthServiceError("Not authenticated", 401)
     th = hash_token(raw.strip())
     now = datetime.now(timezone.utc)
-    q = await db.execute(
-        select(UserRefreshToken).where(
+    # Claim the token ATOMICALLY: one UPDATE ... WHERE revoked = false
+    # RETURNING. Of N concurrent refreshes with the same token exactly one
+    # gets a row back; the rest see nothing and fail. (QA 2026-09-29: a
+    # SELECT-then-revoke let one refresh token fork into ~10 live sessions.)
+    from sqlalchemy import update as _sa_update
+    claimed = (await db.execute(
+        _sa_update(UserRefreshToken)
+        .where(
             UserRefreshToken.token_hash == th,
             UserRefreshToken.revoked.is_(False),
             UserRefreshToken.expires_at > now,
         )
-    )
-    row = q.scalar_one_or_none()
-    if not row:
+        .values(revoked=True)
+        .returning(UserRefreshToken.user_id)
+        .execution_options(synchronize_session=False)
+    )).first()
+    if not claimed:
         raise AuthServiceError("Invalid or expired session", 401)
-    user = await db.get(User, row.user_id)
+
+    class _Row:  # the claimed token is already revoked; keep the old flow's shape
+        revoked = True
+    row = _Row()
+    user = await db.get(User, claimed[0])
     if not user or user.status in ("banned", "blocked"):
         raise AuthServiceError("Not authenticated", 401)
     # H-AUTH-4: a session must not be renewable while the email is unverified —
@@ -925,7 +937,6 @@ async def refresh_token(request: Request, db: AsyncSession) -> JSONResponse:
         row.revoked = True
         await db.flush()
         raise AuthServiceError("Not authenticated", 401)
-    row.revoked = True
     await db.flush()
     return await issue_auth_json_response(user, request, db)
 
