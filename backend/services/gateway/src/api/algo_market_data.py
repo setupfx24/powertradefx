@@ -383,9 +383,9 @@ async def algo_prices_ws(websocket: WebSocket) -> None:
     await websocket.send_json({"status": "authenticated", "account": account_number})
 
     # Shared per-process subscription (no Redis connection held per bot).
-    from ..realtime_hub import hub as _hub, next_messages as _next
-    q_prices = _hub.subscribe(PriceChannel.PRICE_CHANNEL)
+    from ..realtime_hub import hub as _hub
     last_auth_check = asyncio.get_event_loop().time()
+    board_seq = 0
 
     try:
         # Drain + coalesce + ~20fps flush (same rationale as /ws/prices):
@@ -400,8 +400,9 @@ async def algo_prices_ws(websocket: WebSocket) -> None:
         pending: dict[str, dict] = {}
 
         while True:
-            wait = max(0.005, FLUSH_INTERVAL - (_now() - last_flush))
-            for raw in await _next(q_prices, wait):
+            await asyncio.sleep(max(0.005, FLUSH_INTERVAL - (_now() - last_flush)))
+            board_seq, fresh = _hub.board.changed_since(board_seq)
+            for raw in fresh:
                 try:
                     tick = json.loads(raw)
                     tick["type"] = "tick"
@@ -441,4 +442,4 @@ async def algo_prices_ws(websocket: WebSocket) -> None:
     except Exception as exc:
         logger.debug("algo_prices_ws stream ended: %s", exc)
     finally:
-        _hub.unsubscribe(PriceChannel.PRICE_CHANNEL, q_prices)
+        pass

@@ -244,6 +244,7 @@ async def lifespan(app: FastAPI):
     # Redis on first-tick reads (which would defeat the point).
     await price_cache.start()
     # ONE Redis subscription per process for every WebSocket (see realtime_hub).
+    realtime_hub.price_channel = PriceChannel.PRICE_CHANNEL
     realtime_hub.configure(
         channels=(PriceChannel.PRICE_CHANNEL, CONFIG_INSTRUMENTS_RELOAD_CHANNEL,
                   BARS_UPDATES_CHANNEL, "admin:trades", "admin:deposits", "admin:alerts"),
@@ -823,10 +824,10 @@ async def price_stream(websocket: WebSocket, token: str | None = Query(default=N
         await websocket.close(code=4008, reason="Too many concurrent connections")
         return
     await websocket.accept()
-    # Shared per-process subscription (realtime_hub): no Redis connection is
-    # held per socket. The config-reload topic lets an admin spread edit reach
-    # THIS connection promptly.
-    q_prices = realtime_hub.subscribe(PriceChannel.PRICE_CHANNEL)
+    # Prices come from the process-wide board (realtime_hub.board): each tick
+    # is parsed once per process, and this socket only sends the symbols that
+    # changed since its last flush. The config-reload topic still reaches this
+    # connection so an admin spread edit shows promptly.
     q_cfg = realtime_hub.subscribe(CONFIG_INSTRUMENTS_RELOAD_CHANNEL)
     reload_due_at: float | None = None
 
@@ -834,37 +835,44 @@ async def price_stream(websocket: WebSocket, token: str | None = Query(default=N
     # client can pin the context to one trading account via a
     # {"action":"set_account","account_id":...} control message so
     # account-specific overrides apply to the active account only.
-    active_account_id: str | None = None
+    state = {"account": None, "reload": False}
     overrides = await _load_user_spread_overrides(user_id) if user_id else {}
     last_override_reload = asyncio.get_event_loop().time()
 
-    try:
-        # ── Drain + coalesce + fixed-rate flush ─────────────────────────
-        # The old loop read ONE pubsub message per iteration (plus a 10ms
-        # control-message wait), capping forwarding at ~100 msg/s across
-        # ALL symbols — a fast feed (crypto book ticks) starved slow ones
-        # and everything lagged behind the backlog. Now every wake drains
-        # the WHOLE backlog keeping only the newest payload per symbol,
-        # and flushes at ~20fps. Perceived latency stays <50ms while
-        # bandwidth is bounded no matter how fast the upstream feed gets.
-        FLUSH_INTERVAL = 0.05
-        ping_interval = 30
-        _now = asyncio.get_event_loop().time
-        last_ping = _now()
-        last_flush = _now()
-        pending: dict[str, str] = {}  # symbol -> latest raw payload
-
+    async def _reader():
+        # Client control messages on their own task: the send loop never
+        # polls the socket with a tiny timeout (that cost CPU per socket).
         while True:
-            # Wait for the first message up to the next flush deadline,
-            # then drain everything queued without blocking.
-            wait = max(0.005, FLUSH_INTERVAL - (_now() - last_flush))
-            for raw_tick in await next_messages(q_prices, wait):
-                try:
-                    sym = str(json.loads(raw_tick).get("symbol") or "")
-                except (ValueError, TypeError):
-                    sym = ""
-                if sym:
-                    pending[sym] = raw_tick
+            raw = await websocket.receive_text()
+            if not user_id:
+                continue
+            try:
+                ctrl = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+            if isinstance(ctrl, dict) and ctrl.get("action") == "set_account":
+                acct = str(ctrl.get("account_id") or "") or None
+                if acct != state["account"]:
+                    state["account"] = acct
+                    state["reload"] = True
+
+    reader = asyncio.create_task(_reader())
+    FLUSH_INTERVAL = 0.1          # 10 updates/s per symbol at most
+    ping_interval = 30
+    _now = asyncio.get_event_loop().time
+    last_ping = _now()
+    last_seq = realtime_hub.board.seq - 1 if realtime_hub.board.seq else 0
+    try:
+        # Send the current snapshot first so the client has every price at once.
+        last_seq = 0
+        while True:
+            if reader.done():
+                break  # client disconnected (or sent something fatal)
+            last_seq, ticks = realtime_hub.board.changed_since(last_seq)
+            for raw_tick in ticks:
+                await websocket.send_text(_rewrite_tick_with_spread(raw_tick, overrides) if overrides else raw_tick)
+
+            now = _now()
             if not q_cfg.empty():
                 while not q_cfg.empty():
                     q_cfg.get_nowait()
@@ -872,51 +880,27 @@ async def price_stream(websocket: WebSocket, token: str | None = Query(default=N
                 # random delay so thousands of connections don't all query the
                 # DB in the same instant (thundering herd).
                 if user_id and reload_due_at is None:
-                    reload_due_at = _now() + _random.uniform(0.0, 3.0)
-            if reload_due_at is not None and _now() >= reload_due_at:
+                    reload_due_at = now + _random.uniform(0.0, 3.0)
+            if state["reload"] or (reload_due_at is not None and now >= reload_due_at) or (
+                user_id and now - last_override_reload >= _USER_SPREAD_RELOAD_SEC
+            ):
+                if user_id:
+                    overrides = await _load_user_spread_overrides(user_id, state["account"])
+                state["reload"] = False
                 reload_due_at = None
-                overrides = await _load_user_spread_overrides(user_id, active_account_id)
-                last_override_reload = asyncio.get_event_loop().time()
+                last_override_reload = now
 
-            now_flush = _now()
-            if pending and now_flush - last_flush >= FLUSH_INTERVAL:
-                for raw_tick in pending.values():
-                    data = _rewrite_tick_with_spread(raw_tick, overrides) if overrides else raw_tick
-                    await websocket.send_text(data)
-                pending.clear()
-                last_flush = now_flush
-
-            # Drain client control messages without blocking the stream.
-            try:
-                raw = await asyncio.wait_for(websocket.receive_text(), timeout=0.001)
-            except asyncio.TimeoutError:
-                raw = None
-            if raw and user_id:
-                try:
-                    ctrl = json.loads(raw)
-                except (ValueError, TypeError):
-                    ctrl = None
-                if isinstance(ctrl, dict) and ctrl.get("action") == "set_account":
-                    acct = str(ctrl.get("account_id") or "") or None
-                    if acct != active_account_id:
-                        active_account_id = acct
-                        overrides = await _load_user_spread_overrides(user_id, active_account_id)
-                        last_override_reload = asyncio.get_event_loop().time()
-
-            now = asyncio.get_event_loop().time()
             if now - last_ping >= ping_interval:
                 await websocket.send_json({"type": "ping"})
                 last_ping = now
-
-            # Pick up admin edits without forcing a reconnect.
-            if user_id and now - last_override_reload >= _USER_SPREAD_RELOAD_SEC:
-                overrides = await _load_user_spread_overrides(user_id, active_account_id)
-                last_override_reload = now
+            await asyncio.sleep(FLUSH_INTERVAL)
     except WebSocketDisconnect:
         pass
+    except Exception as e:  # a broken socket must never take the process down
+        logger.debug("price stream ended: %s", e)
     finally:
+        reader.cancel()
         _ws_release(user_id)
-        realtime_hub.unsubscribe(PriceChannel.PRICE_CHANNEL, q_prices)
         realtime_hub.unsubscribe(CONFIG_INSTRUMENTS_RELOAD_CHANNEL, q_cfg)
 
 

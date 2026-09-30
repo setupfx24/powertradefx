@@ -12,6 +12,7 @@ Queues are bounded; a slow client drops its OWN oldest messages (prices and
 bars are coalesced by the consumer anyway) and never slows anyone else down.
 """
 import asyncio
+import json
 import logging
 from collections import defaultdict
 
@@ -22,12 +23,46 @@ logger = logging.getLogger("realtime-hub")
 QUEUE_SIZE = 2000
 
 
+class PriceBoard:
+    """Latest tick per symbol for this process, with a global sequence.
+
+    The price channel carries every tick for every symbol. Parsing and
+    queueing each tick once PER SOCKET cost ~4 cores for 500 sockets in the
+    staging load test; now each tick is parsed ONCE here and every socket
+    just sends the symbols whose sequence moved since its last flush."""
+
+    def __init__(self) -> None:
+        self.seq = 0
+        self.latest: dict[str, tuple[int, str]] = {}
+
+    def update(self, raw) -> None:
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", "ignore")
+        try:
+            sym = str(json.loads(raw).get("symbol") or "")
+        except (ValueError, TypeError, AttributeError):
+            return
+        if not sym:
+            return
+        self.seq += 1
+        self.latest[sym] = (self.seq, raw)
+
+    def changed_since(self, last_seq: int) -> tuple[int, list[str]]:
+        """(current_seq, raw ticks newer than last_seq)."""
+        cur = self.seq
+        if cur == last_seq:
+            return cur, []
+        return cur, [raw for (sq, raw) in list(self.latest.values()) if sq > last_seq]
+
+
 class RealtimeHub:
     def __init__(self) -> None:
         self._subs: dict[str, set[asyncio.Queue]] = defaultdict(set)
         self._task: asyncio.Task | None = None
         self._channels: tuple[str, ...] = ()
         self._patterns: tuple[str, ...] = ()
+        self.board = PriceBoard()
+        self.price_channel: str | None = None
 
     def configure(self, channels, patterns=()) -> None:
         self._channels = tuple(channels)
@@ -87,6 +122,9 @@ class RealtimeHub:
                     ch = message.get("channel")
                     if isinstance(ch, bytes):
                         ch = ch.decode("utf-8", "ignore")
+                    if ch == self.price_channel:
+                        self.board.update(message.get("data"))
+                        continue
                     self._dispatch(ch, message.get("data"))
             except asyncio.CancelledError:
                 break
