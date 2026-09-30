@@ -123,8 +123,18 @@ function TradingSession({ children }: { children: React.ReactNode }) {
     // (SL/TP hit, stop-out) and the manual-close response (PositionsPanel) —
     // both instant, neither on a timer.
     let pollTick = 0;
+    let lastReconcile = 0;
     const positionPoll = setInterval(async () => {
       if (document.hidden) return;
+      // Every change to positions/balance is pushed on the trade socket
+      // (fills, closes, SL/TP, stop-out, deposits) and open P&L is priced
+      // client-side from ticks. While that socket is live, a 10 s reconcile
+      // is enough; poll every 1.5 s only while it is down. (Capacity: two
+      // DB-backed requests per 1.5 s per open tab capped the platform at
+      // ~1-2k concurrent traders.)
+      const now = Date.now();
+      if (tradeSocket.isOpen() && now - lastReconcile < 10_000) return;
+      lastReconcile = now;
       await refreshPositions();
       await refreshAccount();
       // Pending orders change rarely (place / fill / cancel all refresh them

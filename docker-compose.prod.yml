@@ -8,9 +8,22 @@ services:
   # ── Infrastructure — restart policy only (no host ports needed) ──
   postgres:
     restart: always
+    # Sized for the 8-core / 31 GB host and 15k users. max_connections must
+    # exceed the sum of every process's pool (see packages/common/src/database.py).
+    shm_size: 1gb
+    command: >-
+      postgres -c max_connections=300 -c shared_buffers=4GB
+      -c effective_cache_size=12GB -c work_mem=16MB -c maintenance_work_mem=512MB
+      -c random_page_cost=1.1 -c effective_io_concurrency=200
+      -c wal_buffers=16MB -c checkpoint_completion_target=0.9
 
   timescaledb:
     restart: always
+    shm_size: 512mb
+    command: >-
+      postgres -c max_connections=200 -c shared_buffers=2GB
+      -c effective_cache_size=6GB -c work_mem=16MB
+      -c shared_preload_libraries=timescaledb
 
   redis:
     restart: always
@@ -49,7 +62,7 @@ services:
       # Phase 3: admin-api uses Redis db 1, now password-authenticated. Overrides
       # the base compose's plaintext redis://redis:6379/1.
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/1
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "2", "--proxy-headers", "--forwarded-allow-ips", "*"]
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "3", "--proxy-headers", "--forwarded-allow-ips", "*"]
 
   gateway:
     ports: !override
@@ -80,7 +93,7 @@ services:
       # Fills use the same per-user spread the /ws/prices stream shows.
       # Overridable from .env; defaults ON in production.
       USER_SPREAD_AT_EXECUTION: ${USER_SPREAD_AT_EXECUTION:-true}
-    command: ["uvicorn", "services.gateway.src.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--proxy-headers", "--forwarded-allow-ips", "*"]
+    command: ["uvicorn", "services.gateway.src.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "6", "--proxy-headers", "--forwarded-allow-ips", "*"]
     # Prod runs the code baked into the image — drop the dev source bind
     # mounts from the base file. Keep ONLY the uploads data mount.
     volumes: !override

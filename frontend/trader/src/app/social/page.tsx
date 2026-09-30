@@ -957,7 +957,7 @@ function MyCopiesTab() {
         /* ignore transient blips — next tick retries */
       }
     };
-    const id = setInterval(tick, 2000);
+    const id = setInterval(tick, 5000);
     return () => {
       cancelled = true;
       clearInterval(id);

@@ -53,6 +53,12 @@ class TradeSocket {
     this.ws.onerror = () => this.ws?.close();
   }
 
+  /** True while the account's event stream is live. Callers slow their REST
+   *  polling to a safety reconcile then, instead of 1.5 s per open tab. */
+  isOpen(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
   subscribe(callback: TradeCallback) {
     this.callbacks.add(callback);
     return () => this.callbacks.delete(callback);

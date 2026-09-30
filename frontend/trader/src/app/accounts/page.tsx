@@ -178,7 +178,9 @@ export default function AccountsPage() {
       void fetchAccounts(undefined, { silent: true });
     };
 
-    const interval = setInterval(tick, 2000);
+    // 5 s: the /accounts list prices every open position server-side;
+    // every 2 s per open tab did not scale (capacity review).
+    const interval = setInterval(tick, 5000);
     const onVisibility = () => {
       if (typeof document !== 'undefined' && !document.hidden) tick();
     };

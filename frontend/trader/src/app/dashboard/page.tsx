@@ -258,7 +258,8 @@ function BrokerHome() {
       void refreshAccounts({ silent: true });
       void refreshMoverTicks();
     };
-    const interval = setInterval(tick, 2000);
+    // 5 s (was 2 s): /accounts is DB- and price-heavy; see capacity review.
+    const interval = setInterval(tick, 5000);
     const onVisibility = () => {
       if (typeof document !== 'undefined' && !document.hidden) tick();
     };
