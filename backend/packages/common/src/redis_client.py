@@ -7,7 +7,7 @@ settings = get_settings()
 
 redis_pool = aioredis.ConnectionPool.from_url(
     settings.REDIS_URL,
-    max_connections=50,
+    max_connections=100,
     decode_responses=True,
 )
 

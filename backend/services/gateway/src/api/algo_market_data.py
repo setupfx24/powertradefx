@@ -382,8 +382,10 @@ async def algo_prices_ws(websocket: WebSocket) -> None:
 
     await websocket.send_json({"status": "authenticated", "account": account_number})
 
-    pubsub = redis_client.pubsub()
-    await pubsub.subscribe(PriceChannel.PRICE_CHANNEL)
+    # Shared per-process subscription (no Redis connection held per bot).
+    from ..realtime_hub import hub as _hub, next_messages as _next
+    q_prices = _hub.subscribe(PriceChannel.PRICE_CHANNEL)
+    last_auth_check = asyncio.get_event_loop().time()
 
     try:
         # Drain + coalesce + ~20fps flush (same rationale as /ws/prices):
@@ -399,18 +401,29 @@ async def algo_prices_ws(websocket: WebSocket) -> None:
 
         while True:
             wait = max(0.005, FLUSH_INTERVAL - (_now() - last_flush))
-            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=wait)
-            while message:
-                if message.get("type") == "message":
+            for raw in await _next(q_prices, wait):
+                try:
+                    tick = json.loads(raw)
+                    tick["type"] = "tick"
+                    sym = str(tick.get("symbol") or "")
+                    if sym:
+                        pending[sym] = tick
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # Re-validate the key every 60 s: a revoked key, a deactivated
+            # account or a banned user must stop streaming (QA: streams
+            # survived revocation and bans).
+            if _now() - last_auth_check >= 60:
+                last_auth_check = _now()
+                try:
+                    await validate_api_credentials(api_key, api_secret)
+                except HTTPException:
                     try:
-                        tick = json.loads(message["data"])
-                        tick["type"] = "tick"
-                        sym = str(tick.get("symbol") or "")
-                        if sym:
-                            pending[sym] = tick
-                    except (json.JSONDecodeError, TypeError):
+                        await websocket.close(code=WS_CLOSE_INVALID_CREDS, reason="credentials_revoked")
+                    except Exception:
                         pass
-                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0)
+                    break
 
             now = _now()
             if pending and now - last_flush >= FLUSH_INTERVAL:
@@ -428,8 +441,4 @@ async def algo_prices_ws(websocket: WebSocket) -> None:
     except Exception as exc:
         logger.debug("algo_prices_ws stream ended: %s", exc)
     finally:
-        try:
-            await pubsub.unsubscribe(PriceChannel.PRICE_CHANNEL)
-            await pubsub.close()
-        except Exception:
-            pass
+        _hub.unsubscribe(PriceChannel.PRICE_CHANNEL, q_prices)

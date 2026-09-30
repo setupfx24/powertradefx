@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     ADMIN_MFA_REQUIRED: bool = False
 
     ADMIN_EMAIL: str = "admin@powertradefx.com"
+    # Name of the admin session cookie (must match services/admin/dependencies.py
+    # ADMIN_COOKIE_NAME). The gateway reads it to authenticate /ws/admin; it was
+    # missing, so every /ws/admin connection failed with a 500 (QA 2026-09-29).
+    ADMIN_COOKIE_NAME: str = "fx_admin"
     # Initial seed password for the super-admin row created by the
     # `migrate` profile. Empty by default so prod operators are forced
     # to set a strong value in their .env before the first migration —

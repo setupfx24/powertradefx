@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.common.src.config import get_settings
 from packages.common.src.database import get_db, AsyncSessionLocal
 from packages.common.src.redis_client import redis_client, PriceChannel, BARS_UPDATES_CHANNEL, CONFIG_INSTRUMENTS_RELOAD_CHANNEL, FEED_STATUS_KEY
+from .realtime_hub import hub as realtime_hub, next_messages
+import random as _random
 from packages.common.src.price_cache import price_cache
 from packages.common.src.kafka_client import close_producer
 from packages.common.src.auth import decode_token, require_onboarded
@@ -241,6 +243,13 @@ async def lifespan(app: FastAPI):
     # engines so they hit a warm cache instead of falling through to
     # Redis on first-tick reads (which would defeat the point).
     await price_cache.start()
+    # ONE Redis subscription per process for every WebSocket (see realtime_hub).
+    realtime_hub.configure(
+        channels=(PriceChannel.PRICE_CHANNEL, CONFIG_INSTRUMENTS_RELOAD_CHANNEL,
+                  BARS_UPDATES_CHANNEL, "admin:trades", "admin:deposits", "admin:alerts"),
+        patterns=("account:*",),
+    )
+    await realtime_hub.start()
     await sltp_engine.start()
     await copy_engine.start()
     await stats_engine.start()
@@ -267,6 +276,7 @@ async def lifespan(app: FastAPI):
     await stats_engine.stop()
     await copy_engine.stop()
     await sltp_engine.stop()
+    await realtime_hub.stop()
     await price_cache.stop()
     await close_producer()
     await redis_client.close()
@@ -346,7 +356,19 @@ app.include_router(algo_market_data.router, prefix="/api/algo", tags=["Algo Mark
 app.include_router(ai_strategies.router, prefix="/api/v1/ai-strategies", tags=["AI Strategies"])
 
 
-@app.get("/health")
+@app.exception_handler(Exception)
+async def _unhandled_exception(request, exc):
+    """Every unexpected error returns clean JSON with a reference id; the
+    traceback goes to the log, never to the client (QA 2026-09-29: some
+    errors returned a plain-text 'Internal Server Error')."""
+    import uuid as _uuid
+    from fastapi.responses import JSONResponse as _JR
+    ref = _uuid.uuid4().hex[:12]
+    logger.exception("Unhandled error ref=%s on %s %s", ref, request.method, request.url.path)
+    return _JR(status_code=500, content={"detail": "Internal server error", "ref": ref})
+
+
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health():
     """Liveness + price-feed state.
 
@@ -364,11 +386,29 @@ async def health():
     except Exception:
         feed = None
     degraded = feed is None or bool(feed.get("degraded"))
-    return {
-        "status": "degraded" if degraded else "ok",
-        "service": "gateway",
-        "feed": feed,
-    }
+
+    # Real dependency checks, each with a short timeout.
+    checks = {}
+    try:
+        await asyncio.wait_for(redis_client.ping(), timeout=2)
+        checks["redis"] = "ok"
+    except Exception:
+        checks["redis"] = "down"
+    try:
+        async def _db_ping():
+            async with AsyncSessionLocal() as db:
+                await db.execute(select(1))
+        await asyncio.wait_for(_db_ping(), timeout=3)
+        checks["database"] = "ok"
+    except Exception:
+        checks["database"] = "down"
+    down = [k for k, v in checks.items() if v != "ok"]
+    overall = "down" if down else ("degraded" if degraded else "ok")
+    body = {"status": overall, "service": "gateway", "checks": checks, "feed": feed}
+    if down:
+        from fastapi.responses import JSONResponse as _JR
+        return _JR(status_code=503, content=body)
+    return body
 
 
 # ============================================
@@ -783,10 +823,12 @@ async def price_stream(websocket: WebSocket, token: str | None = Query(default=N
         await websocket.close(code=4008, reason="Too many concurrent connections")
         return
     await websocket.accept()
-    pubsub = redis_client.pubsub()
-    # Also subscribe to the config-reload channel so an admin spread edit is
-    # reflected on THIS live connection instantly (pub/sub), not on the 30s poll.
-    await pubsub.subscribe(PriceChannel.PRICE_CHANNEL, CONFIG_INSTRUMENTS_RELOAD_CHANNEL)
+    # Shared per-process subscription (realtime_hub): no Redis connection is
+    # held per socket. The config-reload topic lets an admin spread edit reach
+    # THIS connection promptly.
+    q_prices = realtime_hub.subscribe(PriceChannel.PRICE_CHANNEL)
+    q_cfg = realtime_hub.subscribe(CONFIG_INSTRUMENTS_RELOAD_CHANNEL)
+    reload_due_at: float | None = None
 
     # Per-user display spread (empty dict = pass-through fast path). The
     # client can pin the context to one trading account via a
@@ -816,27 +858,23 @@ async def price_stream(websocket: WebSocket, token: str | None = Query(default=N
             # Wait for the first message up to the next flush deadline,
             # then drain everything queued without blocking.
             wait = max(0.005, FLUSH_INTERVAL - (_now() - last_flush))
-            config_reloaded = False
-            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=wait)
-            while message:
-                if message["type"] == "message":
-                    ch = message.get("channel")
-                    if isinstance(ch, bytes):
-                        ch = ch.decode("utf-8", "ignore")
-                    if ch == CONFIG_INSTRUMENTS_RELOAD_CHANNEL:
-                        # Admin changed spread/instrument config — reload overrides.
-                        config_reloaded = True
-                    else:
-                        raw_tick = message["data"]
-                        try:
-                            sym = str(json.loads(raw_tick).get("symbol") or "")
-                        except (ValueError, TypeError):
-                            sym = ""
-                        if sym:
-                            pending[sym] = raw_tick
-                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0)
-
-            if config_reloaded and user_id:
+            for raw_tick in await next_messages(q_prices, wait):
+                try:
+                    sym = str(json.loads(raw_tick).get("symbol") or "")
+                except (ValueError, TypeError):
+                    sym = ""
+                if sym:
+                    pending[sym] = raw_tick
+            if not q_cfg.empty():
+                while not q_cfg.empty():
+                    q_cfg.get_nowait()
+                # Admin changed spread/instrument config. Reload after a small
+                # random delay so thousands of connections don't all query the
+                # DB in the same instant (thundering herd).
+                if user_id and reload_due_at is None:
+                    reload_due_at = _now() + _random.uniform(0.0, 3.0)
+            if reload_due_at is not None and _now() >= reload_due_at:
+                reload_due_at = None
                 overrides = await _load_user_spread_overrides(user_id, active_account_id)
                 last_override_reload = asyncio.get_event_loop().time()
 
@@ -878,8 +916,8 @@ async def price_stream(websocket: WebSocket, token: str | None = Query(default=N
         pass
     finally:
         _ws_release(user_id)
-        await pubsub.unsubscribe(PriceChannel.PRICE_CHANNEL, CONFIG_INSTRUMENTS_RELOAD_CHANNEL)
-        await pubsub.close()
+        realtime_hub.unsubscribe(PriceChannel.PRICE_CHANNEL, q_prices)
+        realtime_hub.unsubscribe(CONFIG_INSTRUMENTS_RELOAD_CHANNEL, q_cfg)
 
 
 # TradingView resolution string → aggregator timeframe name. Mirrors
@@ -917,8 +955,7 @@ async def bars_stream(websocket: WebSocket, token: str | None = Query(default=No
         await websocket.close(code=4008, reason="Too many concurrent connections")
         return
     await websocket.accept()
-    pubsub = redis_client.pubsub()
-    await pubsub.subscribe(BARS_UPDATES_CHANNEL)
+    q_bars = realtime_hub.subscribe(BARS_UPDATES_CHANNEL)
 
     # Active (SYMBOL, tf) filters for THIS client.
     subs: set[tuple[str, str]] = set()
@@ -965,24 +1002,23 @@ async def bars_stream(websocket: WebSocket, token: str | None = Query(default=No
 
             # 2) Drain the whole bar backlog, newest per (symbol, tf).
             wait = max(0.005, FLUSH_INTERVAL - (_now() - last_flush))
-            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=wait)
-            while message:
-                if message["type"] == "message" and subs:
-                    try:
-                        bar = json.loads(message["data"])
-                        key = (
-                            str(bar.get("symbol") or "").upper(),
-                            str(bar.get("timeframe") or ""),
-                        )
-                        if key in subs:
-                            prev = pending.get(key)
-                            if prev is not None and '"closed": true' in prev:
-                                # Never lose a finalised candle to coalescing.
-                                await websocket.send_text(prev)
-                            pending[key] = message["data"]
-                    except (ValueError, TypeError):
-                        pass
-                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0)
+            for payload_in in await next_messages(q_bars, wait):
+                if not subs:
+                    continue
+                try:
+                    bar = json.loads(payload_in)
+                    key = (
+                        str(bar.get("symbol") or "").upper(),
+                        str(bar.get("timeframe") or ""),
+                    )
+                    if key in subs:
+                        prev = pending.get(key)
+                        if prev is not None and '"closed": true' in prev:
+                            # Never lose a finalised candle to coalescing.
+                            await websocket.send_text(prev)
+                        pending[key] = payload_in
+                except (ValueError, TypeError):
+                    pass
 
             now = _now()
             if pending and now - last_flush >= FLUSH_INTERVAL:
@@ -998,8 +1034,7 @@ async def bars_stream(websocket: WebSocket, token: str | None = Query(default=No
         pass
     finally:
         _ws_release(user_id)
-        await pubsub.unsubscribe(BARS_UPDATES_CHANNEL)
-        await pubsub.close()
+        realtime_hub.unsubscribe(BARS_UPDATES_CHANNEL, q_bars)
 
 
 @app.websocket("/ws/algo/prices")
@@ -1039,9 +1074,8 @@ async def trade_stream(websocket: WebSocket, account_id: str, token: str | None 
     manager = websocket_manager.ConnectionManager()
     await manager.connect(account_id, websocket)
 
-    pubsub = redis_client.pubsub()
     channel = f"account:{account_id}"
-    await pubsub.subscribe(channel)
+    q_acct = realtime_hub.subscribe(channel)
 
     try:
         ping_interval = 30
@@ -1060,9 +1094,8 @@ async def trade_stream(websocket: WebSocket, account_id: str, token: str | None 
                 else:
                     await manager.handle_message(account_id, data)
 
-            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
-            if message and message["type"] == "message":
-                await websocket.send_text(message["data"])
+            for payload_out in await next_messages(q_acct, 0.1):
+                await websocket.send_text(payload_out)
 
             now = asyncio.get_event_loop().time()
             if now - last_ping >= ping_interval:
@@ -1074,8 +1107,7 @@ async def trade_stream(websocket: WebSocket, account_id: str, token: str | None 
         manager.disconnect(account_id)
     finally:
         _ws_release(_uid)
-        await pubsub.unsubscribe(channel)
-        await pubsub.close()
+        realtime_hub.unsubscribe(channel, q_acct)
 
 
 @app.websocket("/ws/admin")
@@ -1096,19 +1128,20 @@ async def admin_stream(websocket: WebSocket, token: str | None = Query(default=N
         return
 
     await websocket.accept()
-    pubsub = redis_client.pubsub()
-    await pubsub.subscribe("admin:trades", "admin:deposits", "admin:alerts")
+    admin_topics = ("admin:trades", "admin:deposits", "admin:alerts")
+    admin_qs = {t: realtime_hub.subscribe(t) for t in admin_topics}
 
     try:
         ping_interval = 30
         last_ping = asyncio.get_event_loop().time()
         while True:
-            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
-            if message and message["type"] == "message":
-                await websocket.send_text(json.dumps({
-                    "channel": message["channel"],
-                    "data": message["data"],
-                }))
+            got = False
+            for t, q in admin_qs.items():
+                while not q.empty():
+                    got = True
+                    await websocket.send_text(json.dumps({"channel": t, "data": q.get_nowait()}))
+            if not got:
+                await asyncio.sleep(0.1)
 
             now = asyncio.get_event_loop().time()
             if now - last_ping >= ping_interval:
@@ -1119,5 +1152,5 @@ async def admin_stream(websocket: WebSocket, token: str | None = Query(default=N
     except WebSocketDisconnect:
         pass
     finally:
-        await pubsub.unsubscribe("admin:trades", "admin:deposits", "admin:alerts")
-        await pubsub.close()
+        for t, q in admin_qs.items():
+            realtime_hub.unsubscribe(t, q)
