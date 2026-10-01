@@ -1475,12 +1475,18 @@ function TradingViewChartInner({
     const observers: MutationObserver[] = [];
     const roots: HTMLElement[] = [];
     const sync = () => {
-      // Only popups that actually occupy space count, so an empty holder
-      // element the library keeps around never hides the chips for good.
-      const open = roots.some((r) => Array.from(r.children).some((c) => {
-        const b = (c as HTMLElement).getBoundingClientRect();
-        return b.width > 0 && b.height > 0;
-      }));
+      // A popup is open when anything inside the root occupies space. Check
+      // descendants, not direct children: the mobile bottom sheet's outer
+      // wrapper is a 0x0 fixed div with the visible drawer inside it.
+      const open = roots.some((r) => {
+        if (!r.isConnected) return false;
+        const all = r.querySelectorAll('*');
+        for (let i = 0; i < all.length && i < 50; i++) {
+          const b = (all[i] as HTMLElement).getBoundingClientRect();
+          if (b.width > 0 && b.height > 0) return true;
+        }
+        return false;
+      });
       overlay.style.display = open ? 'none' : '';
     };
     const attach = (doc: Document | null | undefined) => {
@@ -1499,12 +1505,12 @@ function TradingViewChartInner({
       sync();
     };
     find();
-    // The library may build its popup root lazily, on the first menu open.
-    const retry = window.setInterval(find, 1000);
-    const stopRetry = window.setTimeout(() => window.clearInterval(retry), 15000);
+    // The library creates its popup root lazily, on the FIRST menu open
+    // (verified in a mobile viewport), which can be minutes after load, so
+    // keep looking for the chart's whole life. getElementById is cheap.
+    const retry = window.setInterval(find, 1500);
     return () => {
       window.clearInterval(retry);
-      window.clearTimeout(stopRetry);
       observers.forEach((o) => o.disconnect());
       overlay.style.display = '';
     };
