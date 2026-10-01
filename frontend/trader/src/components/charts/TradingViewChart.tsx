@@ -34,7 +34,7 @@ import { clsx } from 'clsx';
 import { useTradingStore, type ChartExitsDraft } from '@/stores/tradingStore';
 import { createDatafeed, type DatafeedInstrument } from '@/lib/chart/datafeed';
 import { loadChartLibrary } from '@/lib/chart/loadChartLibrary';
-import { netPnl } from '@/lib/pnl';
+import { grossPnl } from '@/lib/pnl';
 import { isCentAccount, toAccountUnits, CENT_CODE } from '@/lib/accountMoney';
 import toast from 'react-hot-toast';
 import { ChartTradeWidget } from '@/components/charts/ChartTradeWidget';
@@ -728,7 +728,7 @@ function TradingViewChartInner({
   // DRAWINGS: the entry line is locked, while TP / SL lines are UNLOCKED —
   // the library itself handles the drag (smooth, pixel-exact, touch-friendly);
   // we listen to `drawing_event` (points_changed/move) and update the label
-  // live (price + projected net P&L). When the drag settles the level lands in
+  // live (price + projected P&L). When the drag settles the level lands in
   // `chartExitsDraft` and the terminal sidebar shows the Exits review
   // (Confirm → PUT, Discard → `chartLinesResetNonce` re-syncs the lines).
   //
@@ -767,11 +767,12 @@ function TradingViewChartInner({
       return isCentAccount(acc) ? `${sign}${abs} ${CENT_CODE}` : `${sign}$${abs}`;
     };
     const pnlColor = (pnl: number) => (Math.abs(pnl) < 0.10 ? BREAKEVEN_COLOR : pnl > 0 ? PROFIT_COLOR : LOSS_COLOR);
+    // GROSS (price-only) P&L, the same figure the positions list shows; that
+    // list shows commission and swap in their own columns. The chart used to
+    // subtract commission, so one trade read +$2.00 in the list and -$0.41
+    // on the chart (client report 2026-10-01).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const netAt = (p: any, price: number) => {
-      const g = computePnlAt(p, price);
-      return Number.isFinite(g) ? g - (Number(p.commission) || 0) + (Number(p.swap) || 0) : NaN;
-    };
+    const netAt = (p: any, price: number) => computePnlAt(p, price);
     // The entry price is part of the label and the right-axis tag is OFF (see
     // the entry createLine below): TradingView shoves an axis tag up/down to
     // dodge the live-price tag, so a tag reading 83,200 floated above a line
@@ -883,7 +884,7 @@ function TradingViewChartInner({
       btn.title = title;
     };
     const refreshChips = (e: Entry) => {
-      const pnl = netPnl(e.p);
+      const pnl = grossPnl(e.p);
       e.pnlChip.textContent = fmtPnl(pnl);
       e.pnlChip.style.color = pnlColor(pnl);
       const tpOn = !!e.tp?.price, slOn = !!e.sl?.price;
@@ -1284,7 +1285,7 @@ function TradingViewChartInner({
           chips.appendChild(e.tpBtn); chips.appendChild(e.slBtn);
         }
         chips.appendChild(mkChip(String(Number(p.lots)), sideColor, '#fff', `${side} ${Number(p.lots)} lots @ ${entry.toFixed(digits)}`));
-        e.pnlChip = mkChip('…', 'rgba(10,10,10,0.92)', '#f5f5f5', 'Open P&L (net)') as HTMLSpanElement;
+        e.pnlChip = mkChip('…', 'rgba(10,10,10,0.92)', '#f5f5f5', 'Open P&L') as HTMLSpanElement;
         e.pnlChip.style.border = `1px solid ${sideColor}`;
         chips.appendChild(e.pnlChip);
         chips.appendChild(mkChip('✕', 'rgba(10,10,10,0.92)', '#f5f5f5', `Close ${side} ${Number(p.lots)} ${sym} at market`, () => closePositionFromChart(p.id)));
@@ -1462,6 +1463,52 @@ function TradingViewChartInner({
       nativeRef.current = [];
     };
   }, [chartReady, selectedSymbol, positionsKey, resetNonce, computePnlAt, closePositionFromChart]);
+
+  // TradingView menus and dialogs (timeframe list, indicators, settings) live
+  // in the library's own popup root, which sits BELOW our chip overlay. The
+  // trade chips [TP][SL][qty][P&L][x] were drawn on top of an open timeframe
+  // menu (client report 2026-10-01). Hide the overlay while any popup is open.
+  useEffect(() => {
+    const overlay = overlayRef.current;
+    const container = containerRef.current;
+    if (!chartReady || !overlay || !container) return;
+    const observers: MutationObserver[] = [];
+    const roots: HTMLElement[] = [];
+    const sync = () => {
+      // Only popups that actually occupy space count, so an empty holder
+      // element the library keeps around never hides the chips for good.
+      const open = roots.some((r) => Array.from(r.children).some((c) => {
+        const b = (c as HTMLElement).getBoundingClientRect();
+        return b.width > 0 && b.height > 0;
+      }));
+      overlay.style.display = open ? 'none' : '';
+    };
+    const attach = (doc: Document | null | undefined) => {
+      const root = doc?.getElementById('overlap-manager-root');
+      if (!root || roots.includes(root)) return;
+      roots.push(root);
+      const mo = new MutationObserver(sync);
+      mo.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
+      observers.push(mo);
+    };
+    const find = () => {
+      attach(container.ownerDocument);
+      container.querySelectorAll('iframe').forEach((f) => {
+        try { attach((f as HTMLIFrameElement).contentDocument); } catch { /* cross-origin */ }
+      });
+      sync();
+    };
+    find();
+    // The library may build its popup root lazily, on the first menu open.
+    const retry = window.setInterval(find, 1000);
+    const stopRetry = window.setTimeout(() => window.clearInterval(retry), 15000);
+    return () => {
+      window.clearInterval(retry);
+      window.clearTimeout(stopRetry);
+      observers.forEach((o) => o.disconnect());
+      overlay.style.display = '';
+    };
+  }, [chartReady]);
 
   return (
     <div className={clsx('relative w-full h-full min-h-[200px] min-w-0 bg-bg-base')} data-tv-chart-root>

@@ -34,7 +34,9 @@ function projectedNet(p: Position, price: number, contractSize: number, quoteToU
   const gross = p.side === 'buy'
     ? (price - Number(p.open_price)) * Number(p.lots) * contractSize
     : (Number(p.open_price) - price) * Number(p.lots) * contractSize;
-  return quoteToUsd(gross, price) - (Number(p.commission) || 0) + (Number(p.swap) || 0);
+  // Gross (price-only), matching the positions list; commission and swap are
+  // shown there as their own columns.
+  return quoteToUsd(gross, price);
 }
 
 export default function ChartExitsPanel() {
@@ -91,7 +93,7 @@ export default function ChartExitsPanel() {
   const rr = tpPnl != null && slPnl != null && slPnl < 0 ? tpPnl / Math.abs(slPnl) : null;
   const tradeValue = Number(p.open_price) * Number(p.lots) * cs;
   const pct = (v: number | null) => (v == null || !(tradeValue > 0) ? null : (v / tradeValue) * 100);
-  const livePnl = Number(p.profit) - (Number(p.commission) || 0) + (Number(p.swap) || 0);
+  const livePnl = Number(p.profit) || 0;
 
   // Validation mirrors the server: TP must be on the profit side, SL on the loss side.
   const tpBad = tp != null && (p.side === 'buy' ? tp <= mark : tp >= mark);
