@@ -21,7 +21,7 @@ from decimal import Decimal
 from datetime import datetime, timezone
 from collections import defaultdict
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.database import AsyncSessionLocal
@@ -58,6 +58,7 @@ class RiskEngine:
         self._running = False
         self._margin_call_sent: set[str] = set()
         self._stale_warned: dict = {}
+        self._last_margin_write: dict = {}
 
     async def start(self):
         self._running = True
@@ -76,14 +77,12 @@ class RiskEngine:
     # overflowed it and the exception aborted the WHOLE pass, so nobody could
     # be stopped out (QA 2026-09-29). Store a clamped value.
     _MARGIN_LEVEL_CAP = Decimal("999999")
-    # Accounts checked at once. Each check is ~8 ms of DB/Redis waiting, so a
-    # sequential pass over 2,214 accounts took ~18 s on staging (2026-10-02)
-    # and would take minutes at 15k users: stop-outs fired that late. Every
-    # check runs in its own transaction and locks only its own account, so
-    # running them side by side is safe. Keep it below the DB pool (20).
-    _MONITOR_CONCURRENCY = int(os.getenv("RISK_MONITOR_CONCURRENCY", "12"))
+    # Stored equity / free margin / margin level are refreshed at most this
+    # often per account (immediately once at or below the margin-call level).
+    # They are display values; every decision below uses live numbers.
+    _WRITE_EVERY_S = float(os.getenv("RISK_MARGIN_WRITE_EVERY_S", "5"))
 
-    async def _live_float(self, pos):
+    async def _live_float(self, pos, cache: dict | None = None):
         """(floating P&L at MID in account ccy, close price at the side, ok).
         ok=False when the price is missing/stale or a needed cross rate is
         unavailable: the account's equity is then UNKNOWN and nobody may be
@@ -93,7 +92,15 @@ class RiskEngine:
         inst = pos.instrument
         if inst is None:
             return Decimal("0"), None, False
-        raw = await redis_client.get(PriceChannel.tick_key(inst.symbol))
+        # `cache` (one margin pass) reads each symbol's tick and cross rate
+        # once instead of once per position. Stop-outs pass none: fresh reads.
+        tkey = ("tick", inst.symbol)
+        if cache is not None and tkey in cache:
+            raw = cache[tkey]
+        else:
+            raw = await redis_client.get(PriceChannel.tick_key(inst.symbol))
+            if cache is not None:
+                cache[tkey] = raw
         if not raw:
             return Decimal("0"), None, False
         tick = json.loads(raw)
@@ -114,7 +121,13 @@ class RiskEngine:
         is_buy = pos.side == OrderSide.BUY or str(getattr(pos.side, "value", pos.side)).lower() == "buy"
         cs = inst.contract_size or Decimal("100000")
         raw_pnl = (mid - pos.open_price) * pos.lots * cs if is_buy else (pos.open_price - mid) * pos.lots * cs
-        cross = await cross_rate_for(inst)
+        ckey = ("cross", inst.id)
+        if cache is not None and ckey in cache:
+            cross = cache[ckey]
+        else:
+            cross = await cross_rate_for(inst)
+            if cache is not None:
+                cache[ckey] = cross
         if cross is None and _needs_cross_rate(inst):
             return Decimal("0"), None, False
         pnl = quote_to_account_pnl(
@@ -124,119 +137,146 @@ class RiskEngine:
         return pnl, (bid if is_buy else ask), True
 
     async def _margin_monitor(self):
-        """Monitor margin levels; each account in its OWN short transaction.
+        """Evaluate every margin account once a second and act on breaches.
 
-        QA 2026-09-29: the monitor updated every account inside one
-        transaction, so a deadlock or one bad account rolled back the whole
-        pass and stop-outs were skipped for everyone. Now a failure affects
-        one account for one pass."""
+        One pass = one read of all margin accounts and their open positions
+        (instruments loaded in one batch), prices read once per symbol, and the
+        level computed in memory. Each stop-out then runs in its OWN locked
+        transaction on fresh values (_execute_stop_out), so one failure affects
+        one account. Before 2026-10-02 every account cost ~4 queries and a
+        commit; a pass over 2,214 staging accounts took 14-18 s, so stop-outs
+        fired that late."""
         logger.info("Margin monitor started")
         from packages.common.src.settings_store import get_float_setting
         while self._running:
             try:
-                async with AsyncSessionLocal() as db:
-                    ids = (await db.execute(
-                        select(TradingAccount.id).where(
-                            TradingAccount.margin_used > 0,
-                            TradingAccount.is_active == True,  # noqa: E712
-                        )
-                    )).scalars().all()
                 stop_out = Decimal(str(await get_float_setting("stop_out_level", settings.STOP_OUT_LEVEL)))
                 margin_call = Decimal(str(await get_float_setting("margin_call_level", settings.MARGIN_CALL_LEVEL)))
-                sem = asyncio.Semaphore(self._MONITOR_CONCURRENCY)
-
-                async def _one(account_id):
-                    async with sem:
-                        try:
-                            await self._check_account(account_id, stop_out, margin_call)
-                        except Exception as e:
-                            logger.error("Margin check failed for account %s: %s", account_id, e, exc_info=True)
-
                 started = time.monotonic()
-                await asyncio.gather(*(_one(a) for a in ids))
+                n = await self._margin_pass(stop_out, margin_call)
                 took = time.monotonic() - started
-                if took > 5:
-                    logger.warning("Margin pass over %d accounts took %.1fs", len(ids), took)
+                if took > 3:
+                    logger.warning("Margin pass over %d accounts took %.1fs", n, took)
             except Exception as e:
-                logger.error(f"Margin monitor error: {e}")
+                logger.error("Margin monitor error: %s", e, exc_info=True)
 
             await asyncio.sleep(1)
 
-    async def _check_account(self, account_id, stop_out: Decimal, margin_call: Decimal) -> None:
+    async def _evaluate(self, account, positions, cache: dict):
+        """(level, equity, used, known) for an account from live prices.
+        known=False when any price or cross rate is missing/stale."""
+        unrealized = Decimal("0")
+        known = True
+        for pos in positions:
+            pnl, _px, ok = await self._live_float(pos, cache)
+            if not ok:
+                known = False
+                continue
+            unrealized += pnl
+        equity = (account.balance or Decimal("0")) + (account.credit or Decimal("0")) + unrealized
+        used = account.margin_used or Decimal("0")
+        level = (equity / used * 100) if used > 0 else self._MARGIN_LEVEL_CAP
+        level = max(min(level, self._MARGIN_LEVEL_CAP), -self._MARGIN_LEVEL_CAP)
+        return level, equity, used, known
+
+    async def _margin_pass(self, stop_out: Decimal, margin_call: Decimal) -> int:
         async with AsyncSessionLocal() as db:
-            account = (await db.execute(
-                select(TradingAccount).where(TradingAccount.id == account_id)
-            )).scalar_one_or_none()
-            if account is None:
-                return
-            positions = (await db.execute(
-                select(Position).where(
-                    Position.account_id == account.id,
-                    Position.status == PositionStatus.OPEN,
+            accounts = (await db.execute(
+                select(TradingAccount).where(
+                    TradingAccount.margin_used > 0,
+                    TradingAccount.is_active == True,  # noqa: E712
                 )
             )).scalars().all()
-            if not positions:
-                return
+            positions = []
+            ids = [a.id for a in accounts]
+            for k in range(0, len(ids), 5000):
+                positions.extend((await db.execute(
+                    select(Position).where(
+                        Position.status == PositionStatus.OPEN,
+                        Position.account_id.in_(ids[k:k + 5000]),
+                    )
+                )).scalars().all())
+        by_account = defaultdict(list)
+        for pos in positions:
+            by_account[pos.account_id].append(pos)
 
-            unrealized = Decimal("0")
-            known = True
-            for pos in positions:
-                pnl, _px, ok = await self._live_float(pos)
-                if not ok:
-                    known = False
-                    continue
-                unrealized += pnl
-
-            equity = (account.balance or Decimal("0")) + (account.credit or Decimal("0")) + unrealized
-            used = account.margin_used or Decimal("0")
-            level = (equity / used * 100) if used > 0 else self._MARGIN_LEVEL_CAP
-            level = max(min(level, self._MARGIN_LEVEL_CAP), -self._MARGIN_LEVEL_CAP)
-
+        cache: dict = {}
+        now = time.monotonic()
+        updates, stop_outs, calls = [], [], []
+        for account in accounts:
+            plist = by_account.get(account.id)
+            if not plist:
+                continue
+            level, equity, used, known = await self._evaluate(account, plist, cache)
             if not known:
                 # Equity unknown (stale/missing price): never act on it. Warn at
-                # most every 5 minutes per account (a dead feed would otherwise
-                # log once per second per account).
-                import time as _t
+                # most every 5 minutes per account.
                 last = self._stale_warned.get(account.id, 0.0)
-                if _t.monotonic() - last > 300:
-                    self._stale_warned[account.id] = _t.monotonic()
+                if now - last > 300:
+                    self._stale_warned[account.id] = now
                     logger.warning("Margin check skipped for %s: a price is stale or missing", account.account_number)
-                return
-
-            account.equity = equity
-            account.free_margin = equity - used
-            account.margin_level = level
-            await db.commit()
-
+                continue
+            free = equity - used
+            changed = (
+                round(Decimal(account.equity or 0), 2) != round(equity, 2)
+                or round(Decimal(account.margin_level or 0), 2) != round(level, 2)
+            )
+            due = now - self._last_margin_write.get(account.id, 0.0) >= self._WRITE_EVERY_S
+            if changed and (due or level <= margin_call):
+                updates.append({"id": account.id, "equity": equity, "free_margin": free, "margin_level": level})
+                self._last_margin_write[account.id] = now
             if level <= stop_out:
-                await self._execute_stop_out(account.id, stop_out)
+                stop_outs.append(account.id)
             elif level <= margin_call:
-                acct_key = str(account.id)
-                if acct_key not in self._margin_call_sent:
-                    self._margin_call_sent.add(acct_key)
-                    async with AsyncSessionLocal() as ndb:
-                        ndb.add(Notification(
-                            user_id=account.user_id,
-                            title="Margin Call Warning",
-                            message=f"Your margin level is at {level:.1f}%. Please add funds or close positions.",
-                            type="margin_call",
-                        ))
-                        await ndb.commit()
-                        await redis_client.publish(f"account:{account.id}", json.dumps({
-                            "type": "margin_call",
-                            "margin_level": str(level),
-                        }))
-                        if not bool(account.is_demo):
-                            await self._send_margin_call_email(
-                                account=account,
-                                margin_level=level,
-                                equity=equity,
-                                used_margin=used,
-                                free_margin=account.free_margin,
-                                db=ndb,
-                            )
+                calls.append((account, level, equity, used, free))
             else:
                 self._margin_call_sent.discard(str(account.id))
+
+        if updates:
+            # Display columns only (never balance); one batched UPDATE by id.
+            async with AsyncSessionLocal() as db:
+                await db.execute(update(TradingAccount), updates)
+                await db.commit()
+
+        for account_id in stop_outs:
+            try:
+                await self._execute_stop_out(account_id, stop_out)
+            except Exception as e:
+                logger.error("Stop-out failed for account %s: %s", account_id, e, exc_info=True)
+
+        for account, level, equity, used, free in calls:
+            try:
+                await self._margin_call(account, level, equity, used, free)
+            except Exception as e:
+                logger.error("Margin call failed for account %s: %s", account.id, e, exc_info=True)
+        return len(accounts)
+
+    async def _margin_call(self, account, level, equity, used, free) -> None:
+        acct_key = str(account.id)
+        if acct_key in self._margin_call_sent:
+            return
+        self._margin_call_sent.add(acct_key)
+        async with AsyncSessionLocal() as ndb:
+            ndb.add(Notification(
+                user_id=account.user_id,
+                title="Margin Call Warning",
+                message=f"Your margin level is at {level:.1f}%. Please add funds or close positions.",
+                type="margin_call",
+            ))
+            await ndb.commit()
+            await redis_client.publish(f"account:{account.id}", json.dumps({
+                "type": "margin_call",
+                "margin_level": str(level),
+            }))
+            if not bool(account.is_demo):
+                await self._send_margin_call_email(
+                    account=account,
+                    margin_level=level,
+                    equity=equity,
+                    used_margin=used,
+                    free_margin=free,
+                    db=ndb,
+                )
 
     async def _execute_stop_out(self, account_id, stop_out: Decimal) -> None:
         """Close positions, LARGEST FLOATING LOSS first, until the margin level
