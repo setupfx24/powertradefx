@@ -249,12 +249,6 @@ async def require_full_session(current_user: dict = Depends(get_current_user)) -
     return current_user
 
 
-async def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
-    if current_user["role"] not in ("admin", "super_admin"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-    return current_user
-
-
 async def require_onboarded(
     current_user: dict = Depends(get_current_user),
 ) -> dict:

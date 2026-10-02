@@ -326,34 +326,6 @@ async def resolve_user_quote(
     return symmetric_quote_from_mid(mid, spread_value, spread_type, pip, digits, price_impact)
 
 
-def apply_spread_and_impact_to_prices(
-    bid: Decimal,
-    ask: Decimal,
-    side: str,
-    spread_value: Decimal,
-    spread_type: str,
-    pip_size: Decimal,
-    price_impact: Decimal,
-) -> Tuple[Decimal, Decimal]:
-    """Widen the active side by spread markup + adverse price impact."""
-    bid_o, ask_o = bid, ask
-    st = (spread_type or "pips").lower()
-    mid = (bid + ask) / Decimal("2")
-
-    if st == "percentage":
-        adj = mid * (spread_value / Decimal("100"))
-    else:
-        # pips, fixed, variable → extra distance in price units
-        adj = spread_value * pip_size
-
-    imp = price_impact or Decimal("0")
-    if side == "buy":
-        ask_o = ask + adj + imp
-    else:
-        bid_o = bid - adj - imp
-    return bid_o, ask_o
-
-
 async def resolve_commission(
     db: AsyncSession,
     instrument: Instrument,

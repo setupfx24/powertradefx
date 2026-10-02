@@ -982,23 +982,6 @@ async def bootstrap_session(access_token: str, request: Request, db: AsyncSessio
 
 # ─── Forgot / Reset password ─────────────────────────────────────────────
 
-def _reset_link_base(request: Request) -> str:
-    """Base URL for the password-reset link in the email.
-
-    Prefer the Origin the user is actually on (forwarded by the Next proxy
-    and already validated by assert_same_origin in the caller) so the link
-    is ALWAYS reachable — even if TRADER_APP_URL is unset and still sitting
-    on its `http://localhost:3000` default, which would otherwise ship a
-    dead localhost link to real users. Only trust the Origin when it's on
-    our allow-list (host-header-injection guard); otherwise fall back to the
-    configured TRADER_APP_URL, then a safe production host."""
-    origin = (request.headers.get("origin") or "").strip().rstrip("/")
-    allowed = _allowed_origins()
-    if origin.startswith("http") and (not allowed or origin in allowed):
-        return origin
-    cfg = (get_settings().TRADER_APP_URL or "").strip().rstrip("/")
-    return cfg or "https://powertradefx.com"
-
 
 async def forgot_password(email: str, request: Request, db: AsyncSession) -> dict:
     await assert_same_origin_or_tenant(request, db)

@@ -298,8 +298,9 @@ def require_permission(permission: str):
         # C-ADMIN-2: no "role=admin without an ACTIVE employees row = full
         # admin" fallthrough. Such a user now gets 403; access requires an
         # active employees row that grants the permission (or super_admin,
-        # handled above). See docs/audit/REMEDIATION.md for the query that
-        # finds any role='admin' users left without an employees row.
+        # handled above). Admins left without an active employees row:
+        #   SELECT u.id, u.email FROM users u LEFT JOIN employees e
+        #   ON e.user_id = u.id AND e.is_active WHERE u.role = 'admin' AND e.id IS NULL;
         if employee is not None:
             role_perms = EMPLOYEE_ROLE_PERMISSIONS.get(employee.role, set())
             extra = set(employee.extra_permissions or [])

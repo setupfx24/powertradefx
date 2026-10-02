@@ -25,10 +25,6 @@ PUBLIC_RPC = "https://eth.llamarpc.com"  # last-resort free fallback
 TRANSFER_SELECTOR = "0xa9059cbb"
 
 
-def _strip_0x(s: str) -> str:
-    return s[2:] if s.startswith("0x") else s
-
-
 def _decode_transfer(input_data: str) -> Optional[tuple[str, int]]:
     """Decode `transfer(to, value)` calldata. Returns (to_address, value_uint)
     or None if the input doesn't look like a transfer call."""

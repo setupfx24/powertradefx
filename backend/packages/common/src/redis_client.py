@@ -64,10 +64,6 @@ class PriceChannel:
         return f"{PriceChannel.PRICE_CHANNEL}:{symbol}"
 
 
-async def get_redis():
-    return redis_client
-
-
 async def publish_price(
     symbol: str,
     bid: float,

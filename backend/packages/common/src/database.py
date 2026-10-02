@@ -52,9 +52,3 @@ async def get_db() -> AsyncSession:
             await session.close()
 
 
-async def get_timescale_db() -> AsyncSession:
-    async with TimescaleSessionLocal() as session:
-        try:
-            yield session
-        finally:
-            await session.close()

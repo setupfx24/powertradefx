@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .models import (
-    Instrument, InstrumentConfig, Order, OrderSide, OrderStatus,
+    Instrument, Order, OrderSide, OrderStatus,
     Position, PositionStatus, TradingAccount,
 )
 from .redis_client import redis_client, price_redis, PriceChannel, is_tick_stale
@@ -121,14 +121,6 @@ async def get_instrument(symbol: str, db: AsyncSession) -> Instrument:
     if not instrument:
         raise TradingServiceError(f"Instrument {symbol} not found", 404)
     return instrument
-
-
-async def get_instrument_config(instrument_id: UUID, db: AsyncSession) -> InstrumentConfig | None:
-    """Load instrument-specific config (spread, commission, etc.)."""
-    result = await db.execute(
-        select(InstrumentConfig).where(InstrumentConfig.instrument_id == instrument_id)
-    )
-    return result.scalar_one_or_none()
 
 
 # ─── Margin ───────────────────────────────────────────────────────────────
@@ -242,12 +234,6 @@ async def recompute_account_margin(db: AsyncSession, account: TradingAccount) ->
     account.equity = Decimal(str(account.balance or 0)) + Decimal(str(account.credit or 0))
     account.free_margin = account.equity - total
     return total
-
-
-def calc_free_margin(account: TradingAccount) -> Decimal:
-    """Return the free margin available for new trades."""
-    equity = account.balance + account.credit
-    return equity - account.margin_used
 
 
 # ─── P&L ──────────────────────────────────────────────────────────────────

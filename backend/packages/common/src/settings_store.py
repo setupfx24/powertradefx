@@ -69,8 +69,3 @@ async def get_int_setting(key: str, default: int = 0) -> int:
         return default
 
 
-async def invalidate_cache():
-    try:
-        await redis_client.delete(CACHE_KEY)
-    except Exception:
-        pass

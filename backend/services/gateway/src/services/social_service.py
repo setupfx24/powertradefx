@@ -17,7 +17,7 @@ from packages.common.src.models import (
 )
 from packages.common.src.copy_fees import apply_hwm_fee
 from packages.common.src.row_locks import lock_user, lock_account, lock_position
-from packages.common.src.redis_client import redis_client, is_tick_stale
+from packages.common.src.redis_client import is_tick_stale
 from packages.common.src.price_cache import price_cache
 from packages.common.src.trading_service import calc_position_pnl, cross_rate_for
 
@@ -71,13 +71,6 @@ def _gen_investor_account_number(copy_type: str = "signal") -> str:
     if copy_type in ("pamm", "mam"):
         prefix = "IF"  # Investment Fund
     return f"{prefix}{secrets.randbelow(90000000) + 10000000}"
-
-
-async def _calculate_live_return(account_id: UUID) -> dict:
-    equity_data = await redis_client.get(f"account_equity:{account_id}")
-    if equity_data:
-        return json.loads(equity_data)
-    return {}
 
 
 async def list_leaderboard(

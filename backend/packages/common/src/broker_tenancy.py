@@ -310,11 +310,6 @@ async def active_tenant_hosts(db: AsyncSession) -> set[str]:
     return hosts
 
 
-def invalidate_tenant_hosts_cache() -> None:
-    global _tenant_hosts_cache_at
-    _tenant_hosts_cache_at = 0.0
-
-
 # ── Brand / owner lookups ────────────────────────────────────────────────
 
 async def get_broker_profile(db: AsyncSession, user_id: uuid.UUID) -> BrokerProfile | None:

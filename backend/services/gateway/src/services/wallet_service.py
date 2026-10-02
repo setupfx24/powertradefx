@@ -362,23 +362,6 @@ async def _store_wallet_upload(kind: str, user_id, safe_name: str, content: byte
     return str(out_path.resolve())
 
 
-async def _get_user_account_ids(user_id, db: AsyncSession) -> list[UUID]:
-    result = await db.execute(
-        select(TradingAccount.id).where(TradingAccount.user_id == user_id)
-    )
-    return [row[0] for row in result.all()]
-
-
-async def _get_live_account_ids(user_id, db: AsyncSession) -> list[UUID]:
-    result = await db.execute(
-        select(TradingAccount.id).where(
-            TradingAccount.user_id == user_id,
-            TradingAccount.is_demo == False,
-        )
-    )
-    return [row[0] for row in result.all()]
-
-
 async def _get_bank_for_tier(amount: Decimal, db: AsyncSession) -> BankAccount | None:
     """Pick the active bank account whose tier brackets this amount,
     rotating through the pool by `last_used_at` so no single account
@@ -2157,21 +2140,6 @@ async def get_deposit_bank_details(amount: Decimal | None, db: AsyncSession) -> 
             resp["wallet_address"] = bank.wallet_address
 
     return resp
-
-
-async def get_bank_info(amount: Decimal, db: AsyncSession) -> dict:
-    bank = await _get_bank_for_tier(amount, db)
-    if not bank:
-        raise HTTPException(status_code=404, detail="No bank account available for this amount")
-    await db.commit()
-    return {
-        "bank_name": bank.bank_name,
-        "account_name": bank.account_name,
-        "account_number": bank.account_number,
-        "ifsc_code": bank.ifsc_code,
-        "upi_id": bank.upi_id,
-        "qr_code_url": bank.qr_code_url,
-    }
 
 
 async def create_razorpay_order_on_lb_deposit(

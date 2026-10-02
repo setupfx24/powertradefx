@@ -291,35 +291,6 @@ async def user_quote_for_position(
     return bid, ask
 
 
-async def account_unrealized_pnl(db: AsyncSession, account, user_id: UUID) -> tuple[Decimal, int]:
-    """Live unrealised P&L of an account's OPEN positions, valued at the same
-    per-user quote a close would realise at. Returns (pnl, open_count)."""
-    rows = (await db.execute(
-        select(Position).where(Position.account_id == account.id, Position.status == "open")
-    )).scalars().all()
-    total = Decimal("0")
-    cache: dict = {}
-    for pos in rows:
-        inst = getattr(pos, "instrument", None)
-        if inst is None:
-            continue
-        raw = await price_cache.get(inst.symbol)
-        if not raw:
-            continue
-        try:
-            tick = json.loads(raw)
-            bid, ask = Decimal(str(tick["bid"])), Decimal(str(tick["ask"]))
-        except (ValueError, KeyError, TypeError):
-            continue
-        bid, ask = await user_quote_for_position(db, pos, bid, ask, user_id=user_id, account=account, _cache=cache)
-        cp = bid if side_val(pos.side) == "buy" else ask
-        total += await calc_pnl_live(
-            pos.side, pos.open_price, cp, pos.lots,
-            inst.contract_size or Decimal("100000"), instrument=inst,
-        )
-    return total, len(rows)
-
-
 async def _settle_follower_fee_if_copy(db: AsyncSession, pos, gross_profit, account, *, final: bool) -> None:
     """A follower closing a COPIED position himself pays the same high-water-
     mark performance fee as when the master's close is mirrored (QA
@@ -498,7 +469,6 @@ async def place_order(
             account_group_id=account.account_group_id,
         )
 
-        contract_size = instrument.contract_size or Decimal("100000")
         required_margin = await margin_for(req.lots, fill_price, instrument, account.leverage)
 
         unrealized_pnl = Decimal("0")

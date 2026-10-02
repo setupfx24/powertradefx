@@ -634,52 +634,6 @@ class MLMConfigIn(BaseModel):
     mlm_distribution: list
 
 
-class MasterAccountOut(BaseModel):
-    id: str
-    user_id: str
-    account_id: str
-    status: str
-    master_type: Optional[str] = None
-    performance_fee_pct: float
-    management_fee_pct: float
-    admin_commission_pct: float
-    max_investors: int
-    description: Optional[str] = None
-    min_investment: float
-    total_return_pct: float
-    max_drawdown_pct: float
-    sharpe_ratio: float
-    followers_count: int
-    created_at: Optional[datetime] = None
-    user_email: Optional[str] = None
-    user_name: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-
-class AnalyticsDashboard(BaseModel):
-    total_revenue: float = 0
-    total_commission: float = 0
-    total_swap: float = 0
-    total_deposits: float = 0
-    total_withdrawals: float = 0
-    net_deposits: float = 0
-    profitable_users_count: int = 0
-    losing_users_count: int = 0
-    total_open_positions: int = 0
-    total_exposure: float = 0
-
-
-class ExposureItem(BaseModel):
-    instrument_symbol: str
-    net_lots: float
-    buy_lots: float
-    sell_lots: float
-    buy_positions: int
-    sell_positions: int
-
-
 class BonusOfferIn(BaseModel):
     name: str
     bonus_type: Optional[str] = None
@@ -830,20 +784,6 @@ class EmployeeUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
-class EmployeeOut(BaseModel):
-    id: str
-    user_id: str
-    role: str
-    is_active: bool
-    created_at: Optional[datetime] = None
-    email: Optional[str] = None
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-
 class AuditLogOut(BaseModel):
     id: str
     admin_id: str
@@ -902,20 +842,6 @@ class SystemSettingOut(BaseModel):
 
 class SystemSettingUpdate(BaseModel):
     settings: dict[str, Any]
-
-
-class TransactionOut(BaseModel):
-    id: str
-    user_id: str
-    account_id: Optional[str] = None
-    type: str
-    amount: float
-    balance_after: Optional[float] = None
-    description: Optional[str] = None
-    created_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
 
 
 class AdminTransactionOut(BaseModel):
