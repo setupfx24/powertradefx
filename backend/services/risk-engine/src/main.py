@@ -15,6 +15,8 @@ could be charged by both engines in one night — so it was removed.
 import asyncio
 import json
 import logging
+import os
+import time
 from decimal import Decimal
 from datetime import datetime, timezone
 from collections import defaultdict
@@ -74,6 +76,12 @@ class RiskEngine:
     # overflowed it and the exception aborted the WHOLE pass, so nobody could
     # be stopped out (QA 2026-09-29). Store a clamped value.
     _MARGIN_LEVEL_CAP = Decimal("999999")
+    # Accounts checked at once. Each check is ~8 ms of DB/Redis waiting, so a
+    # sequential pass over 2,214 accounts took ~18 s on staging (2026-10-02)
+    # and would take minutes at 15k users: stop-outs fired that late. Every
+    # check runs in its own transaction and locks only its own account, so
+    # running them side by side is safe. Keep it below the DB pool (20).
+    _MONITOR_CONCURRENCY = int(os.getenv("RISK_MONITOR_CONCURRENCY", "12"))
 
     async def _live_float(self, pos):
         """(floating P&L at MID in account ccy, close price at the side, ok).
@@ -135,11 +143,20 @@ class RiskEngine:
                     )).scalars().all()
                 stop_out = Decimal(str(await get_float_setting("stop_out_level", settings.STOP_OUT_LEVEL)))
                 margin_call = Decimal(str(await get_float_setting("margin_call_level", settings.MARGIN_CALL_LEVEL)))
-                for account_id in ids:
-                    try:
-                        await self._check_account(account_id, stop_out, margin_call)
-                    except Exception as e:
-                        logger.error("Margin check failed for account %s: %s", account_id, e, exc_info=True)
+                sem = asyncio.Semaphore(self._MONITOR_CONCURRENCY)
+
+                async def _one(account_id):
+                    async with sem:
+                        try:
+                            await self._check_account(account_id, stop_out, margin_call)
+                        except Exception as e:
+                            logger.error("Margin check failed for account %s: %s", account_id, e, exc_info=True)
+
+                started = time.monotonic()
+                await asyncio.gather(*(_one(a) for a in ids))
+                took = time.monotonic() - started
+                if took > 5:
+                    logger.warning("Margin pass over %d accounts took %.1fs", len(ids), took)
             except Exception as e:
                 logger.error(f"Margin monitor error: {e}")
 
