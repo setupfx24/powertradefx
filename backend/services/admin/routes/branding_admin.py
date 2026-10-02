@@ -14,7 +14,6 @@ Brokers page).
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,9 +51,8 @@ async def serve_logo(filename: str):
         path = safe_join_under_base(svc._logo_dir(), filename)
     except PathTraversalError:
         raise HTTPException(status_code=400, detail="Invalid filename")
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Not found")
-    return FileResponse(path)
+    from packages.common.src import object_storage
+    return await object_storage.serve_public_media("branding", path.name, path)
 
 
 @router.get("/me")

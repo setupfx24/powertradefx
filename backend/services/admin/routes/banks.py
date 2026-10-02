@@ -58,7 +58,7 @@ async def upload_qr_code(
 
 @router.get("/qr/{filename}")
 async def serve_qr_code(filename: str):
-    return bank_service.serve_qr_code(filename=filename)
+    return await bank_service.serve_qr_code(filename=filename)
 
 
 @router.delete("/{bank_id}")

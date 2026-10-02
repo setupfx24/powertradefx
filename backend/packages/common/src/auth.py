@@ -170,6 +170,11 @@ async def invalidate_session_cache(sid) -> None:
         pass
 
 
+from time import monotonic as _monotonic
+
+_presence_last: dict = {}
+
+
 async def get_current_user(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
@@ -203,11 +208,18 @@ async def get_current_user(
     # The AuthProvider in the trader app also fires a /auth/me heartbeat
     # every 60s as a safety net for pages that don't poll API on their own.
     # Fire-and-forget so a Redis blip never breaks an authenticated request.
-    try:
-        from .redis_client import redis_client
-        await redis_client.set(f"presence:user:{user_id}", "1", ex=300)
-    except Exception:
-        pass
+    # Refreshed at most once a minute per process: the key lives 5 minutes,
+    # so a Redis write on EVERY request bought nothing but load.
+    now_m = _monotonic()
+    if now_m - _presence_last.get(user_id, 0.0) >= 60.0:
+        if len(_presence_last) > 50_000:
+            _presence_last.clear()
+        _presence_last[user_id] = now_m
+        try:
+            from .redis_client import redis_client
+            await redis_client.set(f"presence:user:{user_id}", "1", ex=300)
+        except Exception:
+            pass
     return {
         "user_id": user_id,
         "role": payload["role"],

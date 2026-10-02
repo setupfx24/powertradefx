@@ -5,7 +5,6 @@ import uuid
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
-from fastapi.responses import FileResponse
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -136,15 +135,25 @@ async def upload_qr_code(file: UploadFile) -> dict:
     ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else "png"
     if ext not in ("png", "jpg", "jpeg", "webp", "gif"):
         ext = "png"
+    # Magic-byte check: the browser-declared Content-Type is client-controlled.
+    from packages.common.src.file_validation import validate_upload
+    try:
+        canonical = validate_upload(contents, "." + ext, allowed_extensions={".png", ".jpg", ".jpeg", ".webp", ".gif"}, label="image")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    ext = canonical.lstrip(".")
 
     filename = f"{uuid.uuid4().hex}.{ext}"
-    filepath = UPLOAD_DIR / filename
-    filepath.write_bytes(contents)
+    from packages.common.src import object_storage
+    try:
+        await object_storage.save_public_media("bank_qr", filename, contents, UPLOAD_DIR)
+    except object_storage.StorageError:
+        raise HTTPException(status_code=503, detail="File storage is temporarily unavailable")
 
     return {"url": f"/banks/qr/{filename}", "filename": filename}
 
 
-def serve_qr_code(filename: str) -> FileResponse:
+async def serve_qr_code(filename: str):
     fn = Path(filename or "").name
     if not fn or fn != filename or ".." in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
@@ -154,9 +163,8 @@ def serve_qr_code(filename: str) -> FileResponse:
         filepath = safe_join_under_base(UPLOAD_DIR, fn)
     except PathTraversalError:
         raise HTTPException(status_code=400, detail="Invalid filename")
-    if not filepath.exists() or not filepath.is_file():
-        raise HTTPException(status_code=404, detail="QR code not found")
-    return FileResponse(filepath)
+    from packages.common.src import object_storage
+    return await object_storage.serve_public_media("bank_qr", fn, filepath)
 
 
 async def delete_bank_account(
@@ -187,10 +195,10 @@ async def delete_bank_account(
             fp = UPLOAD_DIR / fname
             try:
                 fp.resolve().relative_to(UPLOAD_DIR.resolve())
-                if fp.is_file():
-                    fp.unlink()
             except (OSError, ValueError):
-                pass
+                fp = None
+            from packages.common.src import object_storage
+            await object_storage.delete_public_media("bank_qr", fname, fp)
 
     await db.execute(delete(BankAccount).where(BankAccount.id == bank_id))
 

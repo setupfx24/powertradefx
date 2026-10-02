@@ -23,6 +23,13 @@ async def get_kyc_file(document_id: uuid.UUID, db: AsyncSession) -> FileResponse
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
+    from packages.common.src import object_storage
+    if object_storage.is_ref(doc.file_url):
+        key = object_storage.key_from_ref(doc.file_url, required_prefix=f"kyc/{doc.user_id}/")
+        if key is None:
+            raise HTTPException(status_code=404, detail="Document not found")
+        return await object_storage.response(key, filename=key.rsplit("/", 1)[-1])
+
     file_path = Path(doc.file_url)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found on server")

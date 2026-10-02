@@ -16,7 +16,7 @@ router = APIRouter(prefix="/banners", tags=["Banners"])
 @router.get("/media/{filename}")
 async def serve_banner_media(filename: str):
     """Public image URL for admin UI and consistency; trader uses gateway copy."""
-    return banner_service.serve_banner_media(filename=filename)
+    return await banner_service.serve_banner_media(filename=filename)
 
 
 @router.post("/upload")

@@ -325,6 +325,7 @@ async def resend_pending_otp(
     *,
     email: str,
     request: Request,
+    db: AsyncSession,
 ) -> dict:
     """Re-issue the OTP for an in-progress pending registration.
 

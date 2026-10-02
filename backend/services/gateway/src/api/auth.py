@@ -124,11 +124,12 @@ async def register_verify(
 async def register_resend(
     req: _RegisterResendRequest,
     request: Request,
+    db: AsyncSession = Depends(get_db),
 ):
     """Rotate the OTP for an in-progress pending registration without
     re-collecting the form fields. Tighter rate limit than start."""
     return await pending_registration_service.resend_pending_otp(
-        email=req.email, request=request,
+        email=req.email, request=request, db=db,
     )
 
 

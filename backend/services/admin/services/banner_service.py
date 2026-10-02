@@ -6,7 +6,6 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import HTTPException, UploadFile
-from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,7 +36,7 @@ def _safe_media_filename(filename: str) -> str:
     return name
 
 
-def _unlink_uploaded_file(image_url: str | None) -> None:
+async def _unlink_uploaded_file(image_url: str | None) -> None:
     if not image_url or MEDIA_PATH_PREFIX not in image_url:
         return
     m = re.search(rf"{re.escape(MEDIA_PATH_PREFIX)}/([^/?#]+)$", image_url)
@@ -51,22 +50,18 @@ def _unlink_uploaded_file(image_url: str | None) -> None:
         path = safe_join_under_base(UPLOAD_DIR, fn)
     except PathTraversalError:
         return
-    if path.is_file():
-        try:
-            path.unlink()
-        except OSError:
-            pass
+    from packages.common.src import object_storage
+    await object_storage.delete_public_media("banners", fn, path)
 
 
-def serve_banner_media(filename: str) -> FileResponse:
+async def serve_banner_media(filename: str):
     fn = _safe_media_filename(filename)
     try:
         path = safe_join_under_base(UPLOAD_DIR, fn)
     except PathTraversalError:
         raise HTTPException(status_code=400, detail="Invalid filename")
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Not found")
-    return FileResponse(path)
+    from packages.common.src import object_storage
+    return await object_storage.serve_public_media("banners", fn, path)
 
 
 async def upload_banner_image(file: UploadFile) -> dict:
@@ -81,10 +76,20 @@ async def upload_banner_image(file: UploadFile) -> dict:
     ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else "png"
     if ext not in ("png", "jpg", "jpeg", "webp", "gif"):
         ext = "png"
+    # Magic-byte check: the browser-declared Content-Type is client-controlled.
+    from packages.common.src.file_validation import validate_upload
+    try:
+        canonical = validate_upload(contents, "." + ext, allowed_extensions={".png", ".jpg", ".jpeg", ".webp", ".gif"}, label="image")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    ext = canonical.lstrip(".")
 
     out_name = f"{uuid.uuid4().hex}.{ext}"
-    out_path = UPLOAD_DIR / out_name
-    out_path.write_bytes(contents)
+    from packages.common.src import object_storage
+    try:
+        await object_storage.save_public_media("banners", out_name, contents, UPLOAD_DIR)
+    except object_storage.StorageError:
+        raise HTTPException(status_code=503, detail="File storage is temporarily unavailable")
 
     return {"url": f"{MEDIA_PATH_PREFIX}/{out_name}", "filename": out_name}
 
@@ -162,7 +167,7 @@ async def update_banner(
     old_image = banner.image_url
 
     if body.image_url != old_image:
-        _unlink_uploaded_file(old_image)
+        await _unlink_uploaded_file(old_image)
 
     banner.title = body.title
     banner.image_url = body.image_url
@@ -196,7 +201,7 @@ async def delete_banner(
     if not banner:
         raise HTTPException(status_code=404, detail="Banner not found")
 
-    _unlink_uploaded_file(banner.image_url)
+    await _unlink_uploaded_file(banner.image_url)
     await db.delete(banner)
 
     await write_audit_log(

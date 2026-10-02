@@ -913,6 +913,18 @@ def _safe_upload_path(stored: str) -> Path:
     return p
 
 
+async def _serve_stored(stored: str):
+    """Serve a deposit proof / payout QR from the bucket (``obj:`` reference,
+    confined to ``wallet/``) or from disk (legacy absolute path)."""
+    from packages.common.src import object_storage
+    if object_storage.is_ref(stored):
+        key = object_storage.key_from_ref(stored, required_prefix="wallet/")
+        if key is None or Path(key).suffix.lower() not in _DOWNLOAD_MEDIA_TYPES:
+            raise HTTPException(status_code=404, detail="File not found")
+        return await object_storage.response(key, filename=key.rsplit("/", 1)[-1])
+    return _serve(_safe_upload_path(stored))
+
+
 def _serve(p: Path) -> FileResponse:
     if not p.is_file():
         raise HTTPException(status_code=404, detail="File missing on server")
@@ -926,7 +938,7 @@ async def download_deposit_screenshot(deposit_id: uuid.UUID, db: AsyncSession):
     deposit = result.scalar_one_or_none()
     if not deposit or not deposit.screenshot_url:
         raise HTTPException(status_code=404, detail="Screenshot not found")
-    return _serve(_safe_upload_path(deposit.screenshot_url))
+    return await _serve_stored(deposit.screenshot_url)
 
 
 async def download_withdrawal_payout_qr(withdrawal_id: uuid.UUID, db: AsyncSession):
@@ -938,7 +950,7 @@ async def download_withdrawal_payout_qr(withdrawal_id: uuid.UUID, db: AsyncSessi
     raw = w.bank_details.get("user_payout_qr_path") if isinstance(w.bank_details, dict) else None
     if not raw:
         raise HTTPException(status_code=404, detail="No payout QR on file")
-    return _serve(_safe_upload_path(str(raw)))
+    return await _serve_stored(str(raw))
 
 
 async def approve_with_razorpay(
@@ -979,10 +991,6 @@ async def approve_with_razorpay(
         raise HTTPException(status_code=400, detail="Deposit is not pending")
 
     deposit.payment_link = "razorpay:awaiting"
-
-    user_row = (
-        await db.execute(select(User).where(User.id == deposit.user_id))
-    ).scalar_one_or_none()
 
     await create_notification(
         db, deposit.user_id,

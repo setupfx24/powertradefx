@@ -91,6 +91,5 @@ async def serve_banner_media(filename: str) -> FileResponse:
         path = safe_join_under_base(UPLOAD_DIR, name)
     except PathTraversalError:
         raise HTTPException(status_code=400, detail="Invalid filename")
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Not found")
-    return FileResponse(path)
+    from packages.common.src import object_storage
+    return await object_storage.serve_public_media("banners", name, path)

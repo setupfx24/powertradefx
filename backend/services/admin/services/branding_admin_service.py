@@ -128,7 +128,11 @@ async def update_branding(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         out_name = f"{profile.user_id.hex}-{uuid.uuid4().hex[:8]}{canonical}"
-        (_logo_dir() / out_name).write_bytes(content)
+        from packages.common.src import object_storage
+        try:
+            await object_storage.save_public_media("branding", out_name, content, _logo_dir())
+        except object_storage.StorageError:
+            raise HTTPException(status_code=503, detail="File storage is temporarily unavailable")
         profile.logo_url = f"{LOGO_MEDIA_PREFIX}/{out_name}"
 
     profile.updated_at = datetime.utcnow()

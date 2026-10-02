@@ -31,7 +31,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.common.src.models import (
-    BankAccount, BonusOffer, Deposit, Transaction, TradingAccount, User,
+    BankAccount, Deposit, Transaction, TradingAccount, User,
     UserBonus, Withdrawal,
 )
 from packages.common.src.notify import create_notification
@@ -300,6 +300,9 @@ def _safe_stored_upload(stored: str | None) -> str | None:
     confine (server-written upload paths always pass)."""
     if not stored:
         return None
+    from packages.common.src import object_storage
+    if object_storage.is_ref(stored):
+        return stored if object_storage.key_from_ref(stored, required_prefix="wallet/") else None
     raw = get_settings().WALLET_UPLOAD_ROOT.strip() or "uploads/wallet"
     base = Path(raw)
     if not base.is_absolute():
@@ -328,6 +331,35 @@ def _wallet_upload_root() -> Path:
             detail="File upload is temporarily unavailable. Please contact support.",
         ) from e
     return p
+
+
+async def _store_wallet_upload(kind: str, user_id, safe_name: str, content: bytes, label: str) -> str:
+    """Persist a wallet proof / payout QR; returns the value to store on the row.
+
+    With STORAGE_BACKEND=s3 the file goes to the private bucket under
+    ``wallet/{kind}/{user_id}/`` (an ``obj:`` reference); otherwise it is
+    written under WALLET_UPLOAD_ROOT as before (an absolute disk path)."""
+    from packages.common.src import object_storage
+    if object_storage.enabled():
+        try:
+            return await object_storage.put(f"wallet/{kind}/{user_id}/{safe_name}", content)
+        except object_storage.StorageError as e:
+            raise HTTPException(status_code=503, detail="Could not save file") from e
+    try:
+        user_dir = safe_join_under_base(_wallet_upload_root(), kind, str(user_id))
+    except PathTraversalError:
+        raise HTTPException(status_code=400, detail="Invalid upload path")
+    user_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        out_path = safe_join_under_base(user_dir, safe_name)
+    except PathTraversalError:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    try:
+        out_path.write_bytes(content)
+    except OSError as e:
+        logger.exception("%s write failed: %s", label, out_path)
+        raise HTTPException(status_code=503, detail="Could not save file") from e
+    return str(out_path.resolve())
 
 
 async def _get_user_account_ids(user_id, db: AsyncSession) -> list[UUID]:
@@ -522,21 +554,8 @@ async def create_manual_deposit(
         raise HTTPException(status_code=400, detail=str(e))
 
     bank = await _get_bank_for_tier(amount, db)
-    try:
-        user_dir = safe_join_under_base(_wallet_upload_root(), "deposits", str(user_id))
-    except PathTraversalError:
-        raise HTTPException(status_code=400, detail="Invalid upload path")
-    user_dir.mkdir(parents=True, exist_ok=True)
     safe = f"deposit_{uuid_lib.uuid4().hex}{suffix}"
-    try:
-        out_path = safe_join_under_base(user_dir, safe)
-    except PathTraversalError:
-        raise HTTPException(status_code=400, detail="Invalid file path")
-    try:
-        out_path.write_bytes(content)
-    except OSError as e:
-        logger.exception("manual deposit write failed: %s", out_path)
-        raise HTTPException(status_code=503, detail="Could not save file") from e
+    proof_ref = await _store_wallet_upload("deposits", user_id, safe, content, "manual deposit")
 
     deposit = Deposit(
         user_id=user_id,
@@ -544,7 +563,7 @@ async def create_manual_deposit(
         amount=amount,
         method="manual",
         transaction_id=tid[:100],
-        screenshot_url=str(out_path.resolve()),
+        screenshot_url=proof_ref,
         bank_account_id=bank.id if bank else None,
         status="pending",
     )
@@ -989,25 +1008,12 @@ async def confirm_local_banking_payment(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    try:
-        user_dir = safe_join_under_base(_wallet_upload_root(), "deposits", str(user_id))
-    except PathTraversalError:
-        raise HTTPException(status_code=400, detail="Invalid upload path")
-    user_dir.mkdir(parents=True, exist_ok=True)
     safe = f"local_banking_{uuid_lib.uuid4().hex}{suffix}"
-    try:
-        out_path = safe_join_under_base(user_dir, safe)
-    except PathTraversalError:
-        raise HTTPException(status_code=400, detail="Invalid file path")
-    try:
-        out_path.write_bytes(content)
-    except OSError as e:
-        logger.exception("local banking proof write failed: %s", out_path)
-        raise HTTPException(status_code=503, detail="Could not save file") from e
+    proof_ref = await _store_wallet_upload("deposits", user_id, safe, content, "local banking proof")
 
     deposit.amount = amount
     deposit.transaction_id = tid
-    deposit.screenshot_url = str(out_path.resolve())
+    deposit.screenshot_url = proof_ref
 
     await create_notification(
         db, user_id,
@@ -1589,22 +1595,8 @@ async def create_manual_withdrawal(
         content = await file.read()
         if len(content) > MAX_PROOF_BYTES:
             raise HTTPException(status_code=400, detail="File too large (max 10 MB)")
-        try:
-            user_dir = safe_join_under_base(_wallet_upload_root(), "withdrawals", str(user_id))
-        except PathTraversalError:
-            raise HTTPException(status_code=400, detail="Invalid upload path")
-        user_dir.mkdir(parents=True, exist_ok=True)
         safe = f"payout_qr_{uuid_lib.uuid4().hex}{suffix}"
-        try:
-            out_path = safe_join_under_base(user_dir, safe)
-        except PathTraversalError:
-            raise HTTPException(status_code=400, detail="Invalid file path")
-        try:
-            out_path.write_bytes(content)
-        except OSError as e:
-            logger.exception("manual withdrawal qr write failed: %s", out_path)
-            raise HTTPException(status_code=503, detail="Could not save file") from e
-        qr_path_str = str(out_path.resolve())
+        qr_path_str = await _store_wallet_upload("withdrawals", user_id, safe, content, "manual withdrawal qr")
 
     if not upi and not qr_path_str:
         raise HTTPException(

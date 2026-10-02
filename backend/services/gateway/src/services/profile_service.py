@@ -332,13 +332,18 @@ async def submit_kyc(
         c2, s2 = await _read_upload_file(file_2, "second document")
         uploads.append((document_type_2, c2, s2))
 
-    root = _kyc_upload_root()
+    from packages.common.src import object_storage
+    use_bucket = object_storage.enabled()
+    user_upload_dir = None
+    if not use_bucket:
+        root = _kyc_upload_root()
+        try:
+            user_upload_dir = safe_join_under_base(root, str(user_id))
+        except PathTraversalError:
+            raise HTTPException(status_code=400, detail="Invalid upload path")
     try:
-        user_upload_dir = safe_join_under_base(root, str(user_id))
-    except PathTraversalError:
-        raise HTTPException(status_code=400, detail="Invalid upload path")
-    try:
-        user_upload_dir.mkdir(parents=True, exist_ok=True)
+        if user_upload_dir is not None:
+            user_upload_dir.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         # Most common cause: the host bind-mount target
         # (./backend/uploads/) isn't writable by the gateway container's
@@ -354,23 +359,35 @@ async def submit_kyc(
     try:
         for dtype, content, suffix in uploads:
             safe_name = f"{dtype}_{_uuid.uuid4().hex}{suffix}"
-            try:
-                file_path = safe_join_under_base(user_upload_dir, safe_name)
-            except PathTraversalError:
-                raise HTTPException(status_code=400, detail="Invalid file path")
-            try:
-                file_path.write_bytes(content)
-            except OSError as e:
-                logger.exception("KYC file write failed: %s", file_path)
-                raise HTTPException(
-                    status_code=503,
-                    detail="Could not store upload. Please try again or contact support.",
-                ) from e
+            if use_bucket:
+                # Encrypted private bucket; served back only through
+                # get_kyc_file (owner) and the admin KYC review endpoint.
+                try:
+                    file_ref = await object_storage.put(f"kyc/{user_id}/{safe_name}", content)
+                except object_storage.StorageError as e:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Could not store upload. Please try again or contact support.",
+                    ) from e
+            else:
+                try:
+                    file_path = safe_join_under_base(user_upload_dir, safe_name)
+                except PathTraversalError:
+                    raise HTTPException(status_code=400, detail="Invalid file path")
+                try:
+                    file_path.write_bytes(content)
+                except OSError as e:
+                    logger.exception("KYC file write failed: %s", file_path)
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Could not store upload. Please try again or contact support.",
+                    ) from e
+                file_ref = str(file_path)
 
             doc = KYCDocument(
                 user_id=user_id,
                 document_type=dtype,
-                file_url=str(file_path),
+                file_url=file_ref,
                 status="pending",
             )
             db.add(doc)
@@ -481,7 +498,7 @@ async def submit_kyc(
     }
 
 
-async def get_kyc_file(user_id: UUID, document_id: UUID, db: AsyncSession) -> Path:
+async def get_kyc_file(user_id: UUID, document_id: UUID, db: AsyncSession) -> "Path | str":
     """Resolve a KYC document path for serving.
 
     Defense-in-depth: even though the row's `file_url` is written from
@@ -500,6 +517,15 @@ async def get_kyc_file(user_id: UUID, document_id: UUID, db: AsyncSession) -> Pa
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    from packages.common.src import object_storage
+    if object_storage.is_ref(doc.file_url):
+        # Bucket object: returned as its key, confined to THIS user's prefix.
+        key = object_storage.key_from_ref(doc.file_url, required_prefix=f"kyc/{user_id}/")
+        if key is None:
+            logger.warning("KYC object key outside user prefix blocked: doc_id=%s", document_id)
+            raise HTTPException(status_code=404, detail="Document not found")
+        return key
 
     stored = Path(doc.file_url).resolve()
     root = Path(get_settings().KYC_UPLOAD_ROOT.strip() or "uploads/kyc").resolve()

@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -198,6 +198,9 @@ async def get_kyc_file(
     file_path = await profile_service.get_kyc_file(
         user_id=current_user["user_id"], document_id=doc_id, db=db,
     )
+    if isinstance(file_path, str):  # bucket object key (see object_storage)
+        from packages.common.src import object_storage
+        return await object_storage.response(file_path)
     return FileResponse(str(file_path))
 
 
